@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/supabase/client";
-import { auditLog } from "@/lib/audit/auditLogger";
 import "@/styles/login.css";
 
 export default function LoginPage() {
@@ -14,24 +13,33 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
 
   const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
+
   const [error, setError] = useState("");
 
   /*
   --------------------------------
-  AUTO REFRESH PAGE
+  CHECK IF USER ALREADY LOGGED IN
   --------------------------------
-  Refresh every 30 seconds
   */
 
   useEffect(() => {
 
-    const interval = setInterval(() => {
-      window.location.reload();
-    }, 30000);
+    const checkSession = async () => {
 
-    return () => clearInterval(interval);
+      const { data } = await supabase.auth.getSession();
 
-  }, []);
+      if (data.session) {
+        router.replace("/dev/dashboard");
+      } else {
+        setCheckingSession(false);
+      }
+
+    };
+
+    checkSession();
+
+  }, [router]);
 
   /*
   --------------------------------
@@ -46,32 +54,36 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
 
-    const { data, error } = await supabase.auth.signInWithPassword({
+    const { error } = await supabase.auth.signInWithPassword({
       email,
       password
     });
 
     if (error) {
+
       setError(error.message);
       setLoading(false);
       return;
-    }
-
-    const user = data?.user;
-
-    if (user) {
-
-      await auditLog({
-        userId: user.id,
-        action: "login",
-        description: "User logged into the system"
-      });
 
     }
 
     router.replace("/dev/dashboard");
 
   };
+
+  /*
+  --------------------------------
+  LOADING SCREEN
+  --------------------------------
+  */
+
+  if (checkingSession) {
+    return (
+      <div className="login-loading">
+        Checking session...
+      </div>
+    );
+  }
 
   /*
   --------------------------------
@@ -85,9 +97,7 @@ export default function LoginPage() {
 
       <div className="login-card">
 
-        <h1 className="login-title">
-          South Lincs Systems
-        </h1>
+        <h1>South Lincs Systems</h1>
 
         <form onSubmit={handleLogin} className="login-form">
 
@@ -97,41 +107,25 @@ export default function LoginPage() {
             </div>
           )}
 
-          <div className="login-field">
+          <input
+            type="email"
+            placeholder="Email address"
+            value={email}
+            onChange={(e)=>setEmail(e.target.value)}
+            required
+          />
 
-            <label>Email</label>
+          <input
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e)=>setPassword(e.target.value)}
+            required
+          />
 
-            <input
-              type="email"
-              placeholder="Enter email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
+          <button type="submit" disabled={loading}>
 
-          </div>
-
-          <div className="login-field">
-
-            <label>Password</label>
-
-            <input
-              type="password"
-              placeholder="Enter password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-
-          </div>
-
-          <button
-            type="submit"
-            className="login-button"
-            disabled={loading}
-          >
-
-            {loading ? "Signing In..." : "Login"}
+            {loading ? "Signing in..." : "Login"}
 
           </button>
 
