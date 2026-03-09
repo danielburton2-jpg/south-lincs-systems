@@ -1,29 +1,49 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { supabase } from "@/supabase/client";
 
-export default function Dashboard() {
+export default function DevDashboard() {
 
-  const router = useRouter();
+  const [name, setName] = useState<string>("");
 
-  const handleLogout = async () => {
+  useEffect(() => {
 
-    await supabase.auth.signOut();
+    const getUser = async () => {
 
-    router.replace("/login");
+      const { data } = await supabase.auth.getUser();
 
-  };
+      const user = data?.user;
+
+      if (user) {
+
+        // if name exists in metadata
+        const userName =
+          user.user_metadata?.name ||
+          user.email?.split("@")[0] ||
+          "User";
+
+        setName(userName);
+
+      }
+
+    };
+
+    getUser();
+
+  }, []);
 
   return (
 
-    <div>
+    <div className="dashboard-container">
 
-      <h1>Dashboard</h1>
+      <h1>
+        Welcome, {name}
+      </h1>
 
-      <button onClick={handleLogout}>
-        Logout
-      </button>
+      <p>
+        This is the South Lincs Systems developer dashboard.
+      </p>
 
     </div>
 
