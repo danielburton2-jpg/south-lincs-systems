@@ -1,71 +1,150 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+
 import { supabase } from "@/supabase/client";
 import { auditLog } from "@/lib/audit/auditLogger";
 
 import "@/styles/forms.css";
-import "@/styles/button.css";
+import "@/styles/buttons.css";
 
 export default function CreateSuperuserPage() {
+
   const router = useRouter();
 
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [email,setEmail] = useState("");
+  const [firstName,setFirstName] = useState("");
+  const [lastName,setLastName] = useState("");
+  const [password,setPassword] = useState("");
+  const [frozen,setFrozen] = useState(false);
 
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleCreate = async (e:React.FormEvent)=>{
+
     e.preventDefault();
 
-    const { data: session } = await supabase.auth.getUser();
-    const currentUser = session?.user;
+    const { data:userData } =
+      await supabase.auth.getUser();
 
-    const { error } = await supabase.from("superusers").insert([
-      {
-        name,
-        email,
-        frozen: false,
-      },
-    ]);
+    const currentUser = userData?.user;
 
-    if (!error) {
-      await auditLog({
-        userId: currentUser?.id ?? null,
-        action: "create_superuser",
-        description: `Created superuser ${email}`,
-      });
+    await supabase
+      .from("superusers")
+      .insert([
+        {
+          email,
+          first_name:firstName,
+          last_name:lastName,
+          password,
+          frozen
+        }
+      ]);
 
-      router.push("/dev/superusers/view");
-    }
+    await auditLog({
+      userId:currentUser?.id ?? null,
+      action:"create_superuser",
+      description:`Created superuser ${email}`
+    });
+
+    router.push("/dev/superusers/view");
+
   };
 
-  return (
-    <div>
-      <button className="btn-secondary" onClick={() => router.back()}>
+  return(
+
+    <div className="page-shell">
+
+      <button
+        className="btn-secondary"
+        onClick={()=>router.back()}
+      >
         Back
       </button>
 
       <h1>Create Superuser</h1>
 
-      <form className="form-container" onSubmit={handleCreate}>
-        <input
-          className="form-input"
-          placeholder="Name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
+      <form
+        className="form-container"
+        autoComplete="off"
+        onSubmit={handleCreate}
+      >
 
-        <input
-          className="form-input"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
+        <div className="form-group">
 
-        <button className="btn-primary" type="submit">
+          <label>Email</label>
+
+          <input
+            autoComplete="new-email"
+            className="form-input"
+            value={email}
+            onChange={(e)=>setEmail(e.target.value)}
+          />
+
+        </div>
+
+        <div className="form-group">
+
+          <label>First Name</label>
+
+          <input
+            autoComplete="off"
+            className="form-input"
+            value={firstName}
+            onChange={(e)=>setFirstName(e.target.value)}
+          />
+
+        </div>
+
+        <div className="form-group">
+
+          <label>Last Name</label>
+
+          <input
+            autoComplete="off"
+            className="form-input"
+            value={lastName}
+            onChange={(e)=>setLastName(e.target.value)}
+          />
+
+        </div>
+
+        <div className="form-group">
+
+          <label>Password</label>
+
+          <input
+            type="password"
+            autoComplete="new-password"
+            className="form-input"
+            value={password}
+            onChange={(e)=>setPassword(e.target.value)}
+          />
+
+        </div>
+
+        <div className="form-checkbox">
+
+          <label>Frozen</label>
+
+          <input
+            type="checkbox"
+            checked={frozen}
+            onChange={(e)=>setFrozen(e.target.checked)}
+          />
+
+        </div>
+
+        <button
+          className="btn-primary"
+          type="submit"
+        >
           Create Superuser
         </button>
+
       </form>
+
     </div>
+
   );
+
 }

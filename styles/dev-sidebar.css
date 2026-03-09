@@ -1,12 +1,16 @@
 .dev-sidebar {
-  width: 270px;
-  height: 100vh;
-  background: #0f172a;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  border-right: 1px solid #1e293b;
-  color: white;
+
+  width:260px;
+
+  min-height:100vh;
+
+  display:flex;
+  flex-direction:column;
+
+  background:#0f172a;
+
+  color:white;
+
 }
 
 .dev-sidebar-header {

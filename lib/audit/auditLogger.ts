@@ -6,17 +6,29 @@ type AuditPayload = {
   description: string;
 };
 
-export async function auditLog({ userId, action, description }: AuditPayload) {
+export async function auditLog({
+  userId,
+  action,
+  description
+}: AuditPayload) {
+
   try {
-    await supabase.from("audit_log").insert([
-      {
-        user_id: userId,
-        action,
-        description,
-        created_at: new Date().toISOString(),
-      },
-    ]);
-  } catch (err) {
-    console.error("Audit log failed:", err);
+
+    await supabase
+      .from("audit_log")
+      .insert([
+        {
+          user_id: userId,
+          action: action,
+          description: description,
+          created_at: new Date().toISOString()
+        }
+      ]);
+
+  } catch (error) {
+
+    console.error("Audit logging failed:", error);
+
   }
+
 }

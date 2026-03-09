@@ -91,3 +91,18 @@
   gap:12px;
   margin-top:20px;
 }
+.form-checkbox{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-top:10px;
+}
+
+.form-checkbox label{
+  font-weight:600;
+}
+
+.form-checkbox input{
+  width:18px;
+  height:18px;
+}
