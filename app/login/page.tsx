@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+
 import { supabase } from "@/supabase/client";
 import { auditLog } from "@/lib/audit/auditLogger";
 
 import "@/styles/forms.css";
-import "@/styles/button.css";
+import "@/styles/buttons.css";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -72,11 +73,12 @@ export default function LoginPage() {
 
       {error && <div className="form-error">{error}</div>}
 
-      <form onSubmit={handleLogin}>
+      <form onSubmit={handleLogin} autoComplete="off">
         <input
           className="form-input"
           type="email"
           placeholder="Email"
+          autoComplete="off"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
@@ -86,6 +88,7 @@ export default function LoginPage() {
           className="form-input"
           type="password"
           placeholder="Password"
+          autoComplete="off"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
