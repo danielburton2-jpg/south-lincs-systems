@@ -1,0 +1,87 @@
+.dev-shell {
+  display: flex;
+  min-height: 100vh;
+  background: #f4f6fb;
+}
+
+.dev-sidebar-wrap {
+  width: 250px;
+  background: #111827;
+  color: white;
+}
+
+.dev-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 24px 18px;
+}
+
+.dev-sidebar-header {
+  margin-bottom: 30px;
+}
+
+.dev-sidebar-header h2 {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.dev-sidebar-header span {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.dev-sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dev-sidebar-link {
+  display: block;
+  padding: 12px 14px;
+  border-radius: 8px;
+  text-decoration: none;
+  color: #e5e7eb;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.dev-sidebar-link:hover {
+  background: #1f2937;
+}
+
+.dev-sidebar-link.active {
+  background: #2563eb;
+  color: white;
+}
+
+.dev-sidebar-footer {
+  margin-top: auto;
+}
+
+.dev-sidebar-logout {
+  display: block;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #dc2626;
+  text-align: center;
+  text-decoration: none;
+  color: white;
+  font-weight: 600;
+}
+
+.dev-sidebar-logout:hover {
+  background: #b91c1c;
+}
+
+.dev-main {
+  flex: 1;
+  padding: 30px;
+}
+
+.dev-page-container {
+  max-width: 1400px;
+  margin: auto;
+}

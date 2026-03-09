@@ -1,0 +1,99 @@
+/* Primary Action Button (Create / Save / Login) */
+
+.button-primary{
+background:#1e293b;
+color:white;
+border:none;
+padding:12px 20px;
+border-radius:6px;
+cursor:pointer;
+font-size:14px;
+font-weight:500;
+}
+
+.button-primary:hover{
+background:#0f172a;
+}
+
+
+/* Secondary Button (Cancel / Back) */
+
+.button-secondary{
+background:#e5e7eb;
+color:#111827;
+border:none;
+padding:12px 20px;
+border-radius:6px;
+cursor:pointer;
+font-size:14px;
+}
+
+.button-secondary:hover{
+background:#d1d5db;
+}
+
+
+/* Danger Button (Delete / Remove) */
+
+.button-danger{
+background:#dc2626;
+color:white;
+border:none;
+padding:12px 20px;
+border-radius:6px;
+cursor:pointer;
+font-size:14px;
+}
+
+.button-danger:hover{
+background:#b91c1c;
+}
+
+
+/* Sidebar Button */
+
+.sidebar-button{
+background:none;
+border:none;
+color:white;
+text-align:left;
+padding:10px;
+border-radius:6px;
+cursor:pointer;
+font-size:14px;
+}
+
+.sidebar-button:hover{
+background:#334155;
+}
+
+
+/* Table Row Button */
+
+.button-table{
+background:none;
+border:none;
+color:#1e293b;
+cursor:pointer;
+font-weight:500;
+}
+
+.button-table:hover{
+text-decoration:underline;
+}
+
+
+/* Logout Button */
+
+.logout-button{
+background:#dc2626;
+border:none;
+color:white;
+padding:10px;
+border-radius:6px;
+cursor:pointer;
+}
+
+.logout-button:hover{
+background:#b91c1c;
+}
