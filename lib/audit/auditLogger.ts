@@ -1,25 +1,22 @@
-export type AuditParams = {
-  userId?: string
-  action: string
-  description?: string
-}
+import { supabase } from "@/supabase/client";
 
-export async function auditLog(params: AuditParams) {
+type AuditPayload = {
+  userId: string | null;
+  action: string;
+  description: string;
+};
 
+export async function auditLog({ userId, action, description }: AuditPayload) {
   try {
-
-    await fetch("/api/audit", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
+    await supabase.from("audit_log").insert([
+      {
+        user_id: userId,
+        action,
+        description,
+        created_at: new Date().toISOString(),
       },
-      body: JSON.stringify(params)
-    });
-
-  } catch (error) {
-
-    console.error("Audit log failed:", error);
-
+    ]);
+  } catch (err) {
+    console.error("Audit log failed:", err);
   }
-
 }

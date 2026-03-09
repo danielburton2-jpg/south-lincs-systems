@@ -1,35 +1,28 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import "@/styles/button.css";
 
 export default function SuperusersPage() {
-
   const router = useRouter();
 
   return (
-
     <div>
-
       <h1>Superusers</h1>
 
-      <div className="page-actions">
+      <button
+        className="btn-primary"
+        onClick={() => router.push("/dev/superusers/create")}
+      >
+        Create Superuser
+      </button>
 
-        <button
-          onClick={() => router.push("/dev/superusers/create")}
-        >
-          Create Superuser
-        </button>
-
-        <button
-          onClick={() => router.push("/dev/superusers/view")}
-        >
-          View Superusers
-        </button>
-
-      </div>
-
+      <button
+        className="btn-secondary"
+        onClick={() => router.push("/dev/superusers/view")}
+      >
+        View Superusers
+      </button>
     </div>
-
   );
-
 }
