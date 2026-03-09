@@ -7,8 +7,6 @@ import { supabase } from "@/supabase/client";
 import { auditLog } from "@/lib/audit/auditLogger";
 
 import "@/styles/login.css";
-import "@/styles/forms.css";
-import "@/styles/buttons.css";
 
 export default function LoginPage() {
 
@@ -23,7 +21,7 @@ export default function LoginPage() {
 
   useEffect(()=>{
 
-    const checkSession = async ()=>{
+    const checkSession = async()=>{
 
       const { data } = await supabase.auth.getSession();
 
@@ -78,7 +76,7 @@ export default function LoginPage() {
     return <div>Checking session...</div>;
   }
 
-  return (
+  return(
 
     <div className="login-page">
 
@@ -87,6 +85,10 @@ export default function LoginPage() {
         <h1 className="login-title">
           South Lincs Systems
         </h1>
+
+        <div className="login-subtitle">
+          Workforce Management Platform
+        </div>
 
         {error && (
           <div className="form-error">
@@ -100,16 +102,14 @@ export default function LoginPage() {
         >
 
           <input
-            className="form-input"
             type="email"
-            placeholder="Email"
+            placeholder="Email address"
             value={email}
             onChange={(e)=>setEmail(e.target.value)}
             required
           />
 
           <input
-            className="form-input"
             type="password"
             placeholder="Password"
             value={password}
@@ -118,7 +118,7 @@ export default function LoginPage() {
           />
 
           <button
-            className="btn-primary login-button"
+            className="login-button"
             type="submit"
             disabled={loading}
           >
