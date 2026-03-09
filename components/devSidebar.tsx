@@ -1,59 +1,50 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/supabase/client";
 
 export default function DevSidebar() {
-  const pathname = usePathname();
 
-  const isActive = (path: string) => pathname.startsWith(path);
+  const router = useRouter();
+
+  const handleLogout = async () => {
+
+    const { error } = await supabase.auth.signOut();
+
+    if (!error) {
+
+      // force session clear and redirect
+      window.location.href = "/login";
+
+    }
+
+  };
 
   return (
+
     <div className="dev-sidebar">
 
-      <div className="dev-sidebar-header">
-        <h2>South Lincs Systems</h2>
-        <span>DEV PANEL</span>
-      </div>
+      <h2>South Lincs Systems</h2>
 
-      <nav className="dev-sidebar-nav">
+      <nav>
 
-        <Link
-          href="/dev/dashboard"
-          className={`dev-sidebar-link ${isActive("/dev/dashboard") ? "active" : ""}`}
-        >
-          Dashboard
-        </Link>
-
-        <Link
-          href="/dev/superusers"
-          className={`dev-sidebar-link ${isActive("/dev/superusers") ? "active" : ""}`}
-        >
-          Superusers
-        </Link>
-
-        <Link
-          href="/dev/companies"
-          className={`dev-sidebar-link ${isActive("/dev/companies") ? "active" : ""}`}
-        >
-          Companies
-        </Link>
-
-        <Link
-  href="/dev/audit"
-  className={`dev-sidebar-link ${isActive("/dev/audit") ? "active" : ""}`}
->
-  Audit Log
-</Link>
+        <Link href="/dev/dashboard">Dashboard</Link>
+        <Link href="/dev/superusers">Superusers</Link>
+        <Link href="/dev/companies">Companies</Link>
+        <Link href="/dev/audit">Audit Logs</Link>
 
       </nav>
 
-      <div className="dev-sidebar-footer">
-        <Link href="/login" className="dev-sidebar-logout">
-          Logout
-        </Link>
-      </div>
+      <button
+        onClick={handleLogout}
+        className="logout-button"
+      >
+        Logout
+      </button>
 
     </div>
+
   );
+
 }
