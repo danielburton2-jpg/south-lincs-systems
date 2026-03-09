@@ -5,30 +5,29 @@ export function middleware(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  // allow login page
-  if (pathname.startsWith("/login")) {
+  // ALWAYS allow login page
+  if (pathname === "/login") {
     return NextResponse.next();
   }
 
-  // allow static files
+  // allow next internal files
   if (
     pathname.startsWith("/_next") ||
-    pathname.startsWith("/favicon.ico") ||
-    pathname.startsWith("/images")
+    pathname.startsWith("/favicon.ico")
   ) {
     return NextResponse.next();
   }
 
-  // check for Supabase auth cookies
+  // check for Supabase cookies
   const accessToken = request.cookies.get("sb-access-token");
   const refreshToken = request.cookies.get("sb-refresh-token");
 
-  // if no session redirect to login
   if (!accessToken && !refreshToken) {
 
-    const loginUrl = new URL("/login", request.url);
+    const url = request.nextUrl.clone();
+    url.pathname = "/login";
 
-    return NextResponse.redirect(loginUrl);
+    return NextResponse.redirect(url);
 
   }
 
@@ -36,7 +35,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: [
-    "/((?!_next/static|_next/image|favicon.ico).*)",
-  ],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };

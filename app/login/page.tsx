@@ -23,13 +23,23 @@ export default function LoginPage() {
 
     const checkSession = async()=>{
 
-      const { data } = await supabase.auth.getSession();
+      try {
 
-      if(data.session){
-        router.replace("/dev/dashboard");
-      }else{
-        setCheckingSession(false);
+        const { data } = await supabase.auth.getSession();
+
+        const session = data.session;
+
+        if(session){
+          router.replace("/dev/dashboard");
+        }
+
+      } catch(err) {
+
+        console.error(err);
+
       }
+
+      setCheckingSession(false);
 
     };
 
@@ -51,9 +61,11 @@ export default function LoginPage() {
       });
 
     if(error){
+
       setError(error.message);
       setLoading(false);
       return;
+
     }
 
     const user = data?.user;
@@ -66,14 +78,23 @@ export default function LoginPage() {
         description:`User ${user.email} logged in`
       });
 
-    }
+      router.replace("/dev/dashboard");
 
-    router.replace("/dev/dashboard");
+    }
 
   };
 
   if(checkingSession){
-    return <div>Checking session...</div>;
+
+    return(
+      <div className="login-page">
+        <div className="login-card">
+          <h1 className="login-title">South Lincs Systems</h1>
+          <p>Checking session...</p>
+        </div>
+      </div>
+    );
+
   }
 
   return(
@@ -85,10 +106,6 @@ export default function LoginPage() {
         <h1 className="login-title">
           South Lincs Systems
         </h1>
-
-        <div className="login-subtitle">
-          Workforce Management Platform
-        </div>
 
         {error && (
           <div className="form-error">
@@ -103,7 +120,7 @@ export default function LoginPage() {
 
           <input
             type="email"
-            placeholder="Email address"
+            placeholder="Email"
             value={email}
             onChange={(e)=>setEmail(e.target.value)}
             required
