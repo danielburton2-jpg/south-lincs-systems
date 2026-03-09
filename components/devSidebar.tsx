@@ -1,49 +1,82 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { supabase } from "@/supabase/client";
+import "@/styles/dev-sidebar.css";
 
 export default function DevSidebar() {
 
-  const router = useRouter();
+  const pathname = usePathname();
 
   const handleLogout = async () => {
 
-    const { error } = await supabase.auth.signOut();
+    await supabase.auth.signOut();
 
-    if (!error) {
-
-      // force session clear and redirect
-      window.location.href = "/login";
-
-    }
+    window.location.href = "/login";
 
   };
 
+  const navItems = [
+    { name: "Dashboard", path: "/dev/dashboard" },
+    { name: "Superusers", path: "/dev/superusers" },
+    { name: "Companies", path: "/dev/companies" },
+    { name: "Managers", path: "/dev/managers" },
+    { name: "Employees", path: "/dev/employees" },
+    { name: "Schedules", path: "/dev/schedules" },
+    { name: "Audit Logs", path: "/dev/audit" },
+    { name: "Settings", path: "/dev/settings" }
+  ];
+
   return (
 
-    <div className="dev-sidebar">
+    <aside className="dev-sidebar">
 
-      <h2>South Lincs Systems</h2>
+      <div className="dev-sidebar-header">
 
-      <nav>
+        <div className="sidebar-logo">
+          SL
+        </div>
 
-        <Link href="/dev/dashboard">Dashboard</Link>
-        <Link href="/dev/superusers">Superusers</Link>
-        <Link href="/dev/companies">Companies</Link>
-        <Link href="/dev/audit">Audit Logs</Link>
+        <div className="sidebar-title">
+          <h2>South Lincs</h2>
+          <p>Dev System</p>
+        </div>
+
+      </div>
+
+      <nav className="dev-sidebar-nav">
+
+        {navItems.map((item) => (
+
+          <Link
+            key={item.path}
+            href={item.path}
+            className={
+              pathname === item.path
+                ? "sidebar-link active"
+                : "sidebar-link"
+            }
+          >
+            {item.name}
+          </Link>
+
+        ))}
 
       </nav>
 
-      <button
-        onClick={handleLogout}
-        className="logout-button"
-      >
-        Logout
-      </button>
+      <div className="dev-sidebar-footer">
 
-    </div>
+        <button
+          onClick={handleLogout}
+          className="logout-button"
+        >
+          Logout
+        </button>
+
+      </div>
+
+    </aside>
 
   );
 
