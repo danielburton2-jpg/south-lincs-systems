@@ -21,11 +21,9 @@ export default function DevSidebar() {
     { name: "Dashboard", path: "/dev/dashboard" },
     { name: "Superusers", path: "/dev/superusers" },
     { name: "Companies", path: "/dev/companies" },
-    { name: "Managers", path: "/dev/managers" },
-    { name: "Employees", path: "/dev/employees" },
-    { name: "Schedules", path: "/dev/schedules" },
+    { name: "Features", path: "/dev/features" },
     { name: "Audit Logs", path: "/dev/audit" },
-    { name: "Settings", path: "/dev/settings" }
+    
   ];
 
   return (

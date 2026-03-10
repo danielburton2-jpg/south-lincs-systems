@@ -1,8 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-
+import { useState } from "react";
 import { supabase } from "@/supabase/client";
 import { auditLog } from "@/lib/audit/auditLogger";
 
@@ -10,42 +8,10 @@ import "@/styles/login.css";
 
 export default function LoginPage() {
 
-  const router = useRouter();
-
   const [email,setEmail] = useState("");
   const [password,setPassword] = useState("");
-
   const [loading,setLoading] = useState(false);
-  const [checkingSession,setCheckingSession] = useState(true);
   const [error,setError] = useState("");
-
-  useEffect(()=>{
-
-    const checkSession = async()=>{
-
-      try {
-
-        const { data } = await supabase.auth.getSession();
-
-        const session = data.session;
-
-        if(session){
-          router.replace("/dev/dashboard");
-        }
-
-      } catch(err) {
-
-        console.error(err);
-
-      }
-
-      setCheckingSession(false);
-
-    };
-
-    checkSession();
-
-  },[router]);
 
   const handleLogin = async (e:React.FormEvent)=>{
 
@@ -78,24 +44,12 @@ export default function LoginPage() {
         description:`User ${user.email} logged in`
       });
 
-      router.replace("/dev/dashboard");
+      // force full navigation so middleware sees the cookie
+      window.location.href = "/dev/dashboard";
 
     }
 
   };
-
-  if(checkingSession){
-
-    return(
-      <div className="login-page">
-        <div className="login-card">
-          <h1 className="login-title">South Lincs Systems</h1>
-          <p>Checking session...</p>
-        </div>
-      </div>
-    );
-
-  }
 
   return(
 
@@ -119,6 +73,8 @@ export default function LoginPage() {
         >
 
           <input
+            id="email"
+            name="email"
             type="email"
             placeholder="Email"
             value={email}
@@ -127,6 +83,8 @@ export default function LoginPage() {
           />
 
           <input
+            id="password"
+            name="password"
             type="password"
             placeholder="Password"
             value={password}
