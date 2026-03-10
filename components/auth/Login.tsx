@@ -83,10 +83,6 @@ export default function Login(){
           South Lincs Systems
         </h1>
 
-        <p className="login-subtitle">
-          Superuser Login
-        </p>
-
         <form
           className="login-form"
           onSubmit={handleLogin}
