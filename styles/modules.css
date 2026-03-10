@@ -93,3 +93,32 @@ th,td{
   text-align:left;
 
 }
+/* PRINT MODE */
+
+@media print {
+
+  /* Hide sidebar */
+  .dev-sidebar{
+    display:none;
+  }
+
+  /* Remove padding */
+  .dev-content{
+    padding:0;
+  }
+
+  /* Hide toolbar buttons */
+  .results-toolbar{
+    display:none;
+  }
+
+  /* Make content full width */
+  .dev-layout{
+    display:block;
+  }
+
+  table{
+    width:100%;
+  }
+
+}
