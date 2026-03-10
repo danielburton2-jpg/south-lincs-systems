@@ -1,0 +1,67 @@
+.form-container{
+
+  max-width:500px;
+
+}
+
+.stack-form{
+
+  display:flex;
+
+  flex-direction:column;
+
+  gap:10px;
+
+}
+
+.stack-form input{
+
+  height:40px;
+
+  border:1px solid #d1d5db;
+
+  border-radius:6px;
+
+  padding:0 10px;
+
+}
+
+.form-buttons{
+
+  margin-top:20px;
+
+  display:flex;
+
+  gap:10px;
+
+}
+
+.form-buttons button{
+
+  height:40px;
+
+  padding:0 20px;
+
+  border:none;
+
+  border-radius:6px;
+
+  cursor:pointer;
+
+}
+
+.form-buttons button:first-child{
+
+  background:#2563eb;
+
+  color:white;
+
+}
+
+.form-buttons button:last-child{
+
+  background:#6b7280;
+
+  color:white;
+
+}

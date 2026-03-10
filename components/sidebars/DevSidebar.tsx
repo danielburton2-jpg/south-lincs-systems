@@ -1,12 +1,15 @@
 "use client"
 
+import { useState } from "react"
 import { supabase } from "@/supabase/client"
 
 import "@/styles/sidebar.css"
 
-export default function DevSidebar({ setPage }: any) {
+export default function DevSidebar({ setPage }: any){
 
-  const logout = async () => {
+  const [showSuperusers,setShowSuperusers] = useState(false)
+
+  const logout = async ()=>{
 
     await supabase.auth.signOut()
 
@@ -14,7 +17,7 @@ export default function DevSidebar({ setPage }: any) {
 
   }
 
-  return (
+  return(
 
     <div className="dev-sidebar">
 
@@ -40,12 +43,36 @@ export default function DevSidebar({ setPage }: any) {
         Dashboard
       </button>
 
+      {/* SUPERUSERS DROPDOWN */}
+
       <button
         className="sidebar-button"
-        onClick={()=>setPage("superusers")}
+        onClick={()=>setShowSuperusers(!showSuperusers)}
       >
         Superusers
       </button>
+
+      {showSuperusers && (
+
+        <div className="sidebar-submenu">
+
+          <button
+            className="sidebar-sub-button"
+            onClick={()=>setPage("create-superuser")}
+          >
+            Create Superuser
+          </button>
+
+          <button
+            className="sidebar-sub-button"
+            onClick={()=>setPage("view-superusers")}
+          >
+            View Superusers
+          </button>
+
+        </div>
+
+      )}
 
       <button
         className="sidebar-button"

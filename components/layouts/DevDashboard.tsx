@@ -8,14 +8,23 @@ import DevSidebar from "@/components/sidebars/DevSidebar"
 import AuditSearch from "@/components/modules/audit/AuditSearch"
 import AuditResults from "@/components/modules/audit/AuditResults"
 
+import CreateSuperuser from "@/components/modules/superusers/CreateSuperuser"
+import ViewSuperusers from "@/components/modules/superusers/ViewSuperusers"
+import EditSuperuser from "@/components/modules/superusers/EditSuperuser"
+
 import "@/styles/layout.css"
 
 export default function DevDashboard(){
 
   const [page,setPage] = useState("dashboard")
+
   const [auditResults,setAuditResults] = useState<any>(null)
 
   const [userName,setUserName] = useState("")
+
+  const [editUser,setEditUser] = useState<any>(null)
+
+  /* LOAD CURRENT USER NAME */
 
   useEffect(()=>{
 
@@ -24,7 +33,8 @@ export default function DevDashboard(){
       const { data:sessionData } =
         await supabase.auth.getSession()
 
-      const userId = sessionData?.session?.user?.id
+      const userId =
+        sessionData?.session?.user?.id
 
       if(!userId) return
 
@@ -56,6 +66,8 @@ export default function DevDashboard(){
 
       <div className="dev-content">
 
+        {/* DASHBOARD */}
+
         {page === "dashboard" && (
 
           <div>
@@ -72,19 +84,38 @@ export default function DevDashboard(){
 
         )}
 
-        {page === "superusers" && (
+        {/* CREATE SUPERUSER */}
 
-          <div>
+        {page === "create-superuser" && (
 
-            <h1>Superusers</h1>
-
-            <p>
-              Superuser management coming next.
-            </p>
-
-          </div>
+          <CreateSuperuser
+            close={()=>setPage("dashboard")}
+          />
 
         )}
+
+        {/* VIEW SUPERUSERS */}
+
+        {page === "view-superusers" && !editUser && (
+
+          <ViewSuperusers
+            openEdit={setEditUser}
+          />
+
+        )}
+
+        {/* EDIT SUPERUSER */}
+
+        {page === "view-superusers" && editUser && (
+
+          <EditSuperuser
+            user={editUser}
+            close={()=>setEditUser(null)}
+          />
+
+        )}
+
+        {/* AUDIT SEARCH */}
 
         {page === "audit" && !auditResults && (
 
@@ -93,6 +124,8 @@ export default function DevDashboard(){
           />
 
         )}
+
+        {/* AUDIT RESULTS */}
 
         {page === "audit" && auditResults && (
 

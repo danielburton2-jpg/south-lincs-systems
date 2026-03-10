@@ -1,0 +1,79 @@
+/* ADMIN TABLE */
+
+.admin-table{
+
+  width:100%;
+  border-collapse:collapse;
+  margin-top:20px;
+
+  font-size:13px;   /* smaller text */
+
+}
+
+/* HEADERS */
+
+.admin-table th{
+
+  text-align:left;
+
+  padding:10px;
+
+  border-bottom:2px solid #e5e7eb;
+
+  font-weight:600;
+
+  font-size:12px;
+
+  text-transform:uppercase;
+
+  letter-spacing:0.03em;
+
+  color:#6b7280;
+
+}
+
+/* ROWS */
+
+.admin-table td{
+
+  padding:8px;
+
+  border-bottom:1px solid #e5e7eb;
+
+}
+
+/* HOVER ROW */
+
+.click-row{
+
+  cursor:pointer;
+
+}
+
+.click-row:hover{
+
+  background:#f9fafb;
+
+}
+
+/* STATUS */
+
+.status-active{
+
+  color:#16a34a;
+
+  font-weight:600;
+
+  font-size:12px;
+
+}
+
+.status-frozen{
+
+  color:#dc2626;
+
+  font-weight:600;
+
+  font-size:12px;
+
+}

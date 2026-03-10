@@ -105,3 +105,27 @@
   background:#374151;
 
 }
+.sidebar-submenu{
+  margin-left:10px;
+  margin-bottom:10px;
+}
+
+.sidebar-sub-button{
+
+  background:none;
+  border:none;
+  color:#d1d5db;
+
+  text-align:left;
+
+  padding:8px;
+
+  width:100%;
+
+  cursor:pointer;
+
+}
+
+.sidebar-sub-button:hover{
+  color:white;
+}
