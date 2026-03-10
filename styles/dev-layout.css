@@ -1,9 +1,15 @@
-.dev-layout {
-  display: flex;
-  min-height: 100vh;
+/* MAIN DEV LAYOUT */
+
+.dev-layout{
+  display:flex;
 }
 
-.dev-content {
-  flex: 1;
-  padding: 40px;
+/* CONTENT AREA */
+
+.dev-content{
+  margin-left:260px;
+  padding:40px;
+  width:100%;
+  min-height:100vh;
+  background:#f7f9fc;
 }

@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { supabase } from "@/supabase/client";
+import { auditLog } from "@/lib/audit/auditLogger";
 
 import "@/styles/tables.css";
-import "@/styles/buttons.css";
 
 type Superuser = {
   id: string;
@@ -14,135 +14,110 @@ type Superuser = {
   last_name: string | null;
   email: string;
   frozen: boolean | null;
-  deleted_at: string | null;
 };
 
-export default function ViewSuperusersPage() {
+export default function ViewSuperusers(){
 
   const router = useRouter();
 
-  const [superusers,setSuperusers] =
-    useState<Superuser[]>([]);
+  const [users,setUsers] = useState<Superuser[]>([]);
+  const [loading,setLoading] = useState(true);
 
-  const [loading,setLoading] =
-    useState(true);
+
 
   useEffect(()=>{
-
-    const loadSuperusers = async()=>{
-
-      const { data,error } =
-        await supabase
-          .from("superusers")
-          .select("*")
-          .is("deleted_at",null)
-          .order("created_at",{ ascending:false });
-
-      if(error){
-        console.error("Error loading superusers:",error);
-      }
-
-      if(data){
-        setSuperusers(data);
-      }
-
-      setLoading(false);
-
-    };
-
-    loadSuperusers();
-
+    loadUsers();
   },[]);
 
-  const getName = (user:Superuser) => {
 
-    const first = user.first_name ?? "";
-    const last = user.last_name ?? "";
 
-    const name = `${first} ${last}`.trim();
+  async function loadUsers(){
 
-    if(name.length > 0){
-      return name;
+    const { data:userData } = await supabase.auth.getUser();
+
+    const { data,error } = await supabase
+      .from("superusers")
+      .select("*")
+      .is("deleted_at",null)
+      .order("first_name",{ ascending:true });
+
+    if(error){
+      console.error(error);
+      return;
     }
 
-    return user.email;
+    setUsers(data || []);
+    setLoading(false);
 
-  };
 
-  return (
 
-    <div className="page-shell">
+    if(userData?.user){
+      await auditLog({
+        userId: userData.user.id,
+        action: "view_superusers",
+        description: "Superuser viewed superusers list"
+      });
+    }
 
-      <button
-        className="btn-secondary"
-        onClick={()=>router.back()}
-      >
-        Back
-      </button>
+  }
+
+
+
+  if(loading){
+    return <div>Loading superusers...</div>;
+  }
+
+
+
+  return(
+
+    <div>
 
       <h1>Superusers</h1>
 
-      <table className="data-table">
+      <div className="table-wrapper">
 
-        <thead>
+        <table className="data-table">
 
-          <tr>
-            <th>Name</th>
-            <th>Email</th>
-            <th>Status</th>
-          </tr>
-
-        </thead>
-
-        <tbody>
-
-          {loading ? (
-
+          <thead>
             <tr>
-              <td colSpan={3}>Loading...</td>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Status</th>
             </tr>
+          </thead>
 
-          ) : superusers.length === 0 ? (
+          <tbody>
 
-            <tr>
-              <td colSpan={3}>No superusers found</td>
-            </tr>
+            {users.map((u)=>{
 
-          ) : (
-
-            superusers.map((user)=>{
+              const name = `${u.first_name || ""} ${u.last_name || ""}`.trim();
 
               return(
 
                 <tr
-                  key={user.id}
+                  key={u.id}
                   className="clickable-row"
-                  onClick={()=>
-                    router.push(
-                      `/dev/superusers/edit/${user.id}`
-                    )
-                  }
+                  onClick={()=>router.push(`/dev/superusers/edit/${u.id}`)}
                 >
 
-                  <td>{getName(user)}</td>
+                  <td>{name || "No Name"}</td>
 
-                  <td>{user.email}</td>
+                  <td>{u.email}</td>
 
-                  <td>
-                    {user.frozen ? "Frozen" : "Active"}
-                  </td>
+                  <td>{u.frozen ? "Frozen" : "Active"}</td>
 
                 </tr>
 
               );
 
-            })
+            })}
 
-          )}
+          </tbody>
 
-        </tbody>
+        </table>
 
-      </table>
+      </div>
 
     </div>
 

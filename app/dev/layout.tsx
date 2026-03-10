@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+
 import { supabase } from "@/supabase/client";
+import { auditLog } from "@/lib/audit/auditLogger";
 
 import DevSidebar from "@/components/devSidebar";
 
 import "@/styles/dev-layout.css";
-import "@/styles/dev-sidebar.css";
 
 export default function DevLayout({
   children,
@@ -18,30 +19,62 @@ export default function DevLayout({
   const router = useRouter();
   const [loading,setLoading] = useState(true);
 
-  useEffect(() => {
+  useEffect(()=>{
+    checkAccess();
+  },[]);
 
-    const checkSession = async () => {
 
-      const { data } = await supabase.auth.getSession();
 
-      if (!data.session) {
-        router.replace("/login");
-        return;
-      }
+  async function checkAccess(){
 
-      setLoading(false);
+    const { data:userData } = await supabase.auth.getUser();
 
-    };
+    if(!userData?.user){
+      router.push("/login");
+      return;
+    }
 
-    checkSession();
+    const user = userData.user;
 
-  }, [router]);
 
-  if (loading) {
-    return <div style={{padding:"40px"}}>Checking login...</div>;
+
+    const { data:superuser } = await supabase
+      .from("superusers")
+      .select("*")
+      .eq("email", user.email)
+      .is("deleted_at", null)
+      .maybeSingle();
+
+
+
+    if(!superuser || superuser.frozen){
+      router.push("/login");
+      return;
+    }
+
+
+
+    await auditLog({
+      userId: user.id,
+      action: "dev_page_view",
+      description: "Superuser accessed dev panel"
+    });
+
+
+
+    setLoading(false);
+
   }
 
-  return (
+
+
+  if(loading){
+    return <div style={{padding:"40px"}}>Loading...</div>;
+  }
+
+
+
+  return(
 
     <div className="dev-layout">
 
@@ -54,4 +87,5 @@ export default function DevLayout({
     </div>
 
   );
+
 }

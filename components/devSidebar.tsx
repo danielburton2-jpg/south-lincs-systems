@@ -1,80 +1,133 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { supabase } from "@/supabase/client";
+import { useState } from "react";
+import { useRouter, usePathname } from "next/navigation";
+
 import "@/styles/dev-sidebar.css";
 
-export default function DevSidebar() {
+export default function DevSidebar(){
 
+  const router = useRouter();
   const pathname = usePathname();
 
-  const handleLogout = async () => {
+  const [superusersOpen,setSuperusersOpen] = useState(
+    pathname.startsWith("/dev/superusers")
+  );
 
-    await supabase.auth.signOut();
+  const [companiesOpen,setCompaniesOpen] = useState(
+    pathname.startsWith("/dev/companies")
+  );
 
-    window.location.href = "/login";
 
+
+  const navigate = (path:string)=>{
+    router.push(path);
   };
 
-  const navItems = [
-    { name: "Dashboard", path: "/dev/dashboard" },
-    { name: "Superusers", path: "/dev/superusers" },
-    { name: "Companies", path: "/dev/companies" },
-    { name: "Features", path: "/dev/features" },
-    { name: "Audit Logs", path: "/dev/audit" },
-    
-  ];
 
-  return (
 
-    <aside className="dev-sidebar">
+  return(
+
+    <div className="dev-sidebar">
 
       <div className="dev-sidebar-header">
 
-        <div className="sidebar-logo">
+        <div className="dev-logo">
           SL
         </div>
 
-        <div className="sidebar-title">
-          <h2>South Lincs</h2>
-          <p>Dev System</p>
+        <div className="dev-title">
+          South Lincs
+          <div className="dev-sub">
+            Dev System
+          </div>
         </div>
 
-      </div>
-
-      <nav className="dev-sidebar-nav">
-
-        {navItems.map((item) => (
-
-          <Link
-            key={item.path}
-            href={item.path}
-            className={
-              pathname === item.path
-                ? "sidebar-link active"
-                : "sidebar-link"
-            }
-          >
-            {item.name}
-          </Link>
-
-        ))}
-
-      </nav>
-
-      <div className="dev-sidebar-footer">
-
         <button
-          onClick={handleLogout}
-          className="logout-button"
+          className="logout-small"
+          onClick={()=>router.push("/login")}
         >
           Logout
         </button>
 
       </div>
 
-    </aside>
+
+
+      <div className="dev-sidebar-menu">
+
+        <div
+          className={`sidebar-item ${pathname === "/dev/dashboard" ? "active":""}`}
+          onClick={()=>navigate("/dev/dashboard")}
+        >
+          Dashboard
+        </div>
+
+
+
+        <div
+          className="sidebar-item"
+          onClick={()=>setSuperusersOpen(!superusersOpen)}
+        >
+          Superusers
+        </div>
+
+        {superusersOpen && (
+
+          <div className="sidebar-submenu">
+
+            <div
+              className={`sidebar-subitem ${pathname === "/dev/superusers/view" ? "active":""}`}
+              onClick={()=>navigate("/dev/superusers/view")}
+            >
+              View Superusers
+            </div>
+
+            <div
+              className={`sidebar-subitem ${pathname === "/dev/superusers/create" ? "active":""}`}
+              onClick={()=>navigate("/dev/superusers/create")}
+            >
+              Create Superuser
+            </div>
+
+          </div>
+
+        )}
+
+
+
+        <div
+          className="sidebar-item"
+          onClick={()=>setCompaniesOpen(!companiesOpen)}
+        >
+          Companies
+        </div>
+
+        {companiesOpen && (
+
+          <div className="sidebar-submenu">
+
+            <div
+              className={`sidebar-subitem ${pathname === "/dev/companies/view" ? "active":""}`}
+              onClick={()=>navigate("/dev/companies/view")}
+            >
+              View Companies
+            </div>
+
+            <div
+              className={`sidebar-subitem ${pathname === "/dev/companies/create" ? "active":""}`}
+              onClick={()=>navigate("/dev/companies/create")}
+            >
+              Create Company
+            </div>
+
+          </div>
+
+        )}
+
+      </div>
+
+    </div>
 
   );
 
