@@ -1,0 +1,107 @@
+/* SIDEBAR CONTAINER */
+
+.dev-sidebar{
+
+  width:220px;
+
+  background:#1f2937;
+
+  color:white;
+
+  padding:20px;
+
+  display:flex;
+
+  flex-direction:column;
+
+  height:100vh;
+
+}
+
+
+/* HEADER AREA */
+
+.sidebar-header{
+
+  display:flex;
+
+  justify-content:space-between;
+
+  align-items:center;
+
+  margin-bottom:30px;
+
+}
+
+
+/* TITLE */
+
+.sidebar-title{
+
+  font-size:18px;
+
+  font-weight:600;
+
+}
+
+
+/* LOGOUT BUTTON */
+
+.logout-button{
+
+  background:#ef4444;
+
+  border:none;
+
+  color:white;
+
+  padding:6px 10px;
+
+  border-radius:6px;
+
+  cursor:pointer;
+
+  font-size:12px;
+
+  transition:background 0.2s;
+
+}
+
+.logout-button:hover{
+
+  background:#dc2626;
+
+}
+
+
+/* NAV BUTTONS */
+
+.sidebar-button{
+
+  background:none;
+
+  border:none;
+
+  color:white;
+
+  text-align:left;
+
+  padding:10px;
+
+  margin-bottom:6px;
+
+  border-radius:6px;
+
+  cursor:pointer;
+
+  font-size:14px;
+
+  transition:background 0.2s;
+
+}
+
+.sidebar-button:hover{
+
+  background:#374151;
+
+}

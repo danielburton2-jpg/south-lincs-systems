@@ -1,0 +1,21 @@
+.dev-layout{
+
+  display:flex;
+
+  height:100vh;
+
+  font-family:Arial, Helvetica, sans-serif;
+
+}
+
+.dev-content{
+
+  flex:1;
+
+  padding:30px;
+
+  background:#f4f6f8;
+
+  overflow:auto;
+
+}
