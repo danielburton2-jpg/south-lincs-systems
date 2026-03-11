@@ -192,5 +192,4 @@ export default function AuditResults({ results, setShowResults }: any){
     </div>
 
   )
-
 }
