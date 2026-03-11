@@ -4,135 +4,179 @@ import { useState, useEffect } from "react"
 import { supabase } from "@/supabase/client"
 import { auditLog } from "@/lib/audit/auditLogger"
 
-import "@/styles/modules.css"
+import "@/styles/forms.css"
 
-export default function AuditSearch({ setAuditResults }: any) {
+export default function AuditSearch({ setAuditResults }: any){
 
-  const [action,setAction] = useState("")
-  const [tableName,setTableName] = useState("")
-  const [userId,setUserId] = useState("")
   const [users,setUsers] = useState<any[]>([])
-  const [loading,setLoading] = useState(false)
+  const [actions,setActions] = useState<any[]>([])
+  const [tables,setTables] = useState<any[]>([])
+  const [companies,setCompanies] = useState<any[]>([])
 
-  /* LOAD SUPERUSERS FOR DROPDOWN */
+  const [user,setUser] = useState("all")
+  const [action,setAction] = useState("all")
+  const [table,setTable] = useState("all")
+  const [company,setCompany] = useState("all")
+
+  /* LOAD FILTER VALUES */
 
   useEffect(()=>{
 
-    const loadUsers = async ()=>{
+    const loadFilters = async ()=>{
 
-      const { data } = await supabase
-        .from("superusers")
-        .select("id,first_name,last_name")
-        .order("first_name")
+      /* LOAD USERS */
 
-      if(data){
-        setUsers(data)
+      const { data:userLogs } = await supabase
+        .from("audit_logs")
+        .select("user_id")
+
+      if(userLogs){
+
+        const userIds = [...new Set(userLogs.map((u:any)=>u.user_id))]
+
+        const { data:userData } = await supabase
+          .from("superusers")
+          .select("id,first_name,last_name")
+          .in("id",userIds)
+
+        if(userData){
+
+          setUsers(userData)
+
+        }
+
+      }
+
+      /* LOAD ACTIONS */
+
+      const { data:actionData } = await supabase
+        .from("audit_logs")
+        .select("action")
+
+      if(actionData){
+
+        const uniqueActions =
+          [...new Set(actionData.map((a:any)=>a.action))]
+
+        setActions(uniqueActions)
+
+      }
+
+      /* LOAD TABLES */
+
+      const { data:tableData } = await supabase
+        .from("audit_logs")
+        .select("table_name")
+
+      if(tableData){
+
+        const uniqueTables =
+          [...new Set(tableData.map((t:any)=>t.table_name))]
+
+        setTables(uniqueTables)
+
+      }
+
+      /* LOAD COMPANIES */
+
+      const { data:companyData } = await supabase
+        .from("companies")
+        .select("id,name")
+        .order("name")
+
+      if(companyData){
+
+        setCompanies(companyData)
+
       }
 
     }
 
-    loadUsers()
+    loadFilters()
 
   },[])
 
-  const handleSearch = async () => {
+  /* SEARCH */
 
-    setLoading(true)
+  const handleSearch = async ()=>{
 
     let query = supabase
       .from("audit_logs")
       .select("*")
+      .order("created_at",{ ascending:false })
 
-    if(action){
+    if(user !== "all"){
+
+      query = query.eq("user_id",user)
+
+    }
+
+    if(action !== "all"){
+
       query = query.eq("action",action)
+
     }
 
-    if(tableName){
-      query = query.eq("table_name",tableName)
+    if(table !== "all"){
+
+      query = query.eq("table_name",table)
+
     }
 
-    if(userId){
-      query = query.eq("user_id",userId)
+    if(company !== "all"){
+
+      query = query.eq("company_id",company)
+
     }
 
-    const { data:logs,error } = await query
-      .order("created_at",{ascending:false})
+    const { data } = await query
 
-    if(error){
-      console.log("Audit search error:",error)
-      setLoading(false)
-      return
+    if(data){
+
+      setAuditResults(data)
+
     }
 
-    const userMap:any = {}
+    await auditLog({
 
-    users.forEach((u:any)=>{
-      userMap[u.id] = `${u.first_name} ${u.last_name}`
+      action:"SEARCH",
+      table:"audit_logs",
+      description:"Audit search executed"
+
     })
-
-    const results = logs?.map((log:any)=>({
-
-      ...log,
-
-      user_name: userMap[log.user_id] || "System"
-
-    }))
-
-    const { data:sessionData } = await supabase.auth.getSession()
-
-    const currentUser = sessionData?.session?.user?.id
-
-    if(currentUser){
-      await auditLog(
-        currentUser,
-        "audit_search",
-        "Audit search executed"
-      )
-    }
-
-    setAuditResults(results)
-
-    setLoading(false)
 
   }
 
-  return (
+  return(
 
-    <div className="module-container">
+    <div className="form-container">
 
-      <h1 className="module-title">
-        Audit Search
-      </h1>
+      <h1>Audit Search</h1>
 
-      {/* USER FILTER */}
+      <div className="stack-form">
 
-      <div className="filter-group">
+        {/* USER */}
 
         <label>User</label>
 
         <select
-          value={userId}
-          onChange={(e)=>setUserId(e.target.value)}
+          value={user}
+          onChange={(e)=>setUser(e.target.value)}
         >
 
-          <option value="">All Users</option>
+          <option value="all">
+            All Users
+          </option>
 
-          {users.map((user)=>(
-            <option
-              key={user.id}
-              value={user.id}
-            >
-              {user.first_name} {user.last_name}
+          {users.map((u:any)=>(
+            <option key={u.id} value={u.id}>
+              {u.first_name} {u.last_name}
             </option>
           ))}
 
         </select>
 
-      </div>
-
-      {/* ACTION FILTER */}
-
-      <div className="filter-group">
+        {/* ACTION */}
 
         <label>Action</label>
 
@@ -141,41 +185,68 @@ export default function AuditSearch({ setAuditResults }: any) {
           onChange={(e)=>setAction(e.target.value)}
         >
 
-          <option value="">All</option>
-          <option value="login">Login</option>
-          <option value="audit_search">Audit Search</option>
+          <option value="all">
+            All
+          </option>
+
+          {actions.map((a:any,index:number)=>(
+            <option key={index} value={a}>
+              {a}
+            </option>
+          ))}
 
         </select>
 
-      </div>
-
-      {/* TABLE FILTER */}
-
-      <div className="filter-group">
+        {/* TABLE */}
 
         <label>Table</label>
 
         <select
-          value={tableName}
-          onChange={(e)=>setTableName(e.target.value)}
+          value={table}
+          onChange={(e)=>setTable(e.target.value)}
         >
 
-          <option value="">All</option>
-          <option value="superusers">Superusers</option>
+          <option value="all">
+            All
+          </option>
+
+          {tables.map((t:any,index:number)=>(
+            <option key={index} value={t}>
+              {t}
+            </option>
+          ))}
 
         </select>
 
+        {/* COMPANY */}
+
+        <label>Company</label>
+
+        <select
+          value={company}
+          onChange={(e)=>setCompany(e.target.value)}
+        >
+
+          <option value="all">
+            All Companies
+          </option>
+
+          {companies.map((c:any)=>(
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+
+        </select>
+
+        <button
+          className="primary-button"
+          onClick={handleSearch}
+        >
+          Search
+        </button>
+
       </div>
-
-      <button
-        className="search-button"
-        onClick={handleSearch}
-        disabled={loading}
-      >
-
-        {loading ? "Searching..." : "Search"}
-
-      </button>
 
     </div>
 

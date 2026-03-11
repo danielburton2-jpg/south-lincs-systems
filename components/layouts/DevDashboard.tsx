@@ -12,6 +12,11 @@ import CreateSuperuser from "@/components/modules/superusers/CreateSuperuser"
 import ViewSuperusers from "@/components/modules/superusers/ViewSuperusers"
 import EditSuperuser from "@/components/modules/superusers/EditSuperuser"
 
+import CreateCompany from "@/components/modules/companies/CreateCompany"
+import ViewCompanies from "@/components/modules/companies/ViewCompanies"
+import ViewCompany from "@/components/modules/companies/ViewCompany"
+import EditCompany from "@/components/modules/companies/EditCompany"
+
 import "@/styles/layout.css"
 
 export default function DevDashboard(){
@@ -24,7 +29,11 @@ export default function DevDashboard(){
 
   const [editUser,setEditUser] = useState<any>(null)
 
-  /* LOAD CURRENT USER NAME */
+  const [selectedCompany,setSelectedCompany] = useState<any>(null)
+
+  const [editCompany,setEditCompany] = useState<any>(null)
+
+  /* LOAD CURRENT USER */
 
   useEffect(()=>{
 
@@ -132,6 +141,58 @@ export default function DevDashboard(){
           <AuditResults
             results={auditResults}
             setShowResults={()=>setAuditResults(null)}
+          />
+
+        )}
+
+        {/* CREATE COMPANY */}
+
+        {page === "companies" && (
+
+          <CreateCompany
+            close={()=>setPage("dashboard")}
+          />
+
+        )}
+
+        {/* VIEW COMPANIES TABLE */}
+
+        {page === "view-companies" && !selectedCompany && !editCompany && (
+
+          <ViewCompanies
+            openCompany={(company:any)=>{
+              setSelectedCompany(company)
+            }}
+          />
+
+        )}
+
+        {/* VIEW COMPANY */}
+
+        {page === "view-companies" && selectedCompany && !editCompany && (
+
+          <ViewCompany
+            company={selectedCompany}
+            close={()=>{
+              setSelectedCompany(null)
+            }}
+            openEdit={(company:any)=>{
+              setEditCompany(company)
+            }}
+          />
+
+        )}
+
+        {/* EDIT COMPANY */}
+
+        {page === "view-companies" && editCompany && (
+
+          <EditCompany
+            company={editCompany}
+            close={()=>{
+              setEditCompany(null)
+              setSelectedCompany(null)
+            }}
           />
 
         )}

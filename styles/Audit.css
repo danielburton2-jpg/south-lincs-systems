@@ -1,0 +1,102 @@
+.audit-container{
+
+  padding:20px;
+  width:100%;
+  max-width:1200px;
+  margin:auto;
+
+}
+
+.audit-title{
+
+  text-align:center;
+  margin-bottom:5px;
+
+}
+
+.audit-subtitle{
+
+  text-align:center;
+  margin-bottom:25px;
+  color:#666;
+
+}
+
+.audit-buttons{
+
+  margin-bottom:20px;
+
+}
+
+.audit-buttons button{
+
+  margin-right:10px;
+  padding:8px 16px;
+  cursor:pointer;
+
+}
+
+.audit-table{
+
+  width:100%;
+  border-collapse:collapse;
+
+}
+
+.audit-table th,
+.audit-table td{
+
+  border:1px solid #ddd;
+  padding:10px;
+  text-align:left;
+
+}
+
+.audit-table th{
+
+  background:#f4f4f4;
+  font-weight:600;
+
+}
+
+.audit-table td{
+
+  word-break:break-word;
+
+}
+
+/* PRINT STYLING */
+
+@media print{
+
+  .dev-sidebar{
+    display:none !important;
+  }
+
+  .sidebar-header{
+    display:none !important;
+  }
+
+  .no-print{
+    display:none;
+  }
+
+  body{
+    margin:0;
+  }
+
+  .audit-container{
+
+    width:100%;
+    max-width:100%;
+    padding:0;
+
+  }
+
+  .audit-table{
+
+    font-size:12px;
+
+  }
+
+}

@@ -5,9 +5,14 @@ import { supabase } from "@/supabase/client"
 
 import "@/styles/sidebar.css"
 
-export default function DevSidebar({ setPage }: any){
+type DevSidebarProps = {
+  setPage: (page: string) => void
+}
+
+export default function DevSidebar({ setPage }: DevSidebarProps){
 
   const [showSuperusers,setShowSuperusers] = useState(false)
+  const [showCompanies,setShowCompanies] = useState(false)
 
   const logout = async ()=>{
 
@@ -36,6 +41,8 @@ export default function DevSidebar({ setPage }: any){
 
       </div>
 
+      {/* DASHBOARD */}
+
       <button
         className="sidebar-button"
         onClick={()=>setPage("dashboard")}
@@ -43,7 +50,7 @@ export default function DevSidebar({ setPage }: any){
         Dashboard
       </button>
 
-      {/* SUPERUSERS DROPDOWN */}
+      {/* SUPERUSERS */}
 
       <button
         className="sidebar-button"
@@ -74,12 +81,45 @@ export default function DevSidebar({ setPage }: any){
 
       )}
 
+      {/* AUDIT */}
+
       <button
         className="sidebar-button"
         onClick={()=>setPage("audit")}
       >
         Audit Logs
       </button>
+
+      {/* COMPANIES */}
+
+      <button
+        className="sidebar-button"
+        onClick={()=>setShowCompanies(!showCompanies)}
+      >
+        Companies
+      </button>
+
+      {showCompanies && (
+
+        <div className="sidebar-submenu">
+
+          <button
+            className="sidebar-sub-button"
+            onClick={()=>setPage("companies")}
+          >
+            Create Company
+          </button>
+
+          <button
+            className="sidebar-sub-button"
+            onClick={()=>setPage("view-companies")}
+          >
+            View Companies
+          </button>
+
+        </div>
+
+      )}
 
     </div>
 
