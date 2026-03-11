@@ -16,6 +16,7 @@ export default function ViewSuperusers({ openEdit }: any){
       const { data } = await supabase
         .from("superusers")
         .select("*")
+        .eq("deleted", false)
         .order("first_name")
 
       if(data){

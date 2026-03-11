@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { supabase } from "@/supabase/client"
 import { auditLog } from "@/lib/audit/auditLogger"
 
@@ -14,7 +14,30 @@ export default function EditSuperuser({ user, close }: any){
   const [password,setPassword] = useState("")
   const [frozen,setFrozen] = useState(user.frozen)
 
+  const [currentUserId,setCurrentUserId] = useState<string | null>(null)
+
+  const [showDeleteBox,setShowDeleteBox] = useState(false)
+  const [confirmPassword,setConfirmPassword] = useState("")
+
   const [loading,setLoading] = useState(false)
+
+  useEffect(()=>{
+
+    const getCurrentUser = async ()=>{
+
+      const { data } = await supabase.auth.getUser()
+
+      const id = data?.user?.id
+
+      if(id){
+        setCurrentUserId(id)
+      }
+
+    }
+
+    getCurrentUser()
+
+  },[])
 
   const saveUser = async (e:any)=>{
 
@@ -34,7 +57,15 @@ export default function EditSuperuser({ user, close }: any){
     const newName =
       `${firstName} ${lastName}`
 
-    /* UPDATE SUPERUSER */
+    if(currentUser && user.id === currentUser && frozen){
+
+      alert("You cannot freeze your own account")
+
+      setFrozen(false)
+      setLoading(false)
+      return
+
+    }
 
     await supabase
       .from("superusers")
@@ -45,8 +76,6 @@ export default function EditSuperuser({ user, close }: any){
         frozen:frozen
       })
       .eq("id",user.id)
-
-    /* PASSWORD CHANGE */
 
     if(password){
 
@@ -68,8 +97,6 @@ export default function EditSuperuser({ user, close }: any){
 
     }
 
-    /* NAME CHANGE */
-
     if(oldName !== newName && currentUser){
 
       await auditLog(
@@ -81,8 +108,6 @@ export default function EditSuperuser({ user, close }: any){
       )
 
     }
-
-    /* FREEZE / UNFREEZE */
 
     if(user.frozen !== frozen && currentUser){
 
@@ -110,22 +135,44 @@ export default function EditSuperuser({ user, close }: any){
 
   }
 
-  const deleteUser = async ()=>{
+  const confirmDeleteUser = async ()=>{
 
-    const confirmDelete =
-      confirm("Delete this superuser?")
+    if(currentUserId && user.id === currentUserId){
 
-    if(!confirmDelete) return
+      alert("You cannot delete your own account")
+      return
+
+    }
 
     const { data:sessionData } =
       await supabase.auth.getSession()
+
+    const currentEmail =
+      sessionData?.session?.user?.email
+
+    const { error } =
+      await supabase.auth.signInWithPassword({
+        email:currentEmail!,
+        password:confirmPassword
+      })
+
+    if(error){
+
+      alert("Incorrect password")
+      return
+
+    }
 
     const currentUser =
       sessionData?.session?.user?.id
 
     await supabase
       .from("superusers")
-      .delete()
+      .update({
+        deleted:true,
+        frozen:true,
+        deleted_at:new Date().toISOString()
+      })
       .eq("id",user.id)
 
     if(currentUser){
@@ -133,7 +180,7 @@ export default function EditSuperuser({ user, close }: any){
       await auditLog(
         currentUser,
         "delete_superuser",
-        `Deleted superuser ${user.first_name} ${user.last_name}`,
+        `Soft deleted superuser ${user.first_name} ${user.last_name}`,
         "superusers",
         user.id
       )
@@ -218,7 +265,7 @@ export default function EditSuperuser({ user, close }: any){
 
           <button
             type="button"
-            onClick={deleteUser}
+            onClick={()=>setShowDeleteBox(true)}
             style={{background:"#dc2626"}}
           >
             Delete
@@ -227,6 +274,36 @@ export default function EditSuperuser({ user, close }: any){
         </div>
 
       </form>
+
+      {showDeleteBox && (
+
+        <div className="delete-box">
+
+          <h3>Confirm Delete</h3>
+
+          <p>Enter your password to delete this user</p>
+
+          <input
+            type="password"
+            value={confirmPassword}
+            onChange={(e)=>setConfirmPassword(e.target.value)}
+          />
+
+          <div className="form-buttons">
+
+            <button onClick={confirmDeleteUser}>
+              Confirm Delete
+            </button>
+
+            <button onClick={()=>setShowDeleteBox(false)}>
+              Cancel
+            </button>
+
+          </div>
+
+        </div>
+
+      )}
 
     </div>
 
