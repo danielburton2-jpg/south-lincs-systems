@@ -255,3 +255,24 @@
   }
 
 }
+/* FEATURE SECTION */
+
+.feature-section{
+  margin-top:20px;
+}
+
+/* EACH FEATURE ROW */
+
+.feature-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  margin-bottom:8px;
+  font-size:14px;
+  cursor:pointer;
+}
+
+.feature-row input[type="checkbox"]{
+  width:16px;
+  height:16px;
+}

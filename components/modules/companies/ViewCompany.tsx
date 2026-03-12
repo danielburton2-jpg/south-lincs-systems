@@ -1,84 +1,131 @@
 "use client"
 
-import { useEffect } from "react"
-import { auditLog } from "@/lib/audit/auditLogger"
+import { useEffect, useState } from "react"
+import { supabase } from "@/supabase/client"
 
-import "@/styles/forms.css"
+import "@/styles/company.css"
 
 export default function ViewCompany({
   company,
   close,
-  openEdit
+  openEdit,
+  openCreateUser
 }: any){
 
-  if(!company) return null
+  const [activeUsers,setActiveUsers] = useState(0)
+  const [inactiveUsers,setInactiveUsers] = useState(0)
 
   useEffect(()=>{
 
-    auditLog({
+    const loadStats = async ()=>{
 
-      action:"VIEW",
-      table:"companies",
+      const { data } = await supabase
+        .from("company_users")
+        .select("status")
+        .eq("company_id",company.id)
 
-      companyId:company.id,
-      recordId:company.id,
+      if(!data) return
 
-      description:`Viewed company ${company.name}`
+      const active =
+        data.filter((u:any)=>u.status === "active").length
 
-    })
+      const inactive =
+        data.filter((u:any)=>u.status !== "active").length
 
-  },[company])
+      setActiveUsers(active)
+      setInactiveUsers(inactive)
+
+    }
+
+    loadStats()
+
+  },[company.id])
 
   return(
 
-    <div className="form-container">
+    <div className="company-wrapper">
 
-      <h1>{company.name}</h1>
+      <h1 className="company-title">
+        {company.name}
+      </h1>
 
-      <form className="stack-form">
+      {/* TOP SECTION */}
 
-        <label>Company Name</label>
-        <input value={company.name} readOnly />
+      <div className="company-top">
 
-        <label>Subscription Start</label>
-        <input value={company.subscription_start || ""} readOnly />
+        {/* USER STATS */}
 
-        <label>Subscription End</label>
-        <input value={company.subscription_end || ""} readOnly />
+        <div className="company-stats">
 
-        <label>Active</label>
-        <input value={company.active ? "Yes" : "No"} readOnly />
+          <h3>User Statistics</h3>
 
-        <label>Override</label>
-        <input value={company.override ? "Yes" : "No"} readOnly />
+          <div className="stat-row">
+            <span>{activeUsers}</span>
+            Active Users
+          </div>
 
-        <div className="stack-button-group">
+          <div className="stat-row">
+            <span>{inactiveUsers}</span>
+            Inactive Users
+          </div>
 
-          <button
-            type="button"
-            onClick={()=>openEdit(company)}
-          >
-            Edit
-          </button>
-
-          <button type="button">
-            Create Users
-          </button>
-
-          <button type="button">
-            View Company Users
-          </button>
-
-          <button
-            type="button"
-            onClick={close}
-          >
-            Cancel
-          </button>
+          <div className="stat-row">
+            <span>{activeUsers + inactiveUsers}</span>
+            Total Users
+          </div>
 
         </div>
 
-      </form>
+        {/* COMPANY INFO */}
+
+        <div className="company-info">
+
+          <label>Subscription Start</label>
+          <input value={company.subscription_start} disabled />
+
+          <label>Subscription End</label>
+          <input value={company.subscription_end} disabled />
+
+          <label>Active</label>
+          <input value={company.active ? "Yes" : "No"} disabled />
+
+          <label>Override</label>
+          <input value={company.override ? "Yes" : "No"} disabled />
+
+        </div>
+
+      </div>
+
+      {/* ACTION BUTTONS */}
+
+      <div className="company-actions">
+
+        <button
+          className="primary-button"
+          onClick={()=>openEdit(company)}
+        >
+          Edit
+        </button>
+
+        <button
+          className="primary-button"
+          onClick={()=>openCreateUser(company)}
+        >
+          Create Users
+        </button>
+
+        <button className="primary-button">
+          View Company Users
+        </button>
+
+        <button
+          className="secondary-button"
+          onClick={close}
+        >
+          Cancel
+        </button>
+
+      </div>
 
     </div>
 

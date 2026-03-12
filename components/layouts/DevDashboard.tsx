@@ -13,6 +13,7 @@ import CreateCompany from "@/components/modules/companies/CreateCompany"
 import ViewCompanies from "@/components/modules/companies/ViewCompanies"
 import ViewCompany from "@/components/modules/companies/ViewCompany"
 import EditCompany from "@/components/modules/companies/EditCompany"
+import CreateCompanyUser from "@/components/modules/companies/CreateCompanyUser"
 
 import "@/styles/layout.css"
 
@@ -26,6 +27,7 @@ export default function DevDashboard(){
 
   const [selectedCompany,setSelectedCompany] = useState<any>(null)
   const [editCompany,setEditCompany] = useState<any>(null)
+  const [createUserCompany,setCreateUserCompany] = useState<any>(null)
 
   /* LOAD CURRENT USER */
 
@@ -140,12 +142,13 @@ export default function DevDashboard(){
 
         {/* VIEW COMPANY PANEL */}
 
-        {page === "view-companies" && selectedCompany && !editCompany && (
+        {page === "view-companies" && selectedCompany && !editCompany && !createUserCompany && (
 
           <ViewCompany
             company={selectedCompany}
             close={()=>setSelectedCompany(null)}
             openEdit={setEditCompany}
+            openCreateUser={setCreateUserCompany}
           />
 
         )}
@@ -157,6 +160,17 @@ export default function DevDashboard(){
           <EditCompany
             company={editCompany}
             close={()=>setEditCompany(null)}
+          />
+
+        )}
+
+        {/* CREATE COMPANY USER */}
+
+        {page === "view-companies" && createUserCompany && (
+
+          <CreateCompanyUser
+            company={createUserCompany}
+            close={()=>setCreateUserCompany(null)}
           />
 
         )}
