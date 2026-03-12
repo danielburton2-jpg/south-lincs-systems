@@ -5,11 +5,7 @@ import { supabase } from "@/supabase/client"
 
 import "@/styles/sidebar.css"
 
-type DevSidebarProps = {
-  setPage: (page: string) => void
-}
-
-export default function DevSidebar({ setPage }: DevSidebarProps){
+export default function DevSidebar({ setPage }: any){
 
   const [showSuperusers,setShowSuperusers] = useState(false)
   const [showCompanies,setShowCompanies] = useState(false)
@@ -81,15 +77,6 @@ export default function DevSidebar({ setPage }: DevSidebarProps){
 
       )}
 
-      {/* AUDIT */}
-
-      <button
-        className="sidebar-button"
-        onClick={()=>setPage("audit")}
-      >
-        Audit Logs
-      </button>
-
       {/* COMPANIES */}
 
       <button
@@ -105,7 +92,7 @@ export default function DevSidebar({ setPage }: DevSidebarProps){
 
           <button
             className="sidebar-sub-button"
-            onClick={()=>setPage("companies")}
+            onClick={()=>setPage("create-company")}
           >
             Create Company
           </button>
