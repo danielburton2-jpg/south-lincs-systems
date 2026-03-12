@@ -5,17 +5,12 @@ import { supabase } from "@/supabase/client"
 
 import DevSidebar from "@/components/sidebars/DevSidebar"
 
-import AuditSearch from "@/components/modules/audit/AuditSearch"
-import AuditResults from "@/components/modules/audit/AuditResults"
-
 import CreateSuperuser from "@/components/modules/superusers/CreateSuperuser"
 import ViewSuperusers from "@/components/modules/superusers/ViewSuperusers"
 import EditSuperuser from "@/components/modules/superusers/EditSuperuser"
 
 import CreateCompany from "@/components/modules/companies/CreateCompany"
 import ViewCompanies from "@/components/modules/companies/ViewCompanies"
-import ViewCompany from "@/components/modules/companies/ViewCompany"
-import EditCompany from "@/components/modules/companies/EditCompany"
 
 import "@/styles/layout.css"
 
@@ -23,15 +18,9 @@ export default function DevDashboard(){
 
   const [page,setPage] = useState("dashboard")
 
-  const [auditResults,setAuditResults] = useState<any>(null)
-
   const [userName,setUserName] = useState("")
 
   const [editUser,setEditUser] = useState<any>(null)
-
-  const [selectedCompany,setSelectedCompany] = useState<any>(null)
-
-  const [editCompany,setEditCompany] = useState<any>(null)
 
   /* LOAD CURRENT USER */
 
@@ -124,76 +113,21 @@ export default function DevDashboard(){
 
         )}
 
-        {/* AUDIT SEARCH */}
-
-        {page === "audit" && !auditResults && (
-
-          <AuditSearch
-            setAuditResults={setAuditResults}
-          />
-
-        )}
-
-        {/* AUDIT RESULTS */}
-
-        {page === "audit" && auditResults && (
-
-          <AuditResults
-            results={auditResults}
-            setShowResults={()=>setAuditResults(null)}
-          />
-
-        )}
-
         {/* CREATE COMPANY */}
 
-        {page === "companies" && (
+        {page === "create-company" && (
 
           <CreateCompany
-            close={()=>setPage("dashboard")}
+            close={()=>setPage("view-companies")}
           />
 
         )}
 
-        {/* VIEW COMPANIES TABLE */}
+        {/* VIEW COMPANIES */}
 
-        {page === "view-companies" && !selectedCompany && !editCompany && (
+        {page === "view-companies" && (
 
-          <ViewCompanies
-            openCompany={(company:any)=>{
-              setSelectedCompany(company)
-            }}
-          />
-
-        )}
-
-        {/* VIEW COMPANY */}
-
-        {page === "view-companies" && selectedCompany && !editCompany && (
-
-          <ViewCompany
-            company={selectedCompany}
-            close={()=>{
-              setSelectedCompany(null)
-            }}
-            openEdit={(company:any)=>{
-              setEditCompany(company)
-            }}
-          />
-
-        )}
-
-        {/* EDIT COMPANY */}
-
-        {page === "view-companies" && editCompany && (
-
-          <EditCompany
-            company={editCompany}
-            close={()=>{
-              setEditCompany(null)
-              setSelectedCompany(null)
-            }}
-          />
+          <ViewCompanies/>
 
         )}
 
