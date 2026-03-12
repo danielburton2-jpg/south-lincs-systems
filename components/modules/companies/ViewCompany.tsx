@@ -9,7 +9,8 @@ export default function ViewCompany({
   company,
   close,
   openEdit,
-  openCreateUser
+  openCreateUser,
+  openViewUsers
 }: any){
 
   const [activeUsers,setActiveUsers] = useState(0)
@@ -48,8 +49,6 @@ export default function ViewCompany({
       <h1 className="company-title">
         {company.name}
       </h1>
-
-      {/* TOP SECTION */}
 
       <div className="company-top">
 
@@ -114,7 +113,10 @@ export default function ViewCompany({
           Create Users
         </button>
 
-        <button className="primary-button">
+        <button
+          className="primary-button"
+          onClick={()=>openViewUsers(company)}
+        >
           View Company Users
         </button>
 
