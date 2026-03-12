@@ -1,233 +1,292 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState,useEffect } from "react"
 import { supabase } from "@/supabase/client"
 import { auditLog } from "@/lib/audit/auditLogger"
 
 import "@/styles/forms.css"
 
-export default function CreateCompanyUser({ company, close }: any){
+export default function CreateCompanyUser({ company, close }:any){
 
-  const [firstName,setFirstName] = useState("")
-  const [lastName,setLastName] = useState("")
-  const [email,setEmail] = useState("")
-  const [phone,setPhone] = useState("")
-  const [employeeNumber,setEmployeeNumber] = useState("")
-  const [role,setRole] = useState("")
-  const [jobTitle,setJobTitle] = useState("")
-  const [password,setPassword] = useState("")
-  const [confirmPassword,setConfirmPassword] = useState("")
-  const [status,setStatus] = useState("active")
+const [firstName,setFirstName] = useState("")
+const [lastName,setLastName] = useState("")
+const [email,setEmail] = useState("")
+const [phone,setPhone] = useState("")
+const [employeeNumber,setEmployeeNumber] = useState("")
+const [role,setRole] = useState("employee")
+const [jobTitle,setJobTitle] = useState("")
+const [password,setPassword] = useState("")
+const [confirmPassword,setConfirmPassword] = useState("")
+const [status,setStatus] = useState("active")
 
-  const [features,setFeatures] = useState<any[]>([])
-  const [selectedFeatures,setSelectedFeatures] = useState<any>({})
+const [features,setFeatures] = useState<any[]>([])
+const [selectedFeatures,setSelectedFeatures] = useState<any>({})
 
-  useEffect(()=>{
+const [jobTitles,setJobTitles] = useState<string[]>([])
+const [managerTitles,setManagerTitles] = useState<any>({})
 
-    const loadFeatures = async ()=>{
+useEffect(()=>{
 
-      const { data } = await supabase
-        .from("features")
-        .select("*")
-        .order("name")
+loadFeatures()
+loadJobTitles()
 
-      if(data){
-        setFeatures(data)
-      }
+},[])
 
-    }
+const loadFeatures = async()=>{
 
-    loadFeatures()
+const { data } = await supabase
+.from("features")
+.select("*")
+.order("name")
 
-  },[])
+if(data) setFeatures(data)
 
-  const toggleFeature = (key:any)=>{
+}
 
-    setSelectedFeatures((prev:any)=>({
+const loadJobTitles = async()=>{
 
-      ...prev,
-      [key]: !prev[key]
+const { data } = await supabase
+.from("company_users")
+.select("job_title")
+.eq("company_id",company.id)
+.eq("role","employee")
 
-    }))
+if(!data) return
 
-  }
+const unique = [
+...new Set(
+data
+.map((u:any)=>u.job_title)
+.filter(Boolean)
+)
+]
 
-  const createUser = async ()=>{
+setJobTitles(unique)
 
-    if(password !== confirmPassword){
+}
 
-      alert("Passwords do not match")
-      return
+const toggleFeature = (key:any)=>{
 
-    }
+setSelectedFeatures((prev:any)=>({
 
-    const { data,error } = await supabase
-      .from("company_users")
-      .insert({
+...prev,
+[key]:!prev[key]
 
-        company_id: company.id,
+}))
 
-        first_name:firstName,
-        last_name:lastName,
+}
 
-        email:email,
-        phone:phone,
+const toggleTitle = (title:any)=>{
 
-        employee_number:employeeNumber,
+setManagerTitles((prev:any)=>({
 
-        role:role,
-        job_title:jobTitle,
+...prev,
+[title]:!prev[title]
 
-        password:password,
+}))
 
-        status:status
+}
 
-      })
-      .select()
-      .single()
+const createUser = async()=>{
 
-    if(error){
+if(password !== confirmPassword){
 
-      alert(error.message)
-      return
+alert("Passwords do not match")
+return
 
-    }
+}
 
-    const userId = data.id
+const { data,error } = await supabase
+.from("company_users")
+.insert({
 
-    if(role === "manager" || role === "employee"){
+first_name:firstName,
+last_name:lastName,
+email:email,
+phone:phone,
+employee_number:employeeNumber,
+role:role,
+job_title:jobTitle.trim(),
+password:password,
+status:status,
+company_id:company.id
 
-      const featureRows = Object.keys(selectedFeatures)
-        .filter(key => selectedFeatures[key])
-        .map(key => ({
+})
+.select()
+.single()
 
-          user_id:userId,
-          feature_key:key
+if(error){
 
-        }))
+alert(error.message)
+return
 
-      if(featureRows.length){
+}
 
-        await supabase
-          .from("user_features")
-          .insert(featureRows)
+const userId = data.id
 
-      }
+const featureRows = Object.keys(selectedFeatures)
+.filter(key=>selectedFeatures[key])
+.map(key=>({
 
-    }
+user_id:userId,
+feature_key:key
 
-    await auditLog({
+}))
 
-      action:"create_user",
-      table:"company_users",
-      description:`Created user ${firstName} ${lastName}`,
-      companyId:company.id,
-      targetId:userId
+if(featureRows.length){
 
-    })
+await supabase
+.from("user_features")
+.insert(featureRows)
 
-    close()
+}
 
-  }
+if(role === "manager"){
 
-  return(
+const managerRows = Object.keys(managerTitles)
+.filter(title=>managerTitles[title])
+.map(title=>({
 
-    <div className="form-container">
+manager_id:userId,
+job_title:title
 
-      <h1>Create User</h1>
+}))
 
-      <div className="stack-form">
+if(managerRows.length){
 
-        <label>First Name</label>
-        <input value={firstName} onChange={(e)=>setFirstName(e.target.value)} autoComplete="off"/>
+await supabase
+.from("manager_job_titles")
+.insert(managerRows)
 
-        <label>Last Name</label>
-        <input value={lastName} onChange={(e)=>setLastName(e.target.value)} autoComplete="off"/>
+}
 
-        <label>Email</label>
-        <input value={email} onChange={(e)=>setEmail(e.target.value)} autoComplete="off"/>
+}
 
-        <label>Phone</label>
-        <input value={phone} onChange={(e)=>setPhone(e.target.value)} autoComplete="off"/>
+await auditLog({
 
-        <label>Employee Number</label>
-        <input value={employeeNumber} onChange={(e)=>setEmployeeNumber(e.target.value)} autoComplete="off"/>
+action:"create_user",
+table:"company_users",
+description:`Created user ${firstName} ${lastName}`,
+companyId:company.id,
+targetId:userId
 
-        <label>Role</label>
-        <select value={role} onChange={(e)=>setRole(e.target.value)}>
+})
 
-          <option value="">Select Role</option>
-          <option value="admin">Admin</option>
-          <option value="manager">Manager</option>
-          <option value="employee">Employee</option>
+close()
 
-        </select>
+}
 
-        <label>Job Title</label>
-        <input value={jobTitle} onChange={(e)=>setJobTitle(e.target.value)} autoComplete="off"/>
+return(
 
-        <h3>Security</h3>
+<div className="form-container">
 
-        <label>Password</label>
-        <input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} autoComplete="new-password"/>
+<h1>Create User</h1>
 
-        <label>Confirm Password</label>
-        <input type="password" value={confirmPassword} onChange={(e)=>setConfirmPassword(e.target.value)} autoComplete="new-password"/>
+<div className="stack-form">
 
-        <label>Status</label>
-        <select value={status} onChange={(e)=>setStatus(e.target.value)}>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-        </select>
+<label>First Name</label>
+<input value={firstName} onChange={(e)=>setFirstName(e.target.value)} autoComplete="off"/>
 
-        {(role === "manager" || role === "employee") && (
+<label>Last Name</label>
+<input value={lastName} onChange={(e)=>setLastName(e.target.value)} autoComplete="off"/>
 
-          <div className="feature-section">
+<label>Email</label>
+<input value={email} onChange={(e)=>setEmail(e.target.value)} autoComplete="off"/>
 
-            <h3>User Features</h3>
+<label>Phone</label>
+<input value={phone} onChange={(e)=>setPhone(e.target.value)} autoComplete="off"/>
 
-            {features.map((feature:any)=>(
+<label>Employee Number</label>
+<input value={employeeNumber} onChange={(e)=>setEmployeeNumber(e.target.value)} autoComplete="off"/>
 
-              <label key={feature.key} className="feature-row">
+<label>Role</label>
+<select value={role} onChange={(e)=>setRole(e.target.value)}>
+<option value="admin">Admin</option>
+<option value="manager">Manager</option>
+<option value="employee">Employee</option>
+</select>
 
-                <input
-                  type="checkbox"
-                  checked={selectedFeatures[feature.key] || false}
-                  onChange={()=>toggleFeature(feature.key)}
-                />
+<label>Job Title</label>
+<input value={jobTitle} onChange={(e)=>setJobTitle(e.target.value)} autoComplete="off"/>
 
-                {feature.name}
+<label>Password</label>
+<input type="password" value={password} onChange={(e)=>setPassword(e.target.value)} autoComplete="new-password"/>
 
-              </label>
+<label>Confirm Password</label>
+<input type="password" value={confirmPassword} onChange={(e)=>setConfirmPassword(e.target.value)} autoComplete="new-password"/>
 
-            ))}
+<label>Status</label>
+<select value={status} onChange={(e)=>setStatus(e.target.value)}>
+<option value="active">Active</option>
+<option value="inactive">Inactive</option>
+</select>
 
-          </div>
+{(role==="manager" || role==="employee") && (
 
-        )}
+<div className="feature-section">
 
-        <div className="form-buttons">
+<h3>User Features</h3>
 
-          <button
-            className="secondary-button"
-            onClick={close}
-          >
-            Cancel
-          </button>
+{features.map((feature:any)=>(
+<label key={feature.key} className="feature-row">
 
-          <button
-            className="primary-button"
-            onClick={createUser}
-          >
-            Create User
-          </button>
+<input
+type="checkbox"
+checked={selectedFeatures[feature.key] || false}
+onChange={()=>toggleFeature(feature.key)}
+/>
 
-        </div>
+{feature.name}
 
-      </div>
+</label>
+))}
 
-    </div>
+</div>
 
-  )
+)}
+
+{role==="manager" && (
+
+<div className="feature-section">
+
+<h3>Manage Job Titles</h3>
+
+{jobTitles.map(title=>(
+
+<label key={title} className="feature-row">
+
+<input
+type="checkbox"
+checked={managerTitles[title] || false}
+onChange={()=>toggleTitle(title)}
+/>
+
+{title}
+
+</label>
+
+))}
+
+</div>
+
+)}
+
+<div className="form-buttons">
+
+<button className="secondary-button" onClick={close}>
+Cancel
+</button>
+
+<button className="primary-button" onClick={createUser}>
+Create User
+</button>
+
+</div>
+
+</div>
+
+</div>
+
+)
 
 }

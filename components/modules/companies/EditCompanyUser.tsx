@@ -1,234 +1,238 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState,useEffect } from "react"
 import { supabase } from "@/supabase/client"
 import { auditLog } from "@/lib/audit/auditLogger"
 
 import "@/styles/forms.css"
 
-export default function EditCompanyUser({ user, close }: any){
+export default function EditCompanyUser({ user, close }:any){
 
-  const [firstName,setFirstName] = useState("")
-  const [lastName,setLastName] = useState("")
-  const [email,setEmail] = useState("")
-  const [phone,setPhone] = useState("")
-  const [employeeNumber,setEmployeeNumber] = useState("")
-  const [role,setRole] = useState("")
-  const [jobTitle,setJobTitle] = useState("")
-  const [status,setStatus] = useState("active")
+const [firstName,setFirstName] = useState("")
+const [lastName,setLastName] = useState("")
+const [role,setRole] = useState("")
+const [jobTitle,setJobTitle] = useState("")
+const [status,setStatus] = useState("active")
 
-  const [features,setFeatures] = useState<any[]>([])
-  const [selectedFeatures,setSelectedFeatures] = useState<any>({})
+const [jobTitles,setJobTitles] = useState<string[]>([])
+const [managerTitles,setManagerTitles] = useState<any>({})
 
-  useEffect(()=>{
+useEffect(()=>{
 
-    loadUser()
-    loadFeatures()
+loadUser()
+loadJobTitles()
+loadManagerTitles()
 
-  },[])
+},[])
 
-  const loadUser = ()=>{
+const loadUser = ()=>{
 
-    setFirstName(user.first_name)
-    setLastName(user.last_name)
-    setEmail(user.email)
-    setPhone(user.phone)
-    setEmployeeNumber(user.employee_number)
-    setRole(user.role)
-    setJobTitle(user.job_title)
-    setStatus(user.status)
+setFirstName(user.first_name)
+setLastName(user.last_name)
+setRole(user.role)
+setJobTitle(user.job_title)
+setStatus(user.status)
 
-  }
+}
 
-  const loadFeatures = async ()=>{
+const loadJobTitles = async()=>{
 
-    const { data } = await supabase
-      .from("features")
-      .select("*")
-      .order("name")
+const { data,error } = await supabase
+.from("company_users")
+.select("job_title")
+.eq("company_id",user.company_id)
+.eq("role","employee")
 
-    if(data){
-      setFeatures(data)
-    }
+if(error) return
 
-    const { data: userFeatures } = await supabase
-      .from("user_features")
-      .select("*")
-      .eq("user_id",user.id)
+const unique = [
+...new Set(
+data
+?.map((u:any)=>u.job_title)
+.filter(Boolean)
+)
+]
 
-    if(userFeatures){
+setJobTitles(unique)
 
-      const map:any = {}
+}
 
-      userFeatures.forEach((f:any)=>{
-        map[f.feature_key] = true
-      })
+const loadManagerTitles = async()=>{
 
-      setSelectedFeatures(map)
+const { data,error } = await supabase
+.from("manager_job_titles")
+.select("job_title")
+.eq("manager_id",user.id)
 
-    }
+if(error) return
 
-  }
+const map:any={}
 
-  const toggleFeature = (key:any)=>{
+data?.forEach((t:any)=>{
 
-    setSelectedFeatures((prev:any)=>({
+map[t.job_title]=true
 
-      ...prev,
-      [key]: !prev[key]
+})
 
-    }))
+setManagerTitles(map)
 
-  }
+}
 
-  const saveUser = async ()=>{
+const toggleTitle = (title:any)=>{
 
-    const { error } = await supabase
-      .from("company_users")
-      .update({
+setManagerTitles((prev:any)=>({
 
-        first_name:firstName,
-        last_name:lastName,
-        email:email,
-        phone:phone,
-        employee_number:employeeNumber,
-        role:role,
-        job_title:jobTitle,
-        status:status
+...prev,
+[title]:!prev[title]
 
-      })
-      .eq("id",user.id)
+}))
 
-    if(error){
+}
 
-      alert(error.message)
-      return
+const saveUser = async()=>{
 
-    }
+const { error } = await supabase
+.from("company_users")
+.update({
 
-    await supabase
-      .from("user_features")
-      .delete()
-      .eq("user_id",user.id)
+first_name:firstName,
+last_name:lastName,
+role:role,
+job_title:jobTitle.trim(),
+status:status
 
-    const rows = Object.keys(selectedFeatures)
-      .filter(key => selectedFeatures[key])
-      .map(key => ({
-        user_id:user.id,
-        feature_key:key
-      }))
+})
+.eq("id",user.id)
 
-    if(rows.length){
+if(error){
 
-      await supabase
-        .from("user_features")
-        .insert(rows)
+alert(error.message)
+return
 
-    }
+}
 
-    await auditLog({
+await supabase
+.from("manager_job_titles")
+.delete()
+.eq("manager_id",user.id)
 
-      action:"update_user",
-      table:"company_users",
-      description:`Edited user ${firstName} ${lastName}`,
-      companyId:user.company_id,
-      targetId:user.id
+if(role==="manager"){
 
-    })
+const rows = Object.keys(managerTitles)
+.filter(title=>managerTitles[title])
+.map(title=>({
 
-    close()
+manager_id:user.id,
+job_title:title
 
-  }
+}))
 
-  return(
+if(rows.length){
 
-    <div className="form-container">
+await supabase
+.from("manager_job_titles")
+.insert(rows)
 
-      <h1>Edit User</h1>
+}
 
-      <div className="stack-form">
+}
 
-        <label>First Name</label>
-        <input value={firstName} onChange={(e)=>setFirstName(e.target.value)} />
+await auditLog({
 
-        <label>Last Name</label>
-        <input value={lastName} onChange={(e)=>setLastName(e.target.value)} />
+action:"update_user",
+table:"company_users",
+description:`Updated user ${firstName} ${lastName}`,
+companyId:user.company_id,
+targetId:user.id
 
-        <label>Email</label>
-        <input value={email} onChange={(e)=>setEmail(e.target.value)} />
+})
 
-        <label>Phone</label>
-        <input value={phone} onChange={(e)=>setPhone(e.target.value)} />
+close()
 
-        <label>Employee Number</label>
-        <input value={employeeNumber} onChange={(e)=>setEmployeeNumber(e.target.value)} />
+}
 
-        <label>Role</label>
-        <select value={role} onChange={(e)=>setRole(e.target.value)}>
+return(
 
-          <option value="admin">Admin</option>
-          <option value="manager">Manager</option>
-          <option value="employee">Employee</option>
+<div className="form-container">
 
-        </select>
+<h1>Edit User</h1>
 
-        <label>Job Title</label>
-        <input value={jobTitle} onChange={(e)=>setJobTitle(e.target.value)} />
+<div className="stack-form">
 
-        <label>Status</label>
-        <select value={status} onChange={(e)=>setStatus(e.target.value)}>
-          <option value="active">Active</option>
-          <option value="inactive">Inactive</option>
-        </select>
+<label>First Name</label>
+<input value={firstName} onChange={(e)=>setFirstName(e.target.value)} />
 
-        {(role === "manager" || role === "employee") && (
+<label>Last Name</label>
+<input value={lastName} onChange={(e)=>setLastName(e.target.value)} />
 
-          <div className="feature-section">
+<label>Role</label>
+<select value={role} onChange={(e)=>setRole(e.target.value)}>
 
-            <h3>User Features</h3>
+<option value="admin">Admin</option>
+<option value="manager">Manager</option>
+<option value="employee">Employee</option>
 
-            {features.map((feature:any)=>(
+</select>
 
-              <label key={feature.key} className="feature-row">
+<label>Job Title</label>
+<input value={jobTitle} onChange={(e)=>setJobTitle(e.target.value)} />
 
-                <input
-                  type="checkbox"
-                  checked={selectedFeatures[feature.key] || false}
-                  onChange={()=>toggleFeature(feature.key)}
-                />
+<label>Status</label>
+<select value={status} onChange={(e)=>setStatus(e.target.value)}>
 
-                {feature.name}
+<option value="active">Active</option>
+<option value="inactive">Inactive</option>
 
-              </label>
+</select>
 
-            ))}
+{role==="manager" && (
 
-          </div>
+<div className="feature-section">
 
-        )}
+<h3>Manage Job Titles</h3>
 
-        <div className="form-buttons">
+{jobTitles.map(title=>(
 
-          <button
-            className="secondary-button"
-            onClick={close}
-          >
-            Cancel
-          </button>
+<label key={title} className="feature-row">
 
-          <button
-            className="primary-button"
-            onClick={saveUser}
-          >
-            Save Changes
-          </button>
+<input
+type="checkbox"
+checked={managerTitles[title] || false}
+onChange={()=>toggleTitle(title)}
+/>
 
-        </div>
+{title}
 
-      </div>
+</label>
 
-    </div>
+))}
 
-  )
+</div>
+
+)}
+
+<div className="form-buttons">
+
+<button
+className="secondary-button"
+onClick={close}
+>
+Cancel
+</button>
+
+<button
+className="primary-button"
+onClick={saveUser}
+>
+Save Changes
+</button>
+
+</div>
+
+</div>
+
+</div>
+
+)
 
 }

@@ -1,31 +1,14 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState,useEffect } from "react"
 import { supabase } from "@/supabase/client"
 import { auditLog } from "@/lib/audit/auditLogger"
 
-import "@/styles/tables.css"
+import "@/styles/table.css"
 
-export default function ApproveRequests(){
+export default function ApproveRequests({ company }: any){
 
   const [requests,setRequests] = useState<any[]>([])
-  const [loading,setLoading] = useState(true)
-
-  const loadRequests = async ()=>{
-
-    const { data,error } = await supabase
-      .from("time_requests")
-      .select("*")
-      .eq("status","pending")
-      .order("created_at",{ascending:true})
-
-    if(data){
-      setRequests(data)
-    }
-
-    setLoading(false)
-
-  }
 
   useEffect(()=>{
 
@@ -33,130 +16,133 @@ export default function ApproveRequests(){
 
   },[])
 
-  const updateStatus = async (
-    id:string,
-    status:string
-  )=>{
+  const loadRequests = async ()=>{
 
-    const { data:userData } =
-      await supabase.auth.getUser()
+    const { data } = await supabase
+      .from("holiday_requests")
+      .select("*")
+      .eq("company_id",company.id)
+      .eq("status","pending")
+      .order("created_at",{ ascending:false })
 
-    const user = userData?.user
-
-    if(!user){
-      return
+    if(data){
+      setRequests(data)
     }
 
+  }
+
+  const approveRequest = async(req:any)=>{
+
     const { error } = await supabase
-      .from("time_requests")
+      .from("holiday_requests")
       .update({
-        status:status,
-        manager_id:user.id,
-        approved_at:new Date().toISOString()
+
+        status:"approved"
+
       })
-      .eq("id",id)
+      .eq("id",req.id)
 
     if(error){
       alert(error.message)
       return
     }
 
-    await auditLog(
-      user.id,
-      `request_${status}`,
-      `Request ${status}`,
-      "time_requests",
-      id
-    )
+    /* AUDIT */
+
+    await auditLog({
+
+      action: "approve_holiday",
+      table: "holiday_requests",
+      description: "Approved holiday request",
+      companyId: req.company_id,
+      targetId: req.id
+
+    })
 
     loadRequests()
 
   }
 
-  if(loading){
-    return <p>Loading...</p>
+  const rejectRequest = async(req:any)=>{
+
+    const { error } = await supabase
+      .from("holiday_requests")
+      .update({
+
+        status:"rejected"
+
+      })
+      .eq("id",req.id)
+
+    if(error){
+      alert(error.message)
+      return
+    }
+
+    await auditLog({
+
+      action: "reject_holiday",
+      table: "holiday_requests",
+      description: "Rejected holiday request",
+      companyId: req.company_id,
+      targetId: req.id
+
+    })
+
+    loadRequests()
+
   }
 
   return(
 
-    <div>
+    <div className="table-container">
 
-      <h1>Approve Requests</h1>
+      <h1>Holiday Requests</h1>
 
-      <table className="admin-table">
+      <table className="table">
 
         <thead>
 
           <tr>
-
-            <th>Type</th>
-            <th>User</th>
-            <th>Date</th>
-            <th>Days</th>
-            <th>Action</th>
-
+            <th>Employee</th>
+            <th>Start</th>
+            <th>End</th>
+            <th>Reason</th>
+            <th>Actions</th>
           </tr>
 
         </thead>
 
         <tbody>
 
-          {requests.map((req)=>{
+          {requests.map(req=>(
 
-            let dateDisplay = ""
+            <tr key={req.id}>
 
-            if(req.request_type === "holiday"){
+              <td>{req.user_id}</td>
+              <td>{req.start_date}</td>
+              <td>{req.end_date}</td>
+              <td>{req.reason}</td>
 
-              dateDisplay =
-                `${req.start_date} → ${req.end_date}`
+              <td>
 
-            } else {
+                <button
+                  onClick={()=>approveRequest(req)}
+                >
+                  Approve
+                </button>
 
-              dateDisplay = req.request_date
+                <button
+                  onClick={()=>rejectRequest(req)}
+                >
+                  Reject
+                </button>
 
-            }
+              </td>
 
-            return(
+            </tr>
 
-              <tr key={req.id}>
-
-                <td>
-                  {req.request_type}
-                </td>
-
-                <td>
-                  {req.user_id}
-                </td>
-
-                <td>
-                  {dateDisplay}
-                </td>
-
-                <td>
-                  {req.days || "-"}
-                </td>
-
-                <td>
-
-                  <button
-                    onClick={()=>updateStatus(req.id,"approved")}
-                  >
-                    Approve
-                  </button>
-
-                  <button
-                    onClick={()=>updateStatus(req.id,"rejected")}
-                  >
-                    Reject
-                  </button>
-
-                </td>
-
-              </tr>
-
-            )
-
-          })}
+          ))}
 
         </tbody>
 
