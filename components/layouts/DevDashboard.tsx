@@ -1,135 +1,185 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { supabase } from "@/supabase/client"
 
 import DevSidebar from "@/components/sidebars/DevSidebar"
+
+import CreateSuperuser from "@/components/modules/superusers/CreateSuperuser"
+import ViewSuperusers from "@/components/modules/superusers/ViewSuperusers"
+import EditSuperuser from "@/components/modules/superusers/EditSuperuser"
 
 import CreateCompany from "@/components/modules/companies/CreateCompany"
 import ViewCompanies from "@/components/modules/companies/ViewCompanies"
 import ViewCompany from "@/components/modules/companies/ViewCompany"
 import EditCompany from "@/components/modules/companies/EditCompany"
-
 import CreateCompanyUser from "@/components/modules/companies/CreateCompanyUser"
-import ViewCompanyUsers from "@/components/modules/companies/ViewCompanyUsers"
-import EditCompanyUser from "@/components/modules/companies/EditCompanyUser"
 
 import "@/styles/layout.css"
 
 export default function DevDashboard(){
 
-  const [page,setPage] = useState("dashboard")
+const [page,setPage] = useState("dashboard")
 
-  const [viewCompany,setViewCompany] = useState<any>(null)
-  const [editCompany,setEditCompany] = useState<any>(null)
+const [userName,setUserName] = useState("")
 
-  const [createUserCompany,setCreateUserCompany] = useState<any>(null)
+const [editUser,setEditUser] = useState<any>(null)
 
-  const [viewCompanyUsers,setViewCompanyUsers] = useState<any>(null)
-  const [editUser,setEditUser] = useState<any>(null)
+const [selectedCompany,setSelectedCompany] = useState<any>(null)
+const [editCompany,setEditCompany] = useState<any>(null)
+const [createUserCompany,setCreateUserCompany] = useState<any>(null)
 
-  return(
+/* LOAD CURRENT USER */
 
-    <div className="dev-layout">
+useEffect(()=>{
 
-      <DevSidebar setPage={setPage} />
+const loadUser = async ()=>{
 
-      <div className="dev-content">
+const { data:sessionData } =
+await supabase.auth.getSession()
 
-        {/* DASHBOARD */}
+const userId =
+sessionData?.session?.user?.id
 
-        {page === "dashboard" && (
+if(!userId) return
 
-          <div>
+const { data:user } = await supabase
+.from("superusers")
+.select("first_name,last_name")
+.eq("id",userId)
+.single()
 
-            <h1>Dev Dashboard</h1>
+if(user){
 
-          </div>
+setUserName(
+`${user.first_name} ${user.last_name}`
+)
 
-        )}
+}
 
-        {/* CREATE COMPANY */}
+}
 
-        {page === "create-company" && (
+loadUser()
 
-          <CreateCompany
-            close={()=>setPage("dashboard")}
-          />
+},[])
 
-        )}
+return(
 
-        {/* VIEW COMPANIES */}
+<div className="dev-layout">
 
-        {page === "view-companies" && !viewCompany && (
+<DevSidebar setPage={setPage}/>
 
-          <ViewCompanies
-            openCompany={setViewCompany}
-          />
+<div className="dev-content">
 
-        )}
+{/* DASHBOARD */}
 
-        {/* VIEW COMPANY */}
+{page === "dashboard" && (
 
-        {viewCompany && !editCompany && !createUserCompany && !viewCompanyUsers && (
+<div>
 
-          <ViewCompany
-            company={viewCompany}
-            close={()=>setViewCompany(null)}
-            openEdit={setEditCompany}
-            openCreateUser={setCreateUserCompany}
-            openViewUsers={setViewCompanyUsers}
-          />
+<h1>
+Welcome {userName}
+</h1>
 
-        )}
+<p>
+South Lincs Systems Dev Environment
+</p>
 
-        {/* EDIT COMPANY */}
+</div>
 
-        {editCompany && (
+)}
 
-          <EditCompany
-            company={editCompany}
-            close={()=>setEditCompany(null)}
-          />
+{/* CREATE SUPERUSER */}
 
-        )}
+{page === "create-superuser" && (
 
-        {/* CREATE COMPANY USER */}
+<CreateSuperuser
+close={()=>setPage("dashboard")}
+/>
 
-        {createUserCompany && (
+)}
 
-          <CreateCompanyUser
-            company={createUserCompany}
-            close={()=>setCreateUserCompany(null)}
-          />
+{/* VIEW SUPERUSERS */}
 
-        )}
+{page === "view-superusers" && !editUser && (
 
-        {/* VIEW COMPANY USERS */}
+<ViewSuperusers
+openEdit={setEditUser}
+/>
 
-        {viewCompanyUsers && !editUser && (
+)}
 
-          <ViewCompanyUsers
-            company={viewCompanyUsers}
-            close={()=>setViewCompanyUsers(null)}
-            openEditUser={setEditUser}
-          />
+{/* EDIT SUPERUSER */}
 
-        )}
+{page === "view-superusers" && editUser && (
 
-        {/* EDIT USER */}
+<EditSuperuser
+user={editUser}
+close={()=>setEditUser(null)}
+/>
 
-        {editUser && (
+)}
 
-          <EditCompanyUser
-            user={editUser}
-            close={()=>setEditUser(null)}
-          />
+{/* CREATE COMPANY */}
 
-        )}
+{page === "create-company" && (
 
-      </div>
+<CreateCompany
+close={()=>setPage("view-companies")}
+/>
 
-    </div>
+)}
 
-  )
+{/* VIEW COMPANIES */}
+
+{page === "view-companies" && !selectedCompany && (
+
+<ViewCompanies
+openCompany={setSelectedCompany}
+/>
+
+)}
+
+{/* VIEW COMPANY PANEL */}
+
+{page === "view-companies" && selectedCompany && !editCompany && !createUserCompany && (
+
+<ViewCompany
+company={selectedCompany}
+close={()=>setSelectedCompany(null)}
+openEdit={setEditCompany}
+openCreateUser={setCreateUserCompany}
+openViewUsers={()=>{}}
+/>
+
+)}
+
+{/* EDIT COMPANY */}
+
+{page === "view-companies" && editCompany && (
+
+<EditCompany
+company={editCompany}
+close={()=>setEditCompany(null)}
+/>
+
+)}
+
+{/* CREATE COMPANY USER */}
+
+{page === "view-companies" && createUserCompany && (
+
+<CreateCompanyUser
+companyId={createUserCompany.id}
+close={()=>setCreateUserCompany(null)}
+/>
+
+)}
+
+</div>
+
+</div>
+
+)
 
 }

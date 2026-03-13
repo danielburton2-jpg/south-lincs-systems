@@ -5,6 +5,7 @@ import { supabase } from "@/supabase/client"
 import { auditLog } from "@/lib/audit/auditLogger"
 
 import DevDashboard from "@/components/layouts/DevDashboard"
+import AdminDashboard from "@/components/layouts/AdminDashboard"
 
 import "@/styles/login.css"
 
@@ -13,6 +14,8 @@ export default function Login(){
   const [email,setEmail] = useState("")
   const [password,setPassword] = useState("")
   const [session,setSession] = useState<any>(null)
+  const [role,setRole] = useState<any>(null)
+
   const [error,setError] = useState("")
   const [loading,setLoading] = useState(false)
 
@@ -39,38 +42,87 @@ export default function Login(){
 
     const user = data?.user
 
-    if(user){
+    if(!user){
 
-      const { data:superuser } = await supabase
-        .from("superusers")
-        .select("*")
-        .eq("id",user.id)
-        .single()
-
-      if(!superuser){
-
-        setError("Not authorised")
-        setLoading(false)
-        return
-
-      }
-
-      await auditLog(
-        user.id,
-        "login",
-        "Superuser logged in"
-      )
-
-      setSession(data.session)
+      setError("Login failed")
+      setLoading(false)
+      return
 
     }
+
+    /* CHECK SUPERUSER */
+
+    const { data:superuser } = await supabase
+      .from("superusers")
+      .select("*")
+      .eq("id",user.id)
+      .single()
+
+    if(superuser){
+
+      await auditLog({
+        userId:user.id,
+        action:"login",
+        description:"Superuser logged in"
+      })
+
+      setRole("superuser")
+      setSession(data.session)
+      setLoading(false)
+      return
+
+    }
+
+    /* CHECK COMPANY USERS */
+
+    const { data:companyUser } = await supabase
+      .from("company_users")
+      .select("*")
+      .eq("id",user.id)
+      .single()
+
+    if(!companyUser){
+
+      setError("Not authorised")
+      setLoading(false)
+      return
+
+    }
+
+    await auditLog({
+      userId:user.id,
+      companyId:companyUser.company_id,
+      action:"login",
+      description:`${companyUser.role} logged in`
+    })
+
+    setRole(companyUser.role)
+    setSession(data.session)
 
     setLoading(false)
 
   }
 
+  /* DASHBOARD ROUTING */
+
   if(session){
-    return <DevDashboard/>
+
+    if(role === "superuser"){
+      return <DevDashboard/>
+    }
+
+    if(role === "admin"){
+      return <AdminDashboard/>
+    }
+
+    if(role === "manager"){
+      return <AdminDashboard/>
+    }
+
+    if(role === "employee"){
+      return <div>Employee Dashboard Coming Soon</div>
+    }
+
   }
 
   return(
