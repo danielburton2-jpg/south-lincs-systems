@@ -3,101 +3,176 @@
 import { useEffect, useState } from "react"
 import { supabase } from "@/supabase/client"
 
-import "@/styles/tables.css"
-
 export default function HolidayCalendar(){
 
-  const [requests,setRequests] = useState<any[]>([])
-  const [loading,setLoading] = useState(true)
+const [users,setUsers] = useState<any[]>([])
+const [holidays,setHolidays] = useState<any[]>([])
+const [timeRequests,setTimeRequests] = useState<any[]>([])
 
-  useEffect(()=>{
+const [month,setMonth] = useState(new Date())
 
-    const loadCalendar = async ()=>{
+const year = month.getFullYear()
+const monthIndex = month.getMonth()
 
-      const { data,error } = await supabase
-        .from("time_requests")
-        .select("*")
-        .eq("status","approved")
-        .order("created_at",{ascending:false})
+const daysInMonth = new Date(year,monthIndex+1,0).getDate()
 
-      if(data){
-        setRequests(data)
-      }
+useEffect(()=>{
+loadData()
+},[])
 
-      setLoading(false)
+const loadData = async ()=>{
 
-    }
+/* users */
 
-    loadCalendar()
+const { data:usersData } = await supabase
+.from("company_users")
+.select("*")
+.eq("status","active")
 
-  },[])
+if(usersData) setUsers(usersData)
 
-  if(loading){
-    return <p>Loading...</p>
-  }
+/* holidays */
 
-  return(
+const { data:holidayData } = await supabase
+.from("holiday_requests")
+.select("*")
+.eq("status","approved")
 
-    <div>
+if(holidayData) setHolidays(holidayData)
 
-      <h1>Holiday Calendar</h1>
+/* early finish / half day */
 
-      <table className="admin-table">
+const { data:timeData } = await supabase
+.from("time_requests")
+.select("*")
+.eq("status","approved")
 
-        <thead>
+if(timeData) setTimeRequests(timeData)
 
-          <tr>
+}
 
-            <th>User</th>
-            <th>Type</th>
-            <th>Date</th>
-            <th>Days</th>
+const getCellType = (userId:any,day:number)=>{
 
-          </tr>
+const date = new Date(year,monthIndex,day)
 
-        </thead>
+/* holiday */
 
-        <tbody>
+const holiday = holidays.find((h:any)=>{
 
-          {requests.map((req)=>{
+const start = new Date(h.start_date)
+const end = new Date(h.end_date)
 
-            let dateDisplay = ""
+return h.user_id === userId && date >= start && date <= end
 
-            if(req.request_type === "holiday"){
+})
 
-              dateDisplay =
-                `${req.start_date} → ${req.end_date}`
+if(holiday) return "holiday"
 
-            } else {
+/* time requests */
 
-              dateDisplay = req.request_date
+const time = timeRequests.find((t:any)=>{
 
-            }
+const d = new Date(t.date)
 
-            return(
+return t.user_id === userId &&
+d.toDateString() === date.toDateString()
 
-              <tr key={req.id}>
+})
 
-                <td>{req.user_id}</td>
+if(time){
 
-                <td>{req.request_type}</td>
+if(time.type === "early_finish") return "early"
 
-                <td>{dateDisplay}</td>
+if(time.type === "half_day") return "half"
 
-                <td>{req.days || "-"}</td>
+}
 
-              </tr>
+return ""
 
-            )
+}
 
-          })}
+const prevMonth = ()=>{
+setMonth(new Date(year,monthIndex-1,1))
+}
 
-        </tbody>
+const nextMonth = ()=>{
+setMonth(new Date(year,monthIndex+1,1))
+}
 
-      </table>
+return(
 
-    </div>
+<div className="planner">
 
-  )
+<h1>
+{month.toLocaleString("default",{month:"long"})} {year}
+</h1>
+
+<div className="planner-nav">
+
+<button onClick={prevMonth}>Previous</button>
+<button onClick={nextMonth}>Next</button>
+
+</div>
+
+<div className="planner-table">
+
+{/* HEADER */}
+
+<div className="planner-header">
+
+<div className="planner-user-col">
+Employee
+</div>
+
+{Array.from({length:daysInMonth},(_,i)=>(
+
+<div key={i} className="planner-day">
+
+{i+1}
+
+</div>
+
+))}
+
+</div>
+
+{/* USERS */}
+
+{users.map((user:any)=>(
+
+<div key={user.id} className="planner-row">
+
+<div className="planner-user">
+
+{user.first_name} {user.last_name}
+
+</div>
+
+{Array.from({length:daysInMonth},(_,i)=>{
+
+const type = getCellType(user.id,i+1)
+
+return(
+
+<div
+key={i}
+className={`planner-cell ${type}`}
+>
+
+</div>
+
+)
+
+})}
+
+</div>
+
+))}
+
+</div>
+
+</div>
+
+)
 
 }
