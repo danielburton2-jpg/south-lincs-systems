@@ -6,16 +6,17 @@ import { supabase } from "@/supabase/client"
 export default function ApproveRequests(){
 
 const [requests,setRequests] = useState<any[]>([])
+const [loading,setLoading] = useState(true)
 
 useEffect(()=>{
-
 loadRequests()
-
 },[])
 
 const loadRequests = async ()=>{
 
-const { data } = await supabase
+setLoading(true)
+
+const { data,error } = await supabase
 .from("holiday_requests")
 .select(`
 id,
@@ -28,10 +29,14 @@ first_name,
 last_name
 )
 `)
+.eq("status","pending")
+.order("start_date",{ ascending:true })
 
-if(data){
+if(!error && data){
 setRequests(data)
 }
+
+setLoading(false)
 
 }
 
@@ -42,32 +47,49 @@ await supabase
 .update({ status })
 .eq("id",id)
 
-loadRequests()
+/* Remove from UI immediately */
 
+setRequests(prev => prev.filter(r => r.id !== id))
+
+}
+
+if(loading){
+return <p>Loading requests...</p>
 }
 
 return(
 
-<div>
+<div className="page-container">
 
-<h1>Holiday Requests</h1>
+<h1 className="page-title">
+Approve Holiday Requests
+</h1>
 
-<table>
+<table className="table">
 
 <thead>
 
 <tr>
 <th>Employee</th>
-<th>Start</th>
-<th>End</th>
+<th>Start Date</th>
+<th>End Date</th>
 <th>Reason</th>
-<th>Status</th>
 <th>Action</th>
 </tr>
 
 </thead>
 
 <tbody>
+
+{requests.length === 0 && (
+
+<tr>
+<td colSpan={5}>
+No pending requests
+</td>
+</tr>
+
+)}
 
 {requests.map((r)=>(
 
@@ -80,17 +102,18 @@ return(
 <td>{r.start_date}</td>
 <td>{r.end_date}</td>
 <td>{r.reason}</td>
-<td>{r.status}</td>
 
 <td>
 
 <button
+className="approve-btn"
 onClick={()=>updateStatus(r.id,"approved")}
 >
 Approve
 </button>
 
 <button
+className="reject-btn"
 onClick={()=>updateStatus(r.id,"rejected")}
 >
 Reject
