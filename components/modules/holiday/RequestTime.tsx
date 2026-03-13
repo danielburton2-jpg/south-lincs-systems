@@ -2,117 +2,141 @@
 
 import { useState } from "react"
 import { supabase } from "@/supabase/client"
-import { auditLog } from "@/lib/audit/auditLogger"
 
-import "@/styles/forms.css"
+export default function RequestHoliday({ close }: any){
 
-export default function RequestTime({ user, close }: any){
+const [startDate,setStartDate] = useState("")
+const [endDate,setEndDate] = useState("")
+const [reason,setReason] = useState("")
 
-  const [startDate,setStartDate] = useState("")
-  const [endDate,setEndDate] = useState("")
-  const [reason,setReason] = useState("")
-  const [loading,setLoading] = useState(false)
+const handleSubmit = async (e:any)=>{
 
-  const submitRequest = async ()=>{
+e.preventDefault()
 
-    if(!startDate || !endDate){
-      alert("Please select dates")
-      return
-    }
+/* GET USER SESSION */
 
-    setLoading(true)
+const { data: sessionData } =
+await supabase.auth.getSession()
 
-    const { data,error } = await supabase
-      .from("holiday_requests")
-      .insert({
+const userId =
+sessionData?.session?.user?.id
 
-        user_id: user.id,
-        company_id: user.company_id,
-        start_date: startDate,
-        end_date: endDate,
-        reason: reason,
-        status: "pending"
+if(!userId){
+alert("User not logged in")
+return
+}
 
-      })
-      .select()
-      .single()
+/* GET COMPANY ID */
 
-    if(error){
+const { data:user } = await supabase
+.from("company_users")
+.select("company_id")
+.eq("id",userId)
+.single()
 
-      alert(error.message)
-      setLoading(false)
-      return
+if(!user){
+alert("User company not found")
+return
+}
 
-    }
+const companyId = user.company_id
 
-    /* AUDIT LOG */
+/* INSERT HOLIDAY REQUEST */
 
-    await auditLog({
+const { error } = await supabase
+.from("holiday_requests")
+.insert({
+user_id: userId,
+company_id: companyId,
+start_date: startDate,
+end_date: endDate,
+reason: reason,
+status: "pending"
+})
 
-      action: "request_holiday",
-      table: "holiday_requests",
-      description: `Holiday requested ${startDate} → ${endDate}`,
-      companyId: user.company_id,
-      targetId: data.id
+if(error){
+alert(error.message)
+return
+}
 
-    })
+alert("Holiday Request Submitted")
 
-    setLoading(false)
-    close()
+setStartDate("")
+setEndDate("")
+setReason("")
 
-  }
+}
 
-  return(
+return(
 
-    <div className="form-container">
+<div className="page-container">
 
-      <h1>Request Holiday</h1>
+<h1 className="page-title">
+Request Holiday
+</h1>
 
-      <div className="stack-form">
+<form className="form" onSubmit={handleSubmit}>
 
-        <label>Start Date</label>
-        <input
-          type="date"
-          value={startDate}
-          onChange={(e)=>setStartDate(e.target.value)}
-        />
+<div className="form-group">
 
-        <label>End Date</label>
-        <input
-          type="date"
-          value={endDate}
-          onChange={(e)=>setEndDate(e.target.value)}
-        />
+<label>Start Date</label>
 
-        <label>Reason</label>
-        <textarea
-          value={reason}
-          onChange={(e)=>setReason(e.target.value)}
-        />
+<input
+type="date"
+value={startDate}
+onChange={(e)=>setStartDate(e.target.value)}
+required
+/>
 
-        <div className="form-buttons">
+</div>
 
-          <button
-            className="secondary-button"
-            onClick={close}
-          >
-            Cancel
-          </button>
+<div className="form-group">
 
-          <button
-            className="primary-button"
-            onClick={submitRequest}
-            disabled={loading}
-          >
-            Submit Request
-          </button>
+<label>End Date</label>
 
-        </div>
+<input
+type="date"
+value={endDate}
+onChange={(e)=>setEndDate(e.target.value)}
+required
+/>
 
-      </div>
+</div>
 
-    </div>
+<div className="form-group">
 
-  )
+<label>Reason</label>
+
+<textarea
+value={reason}
+onChange={(e)=>setReason(e.target.value)}
+/>
+
+</div>
+
+<div className="form-buttons">
+
+<button
+type="button"
+className="cancel-btn"
+onClick={close}
+>
+Cancel
+</button>
+
+<button
+type="submit"
+className="create-btn"
+>
+Submit Request
+</button>
+
+</div>
+
+</form>
+
+</div>
+
+)
 
 }
