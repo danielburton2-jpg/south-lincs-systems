@@ -10,8 +10,9 @@ import EditUser from "@/components/modules/admin/EditUser"
 
 import RequestTime from "@/components/modules/holiday/RequestTime"
 import ApproveRequests from "@/components/modules/holiday/ApproveRequests"
-import HolidayCalendar from "@/components/modules/admin/HolidayCalendar"
+import HolidayCalendar from "@/components/modules/holiday/HolidayCalendar"
 import HolidayBalance from "@/components/modules/admin/HolidayBalance"
+import HolidaySettings from "@/components/modules/holiday/HolidaySettings"
 
 import "@/styles/layout.css"
 
@@ -129,6 +130,16 @@ company={company}
 {page === "holiday-calendar" && (
 
 <HolidayCalendar
+company={company}
+/>
+
+)}
+
+{/* HOLIDAY SETTINGS */}
+
+{page === "holiday-settings" && (
+
+<HolidaySettings
 company={company}
 />
 

@@ -91,6 +91,15 @@ onClick={()=>setPage("holiday-calendar")}
 Holiday Calendar
 </button>
 
+{/* NEW */}
+
+<button
+className="sidebar-sub-button"
+onClick={()=>setPage("holiday-settings")}
+>
+Holiday Settings
+</button>
+
 </div>
 
 )}
