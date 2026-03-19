@@ -1,0 +1,124 @@
+.module-container{
+
+  max-width:900px;
+
+}
+
+.module-title{
+
+  font-size:24px;
+
+  margin-bottom:20px;
+
+}
+
+.filter-group{
+
+  margin-bottom:15px;
+
+  display:flex;
+
+  flex-direction:column;
+
+}
+
+.filter-group label{
+
+  margin-bottom:5px;
+
+  font-size:14px;
+
+}
+
+.filter-group select{
+
+  height:38px;
+
+  border:1px solid #d1d5db;
+
+  border-radius:6px;
+
+  padding:0 10px;
+
+}
+
+.search-button{
+
+  margin-top:10px;
+
+  height:42px;
+
+  background:#2563eb;
+
+  border:none;
+
+  color:white;
+
+  border-radius:6px;
+
+  cursor:pointer;
+
+}
+
+.results-toolbar{
+
+  margin-bottom:20px;
+
+}
+
+.results-toolbar button{
+
+  margin-right:10px;
+
+  height:36px;
+
+  padding:0 15px;
+
+}
+
+table{
+
+  width:100%;
+
+  border-collapse:collapse;
+
+}
+
+th,td{
+
+  border:1px solid #e5e7eb;
+
+  padding:10px;
+
+  text-align:left;
+
+}
+/* PRINT MODE */
+
+@media print {
+
+  /* Hide sidebar */
+  .dev-sidebar{
+    display:none;
+  }
+
+  /* Remove padding */
+  .dev-content{
+    padding:0;
+  }
+
+  /* Hide toolbar buttons */
+  .results-toolbar{
+    display:none;
+  }
+
+  /* Make content full width */
+  .dev-layout{
+    display:block;
+  }
+
+  table{
+    width:100%;
+  }
+
+}

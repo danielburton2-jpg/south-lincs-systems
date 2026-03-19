@@ -1,0 +1,53 @@
+/* PREVENT PAGE SCROLL */
+
+html, body{
+
+  height:100%;
+  margin:0;
+  overflow:hidden;
+
+}
+
+/* MAIN LAYOUT */
+
+.dev-layout{
+
+  display:flex;
+
+  height:100vh;
+
+  font-family:Arial, Helvetica, sans-serif;
+
+}
+
+/* SIDEBAR */
+
+.dev-sidebar{
+
+  width:220px;
+
+  background:#1f2937;
+
+  color:white;
+
+  padding:20px;
+
+  display:flex;
+
+  flex-direction:column;
+
+}
+
+/* CONTENT AREA */
+
+.dev-content{
+
+  flex:1;
+
+  padding:30px;
+
+  background:#f4f6f8;
+
+  overflow-y:auto;
+
+}
