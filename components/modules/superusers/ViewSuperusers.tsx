@@ -13,11 +13,12 @@ export default function ViewSuperusers({ openEdit }: any){
 
     const loadUsers = async ()=>{
 
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("superusers")
         .select("*")
-        .eq("deleted", false)
         .order("first_name")
+
+      console.log("SUPERUSERS:", data, error)
 
       if(data){
         setUsers(data)
@@ -38,15 +39,11 @@ export default function ViewSuperusers({ openEdit }: any){
       <table className="admin-table">
 
         <thead>
-
           <tr>
-
             <th>Name</th>
             <th>Email</th>
             <th>Status</th>
-
           </tr>
-
         </thead>
 
         <tbody>
@@ -68,24 +65,16 @@ export default function ViewSuperusers({ openEdit }: any){
                   {user.first_name} {user.last_name}
                 </td>
 
-                <td>
-                  {user.email}
-                </td>
+                <td>{user.email}</td>
 
                 <td>
-
-                  <span
-                    className={
-                      user.frozen
-                        ? "status-frozen"
-                        : "status-active"
-                    }
-                  >
-
+                  <span className={
+                    user.frozen
+                      ? "status-frozen"
+                      : "status-active"
+                  }>
                     {status}
-
                   </span>
-
                 </td>
 
               </tr>
