@@ -5,9 +5,15 @@ import { supabase } from "@/supabase/client"
 
 import "@/styles/sidebar.css"
 
-export default function AdminSidebar({ setPage }: any){
+export default function AdminSidebar({ setPage, features }: any){
 
 const [showHoliday,setShowHoliday] = useState(false)
+
+/* 🔥 FEATURE CHECK */
+
+const hasFeature = (feature:string)=>{
+return features?.includes(feature.toLowerCase())
+}
 
 const logout = async ()=>{
 
@@ -50,7 +56,11 @@ onClick={()=>setPage("users")}
 Users
 </button>
 
-{/* HOLIDAY DROPDOWN */}
+{/* 🔥 HOLIDAY DROPDOWN (LOCKED) */}
+
+{hasFeature("holiday") && (
+
+<>
 
 <button
 className="sidebar-button"
@@ -91,8 +101,6 @@ onClick={()=>setPage("holiday-calendar")}
 Holiday Calendar
 </button>
 
-{/* NEW */}
-
 <button
 className="sidebar-sub-button"
 onClick={()=>setPage("holiday-settings")}
@@ -101,6 +109,10 @@ Holiday Settings
 </button>
 
 </div>
+
+)}
+
+</>
 
 )}
 

@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { supabase } from "@/supabase/client"
 
 type Props = {
   companyId: string
@@ -20,13 +21,72 @@ export default function CreateCompanyUser({ companyId, close }: Props){
   const [confirmPassword,setConfirmPassword] = useState("")
   const [status,setStatus] = useState("active")
 
+  const [companyFeatures,setCompanyFeatures] = useState<string[]>([])
   const [loading,setLoading] = useState(false)
+
+  /* 🔥 LOAD COMPANY FEATURES (FIXED VERSION) */
+
+  useEffect(()=>{
+
+    const loadFeatures = async ()=>{
+
+      if(!companyId) return
+
+      /* STEP 1: GET COMPANY FEATURE IDS */
+
+      const { data:companyFeaturesData, error } = await supabase
+        .from("company_features")
+        .select("feature_id")
+        .eq("company_id",companyId)
+        .eq("enabled",true)
+
+      if(error){
+        console.error("Feature load error:", error)
+        return
+      }
+
+      if(!companyFeaturesData?.length){
+        setCompanyFeatures([])
+        return
+      }
+
+      /* STEP 2: GET FEATURE NAMES */
+
+      const ids = companyFeaturesData.map((f:any)=>f.feature_id)
+
+      const { data:features, error:featureError } = await supabase
+        .from("features")
+        .select("id,name")
+        .in("id",ids)
+
+      if(featureError){
+        console.error("Feature names error:", featureError)
+        return
+      }
+
+      const names = features.map((f:any)=>f.name.toLowerCase())
+
+      setCompanyFeatures(names)
+
+      console.log("Company Features:", names)
+
+    }
+
+    loadFeatures()
+
+  },[companyId])
+
+  /* 🔥 HELPER */
+
+  const hasFeature = (feature:string)=>{
+    return companyFeatures.includes(feature.toLowerCase())
+  }
+
+  /* CREATE USER */
 
   const handleCreateUser = async (e:any)=>{
 
     e.preventDefault()
-
-    console.log("Company ID:", companyId)
 
     if(!companyId){
       alert("Company ID missing")
@@ -69,7 +129,7 @@ export default function CreateCompanyUser({ companyId, close }: Props){
 
     alert("User Created")
 
-    // RESET FORM
+    // RESET
     setFirstName("")
     setLastName("")
     setEmail("")
@@ -82,8 +142,7 @@ export default function CreateCompanyUser({ companyId, close }: Props){
     setStatus("active")
 
     setLoading(false)
-
-    close() // 🔥 optional: go back after create
+    close()
 
   }
 
@@ -136,6 +195,44 @@ export default function CreateCompanyUser({ companyId, close }: Props){
           <label>Job Title</label>
           <input value={jobTitle} onChange={(e)=>setJobTitle(e.target.value)} />
         </div>
+
+        {/* 🔥 FEATURE VISIBILITY PREVIEW */}
+
+        {role && role !== "admin" && (
+
+          <div className="feature-section">
+
+            <h3>Enabled Features (Company Controlled)</h3>
+
+            {companyFeatures.length === 0 && (
+              <p>No features enabled for this company</p>
+            )}
+
+            {companyFeatures.map((feature)=>(
+              <div key={feature} className="feature-row">
+                ✓ {feature}
+              </div>
+            ))}
+
+            {/* 🔥 EXAMPLE: HOLIDAY FEATURE */}
+
+            {hasFeature("holiday") && (
+              <div className="feature-highlight">
+                Holiday requests ENABLED for this company
+              </div>
+            )}
+
+            {!hasFeature("holiday") && (
+              <div className="feature-disabled">
+                Holiday feature NOT enabled
+              </div>
+            )}
+
+          </div>
+
+        )}
+
+        {/* SECURITY */}
 
         <h2 className="section-title">Security</h2>
 

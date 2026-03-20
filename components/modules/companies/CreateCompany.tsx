@@ -27,21 +27,29 @@ export default function CreateCompany({ close }: any){
 
   const [loading,setLoading] = useState(false)
 
+  /* LOAD FEATURES */
+
   useEffect(()=>{
 
     const loadFeatures = async ()=>{
 
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("features")
         .select("*")
         .order("name")
+
+      if(error){
+        console.error("Feature load error:", error)
+        return
+      }
 
       if(data){
 
         setFeatures(
           data.map((f:any)=>({
-            ...f,
-            enabled:false
+            id: f.id,
+            name: f.name,
+            enabled: false
           }))
         )
 
@@ -52,6 +60,8 @@ export default function CreateCompany({ close }: any){
     loadFeatures()
 
   },[])
+
+  /* AUTO SET SUBSCRIPTION DATES */
 
   useEffect(()=>{
 
@@ -78,16 +88,21 @@ export default function CreateCompany({ close }: any){
 
   },[subscription])
 
-  const toggleFeature = (index:number)=>{
+  /* TOGGLE FEATURE */
 
-    const updated = [...features]
+  const toggleFeature = (id:string)=>{
 
-    updated[index].enabled =
-      !updated[index].enabled
-
-    setFeatures(updated)
+    setFeatures((prev:any[]) =>
+      prev.map((f:any)=>
+        f.id === id
+          ? { ...f, enabled: !f.enabled }
+          : f
+      )
+    )
 
   }
+
+  /* CREATE COMPANY */
 
   const createCompany = async (e:any)=>{
 
@@ -95,7 +110,7 @@ export default function CreateCompany({ close }: any){
 
     setLoading(true)
 
-    const { data,error } = await supabase
+    const { data, error } = await supabase
       .from("companies")
       .insert({
 
@@ -124,20 +139,25 @@ export default function CreateCompany({ close }: any){
 
     const companyId = data.id
 
-    for(const feature of features){
+    /* INSERT FEATURES */
 
-      if(feature.enabled){
+    const selectedFeatures =
+      features.filter(f => f.enabled)
 
-        await supabase
-          .from("company_features")
-          .insert({
+    if(selectedFeatures.length){
 
-            company_id:companyId,
-            feature_key:feature.key,
-            enabled:true
+      const rows = selectedFeatures.map(f => ({
+        company_id: companyId,
+        feature_id: f.id,
+        enabled: true
+      }))
 
-          })
+      const { error:featureError } = await supabase
+        .from("company_features")
+        .insert(rows)
 
+      if(featureError){
+        console.error("Feature insert error:", featureError)
       }
 
     }
@@ -147,7 +167,7 @@ export default function CreateCompany({ close }: any){
       action:"CREATE",
       table:"companies",
       companyId:data.id,
-      recordId:data.id,
+      targetId:data.id,
 
       description:`Created company ${name}`
 
@@ -171,7 +191,6 @@ export default function CreateCompany({ close }: any){
       >
 
         <label>Company Name</label>
-
         <input
           value={name}
           onChange={(e)=>setName(e.target.value)}
@@ -179,38 +198,27 @@ export default function CreateCompany({ close }: any){
         />
 
         <label>Email</label>
-
         <input
           value={email}
           onChange={(e)=>setEmail(e.target.value)}
         />
 
         <label>Phone</label>
-
         <input
           value={phone}
           onChange={(e)=>setPhone(e.target.value)}
         />
 
         <label>Subscription</label>
-
         <select
           value={subscription}
           onChange={(e)=>setSubscription(e.target.value)}
         >
-
-          <option value="free_trial">
-            Free Trial
-          </option>
-
-          <option value="yearly">
-            Yearly
-          </option>
-
+          <option value="free_trial">Free Trial</option>
+          <option value="yearly">Yearly</option>
         </select>
 
         <label>Subscription Start</label>
-
         <input
           type="date"
           value={subscriptionStart}
@@ -218,7 +226,6 @@ export default function CreateCompany({ close }: any){
         />
 
         <label>Subscription End</label>
-
         <input
           type="date"
           value={subscriptionEnd}
@@ -226,20 +233,19 @@ export default function CreateCompany({ close }: any){
         />
 
         <div className="checkbox-row">
-
           <input
             type="checkbox"
             checked={override}
             onChange={(e)=>setOverride(e.target.checked)}
           />
-
           <label>Override subscription expiry</label>
-
         </div>
+
+        {/* 🔥 FEATURES SECTION */}
 
         <h3>Features</h3>
 
-        {features.map((feature,index)=>(
+        {features.map((feature)=>(
 
           <div
             key={feature.id}
@@ -249,12 +255,10 @@ export default function CreateCompany({ close }: any){
             <input
               type="checkbox"
               checked={feature.enabled}
-              onChange={()=>toggleFeature(index)}
+              onChange={()=>toggleFeature(feature.id)}
             />
 
-            <label>
-              {feature.name}
-            </label>
+            <label>{feature.name}</label>
 
           </div>
 
@@ -262,17 +266,11 @@ export default function CreateCompany({ close }: any){
 
         <div className="form-buttons">
 
-          <button
-            type="submit"
-            disabled={loading}
-          >
+          <button type="submit" disabled={loading}>
             {loading ? "Creating..." : "Create Company"}
           </button>
 
-          <button
-            type="button"
-            onClick={close}
-          >
+          <button type="button" onClick={close}>
             Cancel
           </button>
 

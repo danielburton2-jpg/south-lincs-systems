@@ -23,13 +23,14 @@ const [page,setPage] = useState("dashboard")
 const [editUser,setEditUser] = useState<any>(null)
 
 const [company,setCompany] = useState<any>(null)
-
 const [user,setUser] = useState<any>(null)
 
+const [companyFeatures,setCompanyFeatures] = useState<string[]>([])
+
+/* LOAD USER + COMPANY */
+
 useEffect(()=>{
-
 loadUser()
-
 },[])
 
 const loadUser = async()=>{
@@ -37,10 +38,11 @@ const loadUser = async()=>{
 const { data:userData } =
 await supabase.auth.getUser()
 
-const userId =
-userData?.user?.id
+const userId = userData?.user?.id
 
 setUser(userData?.user)
+
+/* GET COMPANY */
 
 const { data } = await supabase
 .from("company_users")
@@ -50,13 +52,53 @@ const { data } = await supabase
 
 setCompany(data)
 
+/* LOAD FEATURES */
+
+if(data?.company_id){
+loadFeatures(data.company_id)
+}
+
+}
+
+/* 🔥 LOAD FEATURES (FIXED) */
+
+const loadFeatures = async(companyId:string)=>{
+
+const { data:cfData } = await supabase
+.from("company_features")
+.select("feature_id")
+.eq("company_id",companyId)
+.eq("enabled",true)
+
+if(!cfData || cfData.length === 0){
+setCompanyFeatures([])
+return
+}
+
+const ids = cfData.map((f:any)=>f.feature_id)
+
+const { data:features } = await supabase
+.from("features")
+.select("id,name")
+.in("id",ids)
+
+const names = features?.map((f:any)=>f.name.toLowerCase()) || []
+
+setCompanyFeatures(names)
+
+}
+
+/* 🔥 HELPER */
+
+const hasFeature = (feature:string)=>{
+return companyFeatures.includes(feature.toLowerCase())
 }
 
 return(
 
 <div className="dev-layout">
 
-<AdminSidebar setPage={setPage}/>
+<AdminSidebar setPage={setPage} features={companyFeatures} />
 
 <div className="dev-content">
 
@@ -65,11 +107,8 @@ return(
 {page === "dashboard" && (
 
 <div>
-
 <h1>Company Dashboard</h1>
-
-<p>Manage your company users and holidays.</p>
-
+<p>Manage your company users and system.</p>
 </div>
 
 )}
@@ -94,54 +133,44 @@ close={()=>setEditUser(null)}
 
 )}
 
-{/* HOLIDAY REQUEST */}
+{/* 🔥 HOLIDAY FEATURES LOCKED */}
+
+{hasFeature("holiday") && (
+
+<>
 
 {page === "holiday-request" && (
-
-<RequestTime
-user={user}
-close={()=>setPage("dashboard")}
-/>
-
+<RequestTime user={user} close={()=>setPage("dashboard")} />
 )}
-
-{/* APPROVE REQUESTS */}
 
 {page === "holiday-approve" && (
-
-<ApproveRequests
-company={company}
-/>
-
+<ApproveRequests company={company} />
 )}
-
-{/* HOLIDAY BALANCE */}
 
 {page === "holiday-balance" && (
-
-<HolidayBalance
-company={company}
-/>
-
+<HolidayBalance company={company} />
 )}
-
-{/* HOLIDAY CALENDAR */}
 
 {page === "holiday-calendar" && (
+<HolidayCalendar company={company} />
+)}
 
-<HolidayCalendar
-company={company}
-/>
+{page === "holiday-settings" && (
+<HolidaySettings company={company} />
+)}
+
+</>
 
 )}
 
-{/* HOLIDAY SETTINGS */}
+{/* 🚫 OPTIONAL: BLOCK ACCESS MESSAGE */}
 
-{page === "holiday-settings" && (
+{!hasFeature("holiday") && page.startsWith("holiday") && (
 
-<HolidaySettings
-company={company}
-/>
+<div>
+<h2>Feature Not Enabled</h2>
+<p>This company does not have access to the holiday system.</p>
+</div>
 
 )}
 

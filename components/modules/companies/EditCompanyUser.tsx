@@ -10,7 +10,7 @@ export default function EditCompanyUser({ user, close }:any){
 
 const [firstName,setFirstName] = useState("")
 const [lastName,setLastName] = useState("")
-const [email,setEmail] = useState("") // ✅ ADDED
+const [email,setEmail] = useState("")
 const [role,setRole] = useState("")
 const [jobTitle,setJobTitle] = useState("")
 const [status,setStatus] = useState("active")
@@ -20,6 +20,7 @@ const [password,setPassword] = useState("")
 const [jobTitles,setJobTitles] = useState<string[]>([])
 const [managerTitles,setManagerTitles] = useState<any>({})
 
+const [companyFeatures,setCompanyFeatures] = useState<string[]>([])
 const [loading,setLoading] = useState(false)
 
 /* LOAD USER */
@@ -30,15 +31,72 @@ if(!user) return
 
 setFirstName(user.first_name || "")
 setLastName(user.last_name || "")
-setEmail(user.email || "") // ✅ ADDED
+setEmail(user.email || "")
 setRole(user.role || "")
 setJobTitle(user.job_title || "")
 setStatus(user.status || "active")
 
 loadJobTitles()
 loadManagerTitles()
+loadFeatures()
 
 },[user])
+
+/* 🔥 CLEAN FEATURE LOADER (NO JOINS) */
+
+const loadFeatures = async()=>{
+
+if(!user?.company_id) return
+
+try{
+
+// STEP 1: GET FEATURE IDS
+const { data:cfData, error:cfError } = await supabase
+.from("company_features")
+.select("feature_id")
+.eq("company_id",user.company_id)
+.eq("enabled",true)
+
+if(cfError){
+console.error("Company feature error:", cfError)
+return
+}
+
+if(!cfData || cfData.length === 0){
+setCompanyFeatures([])
+return
+}
+
+// STEP 2: GET FEATURE NAMES
+const ids = cfData.map((f:any)=>f.feature_id)
+
+const { data:featuresData, error:fError } = await supabase
+.from("features")
+.select("id,name")
+.in("id",ids)
+
+if(fError){
+console.error("Feature names error:", fError)
+return
+}
+
+const names = (featuresData || []).map((f:any)=>
+f.name.toLowerCase()
+)
+
+setCompanyFeatures(names)
+
+}catch(err){
+console.error("Feature load crash:", err)
+}
+
+}
+
+/* HELPER */
+
+const hasFeature = (feature:string)=>{
+return companyFeatures.includes(feature.toLowerCase())
+}
 
 /* JOB TITLES */
 
@@ -94,7 +152,7 @@ const { error } = await supabase
 .update({
 first_name:firstName,
 last_name:lastName,
-email, // ✅ ADDED
+email,
 role,
 job_title:jobTitle.trim(),
 status
@@ -107,7 +165,7 @@ setLoading(false)
 return
 }
 
-/* PASSWORD UPDATE */
+/* PASSWORD */
 
 if(password){
 
@@ -144,7 +202,7 @@ await supabase.from("manager_job_titles").insert(rows)
 
 }
 
-/* AUDIT EMAIL */
+/* AUDIT */
 
 if(email !== user.email){
 await auditLog({
@@ -157,8 +215,6 @@ companyId:user.company_id,
 targetId:user.id
 })
 }
-
-/* GENERAL AUDIT */
 
 await auditLog({
 action:"update_user",
@@ -189,13 +245,8 @@ return(
 <label>Last Name</label>
 <input value={lastName} onChange={(e)=>setLastName(e.target.value)} />
 
-{/* ✅ EMAIL FIELD (THIS WAS MISSING) */}
-
 <label>Email</label>
-<input
-value={email}
-onChange={(e)=>setEmail(e.target.value)}
-/>
+<input value={email} onChange={(e)=>setEmail(e.target.value)} />
 
 <label>Role</label>
 <select value={role} onChange={(e)=>setRole(e.target.value)}>
@@ -213,8 +264,6 @@ onChange={(e)=>setEmail(e.target.value)}
 <option value="inactive">Inactive</option>
 </select>
 
-{/* PASSWORD */}
-
 <label>New Password</label>
 <input
 type="password"
@@ -222,6 +271,33 @@ placeholder="Leave blank to keep current"
 value={password}
 onChange={(e)=>setPassword(e.target.value)}
 />
+
+{/* 🔥 FEATURE CONTROL */}
+
+{role !== "admin" && (
+
+<div className="feature-section">
+
+<h3>Company Features</h3>
+
+{companyFeatures.length === 0 && (
+<p>No features enabled</p>
+)}
+
+{companyFeatures.map(f=>(
+<div key={f} className="feature-row">
+✓ {f}
+</div>
+))}
+
+{hasFeature("holiday")
+? <div className="feature-highlight">Holiday Enabled</div>
+: <div className="feature-disabled">Holiday Disabled</div>
+}
+
+</div>
+
+)}
 
 {/* MANAGER TITLES */}
 
