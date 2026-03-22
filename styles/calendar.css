@@ -1,133 +1,60 @@
 .calendar-wrapper{
-padding:20px;
-width:100%;
-overflow:hidden;
+  overflow:auto;
 }
-
-/* HEADER */
 
 .calendar-header{
-display:flex;
-justify-content:space-between;
-align-items:center;
-margin-bottom:20px;
+  display:flex;
+  justify-content:space-between;
+  margin-bottom:10px;
 }
 
-/* TABLE */
-
-.calendar-table{
-width:100%;
-border-collapse:collapse;
-table-layout:auto;
+.calendar-row{
+  display:flex;
 }
 
-/* GENERAL CELLS */
-
-.calendar-table th,
-.calendar-table td{
-border:1px solid #ddd;
-text-align:center;
-font-size:12px;
-padding:0;
+.user-cell{
+  width:150px;
+  padding:5px;
+  background:#f3f4f6;
 }
 
-/* USER COLUMN (AUTO SIZE) */
-
-.user-col{
-white-space:nowrap;
-text-align:left;
-padding-left:10px;
-background:#f4f4f4;
-width:1%;
+.day-cell{
+  width:30px;
+  text-align:center;
+  font-size:12px;
 }
 
-.user-name{
-white-space:nowrap;
-text-align:left;
-padding-left:10px;
-background:#f4f4f4;
+.cell{
+  width:30px;
+  height:30px;
+  border:1px solid #ddd;
+  cursor:pointer;
 }
 
-/* DATE HEADER CELLS */
+/* COLORS */
 
-.date-header{
-width:2.8%;
-height:34px;
-background:#f4f4f4;
-}
-
-/* DAY LETTER */
-
-.day-letter{
-font-size:9px;
-color:#666;
-}
-
-/* DAY NUMBER */
-
-.day-number{
-font-weight:bold;
-font-size:11px;
-}
-
-/* DATE CELLS */
-
-.calendar-cell{
-width:2.8%;
-height:34px;
-cursor:pointer;
-}
-
-/* APPROVED HOLIDAY */
-
-.holiday{
-background:red;
-}
-
-/* EARLY FINISH */
-
-.early{
-background:yellow;
-}
-
-/* HALF DAY */
-
-.half{
-background:linear-gradient(
-to right,
-red 50%,
-white 50%
-);
-}
-
-/* PENDING */
-
-.pending{
-background:#3b82f6;
-}
-
-/* REJECTED */
+.pending{ background:red; }
+.approved{ background:green; }
+.half{ background:orange; }
+.early{ background:blue; }
 
 .rejected{
-background-image:
-linear-gradient(45deg,#ccc 25%,transparent 25%),
-linear-gradient(-45deg,#ccc 25%,transparent 25%),
-linear-gradient(45deg,transparent 75%,#ccc 75%),
-linear-gradient(-45deg,transparent 75%,#ccc 75%);
-background-size:10px 10px;
-background-position:0 0,0 5px,5px -5px,-5px 0px;
+  background: repeating-linear-gradient(
+    45deg,
+    #ccc,
+    #ccc 5px,
+    #fff 5px,
+    #fff 10px
+  );
 }
 
 /* POPUP */
 
-.calendar-popup{
-position:fixed;
-top:50%;
-left:50%;
-transform:translate(-50%,-50%);
-background:white;
-padding:20px;
-border:1px solid #ddd;
-box-shadow:0 0 10px rgba(0,0,0,0.2);
-z-index:999;
+.popup{
+  position:fixed;
+  top:30%;
+  left:40%;
+  background:white;
+  padding:20px;
+  border:1px solid #ddd;
 }

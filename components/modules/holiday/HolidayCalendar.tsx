@@ -1,348 +1,236 @@
 "use client"
 
-import { useEffect,useState } from "react"
+import { useEffect, useState } from "react"
 import { supabase } from "@/supabase/client"
+
 import "@/styles/calendar.css"
 
-export default function HolidayCalender(){
+export default function HolidayCalendar(){
 
-const [users,setUsers] = useState<any[]>([])
-const [holidays,setHolidays] = useState<any[]>([])
-const [timeRequests,setTimeRequests] = useState<any[]>([])
-const [pending,setPending] = useState<any[]>([])
-const [rejected,setRejected] = useState<any[]>([])
-const [selected,setSelected] = useState<any>(null)
+  const [companyId,setCompanyId] = useState<string | null>(null)
+  const [users,setUsers] = useState<any[]>([])
+  const [requests,setRequests] = useState<any[]>([])
+  const [selected,setSelected] = useState<any>(null)
 
-const [month,setMonth] = useState(new Date())
+  const [month,setMonth] = useState(new Date())
 
-const year = month.getFullYear()
-const monthIndex = month.getMonth()
-const daysInMonth = new Date(year,monthIndex+1,0).getDate()
+  const year = month.getFullYear()
+  const monthIndex = month.getMonth()
+  const daysInMonth = new Date(year,monthIndex+1,0).getDate()
 
-useEffect(()=>{
-loadData()
-},[])
+  useEffect(()=>{
+    loadCompany()
+  },[])
 
-const loadData = async ()=>{
+  useEffect(()=>{
+    if(companyId){
+      loadData()
+    }
+  },[companyId,month])
 
-const { data:session } = await supabase.auth.getSession()
-const userId = session?.session?.user?.id
-if(!userId) return
+  /* =========================
+     LOAD COMPANY
+  ========================= */
 
-const { data:me } = await supabase
-.from("company_users")
-.select("company_id")
-.eq("id",userId)
-.single()
+  const loadCompany = async ()=>{
 
-if(!me) return
-const companyId = me.company_id
+    const { data:userData } = await supabase.auth.getUser()
+    const userId = userData?.user?.id
 
-/* USERS */
+    if(!userId) return
 
-const { data:usersData } = await supabase
-.from("company_users")
-.select("*")
-.eq("company_id",companyId)
-.order("first_name")
+    const { data:me } = await supabase
+      .from("company_users")
+      .select("company_id")
+      .eq("auth_user_id",userId)
+      .single()
 
-if(usersData) setUsers(usersData)
+    if(me?.company_id){
+      setCompanyId(me.company_id)
+    }
+  }
 
-/* APPROVED HOLIDAYS */
+  /* =========================
+     LOAD USERS + REQUESTS
+  ========================= */
 
-const { data:holidayData } = await supabase
-.from("holiday_requests")
-.select("*")
-.eq("company_id",companyId)
-.eq("status","approved")
+  const loadData = async ()=>{
 
-if(holidayData) setHolidays(holidayData)
+    const { data:usersData } = await supabase
+      .from("company_users")
+      .select("*")
+      .eq("company_id",companyId)
+      .order("first_name")
 
-/* PENDING */
+    if(usersData) setUsers(usersData)
 
-const { data:pendingData } = await supabase
-.from("holiday_requests")
-.select("*")
-.eq("company_id",companyId)
-.eq("status","pending")
+    const { data:reqData } = await supabase
+      .from("holiday_requests")
+      .select("*")
+      .eq("company_id",companyId)
 
-if(pendingData) setPending(pendingData)
+    if(reqData) setRequests(reqData)
+  }
 
-/* REJECTED */
+  /* =========================
+     CELL TYPE LOGIC
+  ========================= */
 
-const { data:rejectedData } = await supabase
-.from("holiday_requests")
-.select("*")
-.eq("company_id",companyId)
-.eq("status","rejected")
+  const getCell = (userId:any,day:number)=>{
 
-if(rejectedData) setRejected(rejectedData)
+    const date = new Date(year,monthIndex,day)
 
-/* TIME REQUESTS */
+    const req = requests.find((r:any)=>{
 
-const { data:timeData } = await supabase
-.from("time_requests")
-.select("*")
-.eq("company_id",companyId)
-.eq("status","approved")
+      const start = new Date(r.start_date)
+      const end = new Date(r.end_date)
 
-if(timeData) setTimeRequests(timeData)
+      return r.user_id === userId &&
+      date >= start && date <= end
+    })
 
-}
+    if(!req) return ""
 
-/* CELL TYPE */
+    if(req.status === "pending") return "pending"
+    if(req.status === "rejected") return "rejected"
 
-const getCellData = (userId:any,day:number)=>{
+    if(req.type === "half_day") return "half"
+    if(req.type === "early_finish") return "early"
 
-const date = new Date(year,monthIndex,day)
+    return "approved"
+  }
 
-/* APPROVED */
+  /* =========================
+     ACTIONS
+  ========================= */
 
-const approved = holidays.find((h:any)=>{
+  const approve = async(id:any)=>{
+    await supabase
+      .from("holiday_requests")
+      .update({ status:"approved" })
+      .eq("id",id)
 
-const start = new Date(h.start_date)
-const end = new Date(h.end_date)
+    setSelected(null)
+    loadData()
+  }
 
-return h.user_id === userId &&
-date >= start &&
-date <= end
+  const reject = async(id:any)=>{
+    await supabase
+      .from("holiday_requests")
+      .update({ status:"rejected" })
+      .eq("id",id)
 
-})
+    setSelected(null)
+    loadData()
+  }
 
-if(approved) return {type:"holiday",data:approved}
+  const cancel = async(id:any)=>{
+    await supabase
+      .from("holiday_requests")
+      .delete()
+      .eq("id",id)
 
-/* PENDING */
+    setSelected(null)
+    loadData()
+  }
 
-const pendingReq = pending.find((h:any)=>{
+  /* =========================
+     NAV
+  ========================= */
 
-const start = new Date(h.start_date)
-const end = new Date(h.end_date)
+  const nextMonth = ()=> setMonth(new Date(year,monthIndex+1,1))
+  const prevMonth = ()=> setMonth(new Date(year,monthIndex-1,1))
 
-return h.user_id === userId &&
-date >= start &&
-date <= end
+  /* =========================
+     UI
+  ========================= */
 
-})
+  return(
 
-if(pendingReq) return {type:"pending",data:pendingReq}
+    <div className="calendar-wrapper">
 
-/* REJECTED */
+      <div className="calendar-header">
+        <button onClick={prevMonth}>Prev</button>
+        <h2>{month.toLocaleString("default",{month:"long"})} {year}</h2>
+        <button onClick={nextMonth}>Next</button>
+      </div>
 
-const rejectedReq = rejected.find((h:any)=>{
+      <div className="calendar-grid">
 
-const start = new Date(h.start_date)
-const end = new Date(h.end_date)
+        {/* HEADER ROW */}
+        <div className="calendar-row header">
+          <div className="user-cell">User</div>
 
-return h.user_id === userId &&
-date >= start &&
-date <= end
+          {Array.from({length:daysInMonth},(_,i)=>(
+            <div key={i} className="day-cell">
+              {i+1}
+            </div>
+          ))}
+        </div>
 
-})
+        {/* USERS */}
 
-if(rejectedReq) return {type:"rejected",data:rejectedReq}
+        {users.map(u=>(
 
-/* TIME REQUEST */
+          <div key={u.id} className="calendar-row">
 
-const time = timeRequests.find((t:any)=>{
+            <div className="user-cell">
+              {u.first_name} {u.last_name}
+            </div>
 
-const d = new Date(t.date)
+            {Array.from({length:daysInMonth},(_,i)=>{
 
-return t.user_id === userId &&
-d.toDateString() === date.toDateString()
+              const day = i+1
+              const type = getCell(u.id,day)
 
-})
+              return(
+                <div
+                  key={i}
+                  className={`cell ${type}`}
+                  onClick={()=>{
 
-if(!time) return {type:""}
+                    const req = requests.find((r:any)=>r.user_id === u.id)
+                    if(req) setSelected(req)
 
-if(time.type==="early_finish")
-return {type:"early",data:time}
+                  }}
+                />
+              )
 
-if(time.type==="half_day")
-return {type:"half",data:time}
+            })}
 
-return {type:""}
+          </div>
 
-}
+        ))}
 
-/* APPROVE */
+      </div>
 
-const approveRequest = async(id:any)=>{
+      {/* POPUP */}
 
-const { error } = await supabase
-.from("holiday_requests")
-.update({ status:"approved" })
-.eq("id",id)
+      {selected && (
 
-if(error){
-console.error("Approve error:",error)
-alert(error.message)
-return
-}
+        <div className="popup">
 
-setSelected(null)
-loadData()
+          <h3>Request</h3>
 
-}
+          <p>{selected.start_date} → {selected.end_date}</p>
 
-/* REJECT */
+          {selected.status === "pending" && (
+            <>
+              <button onClick={()=>approve(selected.id)}>Approve</button>
+              <button onClick={()=>reject(selected.id)}>Reject</button>
+            </>
+          )}
 
-const rejectRequest = async(id:any)=>{
+          <button onClick={()=>cancel(selected.id)}>Cancel</button>
 
-const reason = prompt("Reason for rejection")
-if(!reason) return
+          <button onClick={()=>setSelected(null)}>Close</button>
 
-const { error } = await supabase
-.from("holiday_requests")
-.update({
-status:"rejected",
-rejection_reason:reason
-})
-.eq("id",id)
+        </div>
 
-if(error){
-console.error("Reject error:",error)
-alert(error.message)
-return
-}
+      )}
 
-setSelected(null)
-loadData()
+    </div>
 
-}
-
-/* MONTH NAVIGATION */
-
-const previousMonth = ()=>{
-setMonth(new Date(year,monthIndex-1,1))
-}
-
-const nextMonth = ()=>{
-setMonth(new Date(year,monthIndex+1,1))
-}
-
-/* DAY LETTER */
-
-const getDayLetter = (day:number)=>{
-const date = new Date(year,monthIndex,day)
-return date.toLocaleDateString("en-GB",{weekday:"short"}).charAt(0)
-}
-
-return(
-
-<div className="calendar-wrapper">
-
-<div className="calendar-header">
-
-<button onClick={previousMonth}>Previous</button>
-
-<h1>
-{month.toLocaleString("default",{month:"long"})} {year}
-</h1>
-
-<button onClick={nextMonth}>Next</button>
-
-</div>
-
-<table className="calendar-table">
-
-<thead>
-
-<tr>
-
-<th className="user-col">
-Users
-</th>
-
-{Array.from({length:daysInMonth},(_,i)=>{
-
-const day=i+1
-
-return(
-
-<th key={i} className="date-header">
-
-<div className="day-letter">
-{getDayLetter(day)}
-</div>
-
-<div className="day-number">
-{day}
-</div>
-
-</th>
-
-)
-
-})}
-
-</tr>
-
-</thead>
-
-<tbody>
-
-{users.map((user:any)=>(
-
-<tr key={user.id}>
-
-<td className="user-name">
-{user.first_name} {user.last_name}
-</td>
-
-{Array.from({length:daysInMonth},(_,i)=>{
-
-const cell = getCellData(user.id,i+1)
-
-return(
-
-<td
-key={i}
-className={`calendar-cell ${cell.type}`}
-onClick={()=>cell.data && setSelected(cell.data)}
->
-
-</td>
-
-)
-
-})}
-
-</tr>
-
-))}
-
-</tbody>
-
-</table>
-
-{selected && (
-
-<div className="calendar-popup">
-
-<h3>Holiday Request</h3>
-
-<p>
-{selected.start_date} → {selected.end_date}
-</p>
-
-<button onClick={()=>approveRequest(selected.id)}>
-Approve
-</button>
-
-<button onClick={()=>rejectRequest(selected.id)}>
-Reject
-</button>
-
-<button onClick={()=>setSelected(null)}>
-Close
-</button>
-
-</div>
-
-)}
-
-</div>
-
-)
+  )
 
 }

@@ -1,5 +1,7 @@
-import { createClient } from "@supabase/supabase-js"
 import { NextResponse } from "next/server"
+import { createClient } from "@supabase/supabase-js"
+
+/* 🔥 ADMIN CLIENT (SERVICE ROLE) */
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -22,11 +24,37 @@ export async function POST(req: Request){
       jobTitle,
       password,
       status,
-      companyId
+      companyId,
+
+      /* 🔥 NEW FIELDS */
+      holidayEnabled,
+      holidayEntitlement
+
     } = body
 
-    // CREATE AUTH USER
-    const { data:authData, error:authError } =
+    /* =========================
+       VALIDATION
+    ========================= */
+
+    if(!email || !password){
+      return NextResponse.json(
+        { error: "Email and password required" },
+        { status: 400 }
+      )
+    }
+
+    if(!companyId){
+      return NextResponse.json(
+        { error: "Company ID missing" },
+        { status: 400 }
+      )
+    }
+
+    /* =========================
+       CREATE AUTH USER
+    ========================= */
+
+    const { data: authData, error: authError } =
       await supabaseAdmin.auth.admin.createUser({
         email,
         password,
@@ -34,17 +62,29 @@ export async function POST(req: Request){
       })
 
     if(authError){
-      return NextResponse.json({ error: authError.message }, { status: 400 })
+      return NextResponse.json(
+        { error: authError.message },
+        { status: 400 }
+      )
     }
 
-    const userId = authData.user.id
+    const authUserId = authData.user?.id
 
-    // INSERT INTO company_users
-    const { error:insertError } =
+    if(!authUserId){
+      return NextResponse.json(
+        { error: "Failed to create auth user" },
+        { status: 500 }
+      )
+    }
+
+    /* =========================
+       CREATE COMPANY USER
+    ========================= */
+
+    const { error: insertError } =
       await supabaseAdmin
         .from("company_users")
         .insert({
-          id: userId,
           first_name: firstName,
           last_name: lastName,
           email,
@@ -53,14 +93,32 @@ export async function POST(req: Request){
           role,
           job_title: jobTitle,
           status,
-          company_id: companyId
+          company_id: companyId,
+
+          /* 🔥 CRITICAL LINK */
+          auth_user_id: authUserId,
+
+          /* 🔥 HOLIDAY */
+          holiday_enabled: holidayEnabled || false,
+          holiday_entitlement: holidayEnabled
+            ? Number(holidayEntitlement || 0)
+            : 0
         })
 
     if(insertError){
-      return NextResponse.json({ error: insertError.message }, { status: 400 })
+      return NextResponse.json(
+        { error: insertError.message },
+        { status: 400 }
+      )
     }
 
-    return NextResponse.json({ success: true })
+    /* =========================
+       SUCCESS
+    ========================= */
+
+    return NextResponse.json({
+      success: true
+    })
 
   }catch(err:any){
 

@@ -1,85 +1,68 @@
+/* TABLE WRAPPER (SCROLL FIX) */
+
+.table-wrapper{
+  width:100%;
+  overflow-x:auto;
+}
+
 /* ADMIN TABLE */
 
 .admin-table{
-
   width:100%;
   border-collapse:collapse;
   margin-top:20px;
-
-  font-size:13px;   /* smaller text */
-
+  font-size:13px;
+  table-layout:fixed; /* 🔥 prevents overflow breaking layout */
 }
 
 /* HEADERS */
 
 .admin-table th{
-
   text-align:left;
-
   padding:10px;
-
   border-bottom:2px solid #e5e7eb;
 
   font-weight:600;
-
   font-size:12px;
-
   text-transform:uppercase;
-
   letter-spacing:0.03em;
 
   color:#6b7280;
-
 }
 
 /* ROWS */
 
 .admin-table td{
-
-  padding:8px;
-
+  padding:10px;
   border-bottom:1px solid #e5e7eb;
-
+  word-wrap:break-word;
 }
 
-/* HOVER ROW */
+/* HOVER */
 
 .click-row{
-
   cursor:pointer;
-
 }
 
 .click-row:hover{
-
   background:#f9fafb;
-
 }
 
 /* STATUS */
 
 .status-active{
-
   color:#16a34a;
-
   font-weight:600;
-
   font-size:12px;
-
 }
 
 .status-frozen{
-
   color:#dc2626;
-
   font-weight:600;
-
   font-size:12px;
+}
 
-}
-.table-container{
-  padding:30px;
-}
+/* USERS TABLE */
 
 .users-table{
   width:100%;
@@ -102,12 +85,15 @@
   background:#f9f9f9;
 }
 
+/* ACTIONS */
+
 .actions{
   display:flex;
   gap:10px;
+  flex-wrap:wrap; /* 🔥 prevents overflow */
 }
 
-/* clickable user name */
+/* USER LINK */
 
 .user-link{
   background:none;
@@ -120,37 +106,4 @@
 
 .user-link:hover{
   text-decoration:underline;
-}
-.table-container{
-  padding:30px;
-}
-
-.users-table{
-  width:100%;
-  border-collapse:collapse;
-  margin-top:25px;
-}
-
-.users-table th{
-  text-align:left;
-  padding:14px;
-  border-bottom:2px solid #ddd;
-}
-
-.users-table td{
-  padding:14px;
-  border-bottom:1px solid #eee;
-}
-
-.click-row{
-  cursor:pointer;
-}
-
-.click-row:hover{
-  background:#f9f9f9;
-}
-
-.actions{
-  display:flex;
-  gap:10px;
 }

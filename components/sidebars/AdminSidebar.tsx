@@ -7,117 +7,91 @@ import "@/styles/sidebar.css"
 
 export default function AdminSidebar({ setPage, features }: any){
 
-const [showHoliday,setShowHoliday] = useState(false)
+  const [showHoliday,setShowHoliday] = useState(false)
 
-/* 🔥 FEATURE CHECK */
+  const logout = async ()=>{
+    await supabase.auth.signOut()
+    window.location.reload()
+  }
 
-const hasFeature = (feature:string)=>{
-return features?.includes(feature.toLowerCase())
-}
+  const hasFeature = (name:string)=>{
+    return features.includes("ALL") || features.includes(name)
+  }
 
-const logout = async ()=>{
+  return(
 
-await supabase.auth.signOut()
+    <div className="dev-sidebar">
 
-window.location.reload()
+      <div className="sidebar-header">
 
-}
+        <div className="sidebar-title">
+          Company Admin
+        </div>
 
-return(
+        <button className="logout-button" onClick={logout}>
+          Logout
+        </button>
 
-<div className="dev-sidebar">
+      </div>
 
-<div className="sidebar-header">
+      <button
+        className="sidebar-button"
+        onClick={()=>setPage("dashboard")}
+      >
+        Dashboard
+      </button>
 
-<div className="sidebar-title">
-Company Admin
-</div>
+      <button
+        className="sidebar-button"
+        onClick={()=>setPage("users")}
+      >
+        Users
+      </button>
 
-<button
-className="logout-button"
-onClick={logout}
->
-Logout
-</button>
+      {/* 🔥 ONLY SHOW IF FEATURE ENABLED */}
 
-</div>
+      {hasFeature("Holiday") && (
 
-<button
-className="sidebar-button"
-onClick={()=>setPage("dashboard")}
->
-Dashboard
-</button>
+        <>
+          <button
+            className="sidebar-button"
+            onClick={()=>setShowHoliday(!showHoliday)}
+          >
+            Holiday
+          </button>
 
-<button
-className="sidebar-button"
-onClick={()=>setPage("users")}
->
-Users
-</button>
+          {showHoliday && (
 
-{/* 🔥 HOLIDAY DROPDOWN (LOCKED) */}
+            <div className="sidebar-submenu">
 
-{hasFeature("holiday") && (
+              <button onClick={()=>setPage("holiday-request")}>
+                Request Holiday
+              </button>
 
-<>
+              <button onClick={()=>setPage("holiday-approve")}>
+                Approve Requests
+              </button>
 
-<button
-className="sidebar-button"
-onClick={()=>setShowHoliday(!showHoliday)}
->
-Holiday
-</button>
+              <button onClick={()=>setPage("holiday-balance")}>
+                Holiday Balance
+              </button>
 
-{showHoliday && (
+              <button onClick={()=>setPage("holiday-calendar")}>
+                Holiday Calendar
+              </button>
 
-<div className="sidebar-submenu">
+              <button onClick={()=>setPage("holiday-settings")}>
+                Holiday Settings
+              </button>
 
-<button
-className="sidebar-sub-button"
-onClick={()=>setPage("holiday-request")}
->
-Request Holiday
-</button>
+            </div>
 
-<button
-className="sidebar-sub-button"
-onClick={()=>setPage("holiday-approve")}
->
-Approve Requests
-</button>
+          )}
 
-<button
-className="sidebar-sub-button"
-onClick={()=>setPage("holiday-balance")}
->
-Holiday Balance
-</button>
+        </>
 
-<button
-className="sidebar-sub-button"
-onClick={()=>setPage("holiday-calendar")}
->
-Holiday Calendar
-</button>
+      )}
 
-<button
-className="sidebar-sub-button"
-onClick={()=>setPage("holiday-settings")}
->
-Holiday Settings
-</button>
-
-</div>
-
-)}
-
-</>
-
-)}
-
-</div>
-
-)
-
+    </div>
+  )
 }

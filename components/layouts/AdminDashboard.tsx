@@ -1,183 +1,146 @@
 "use client"
 
-import { useState,useEffect } from "react"
+import { useEffect, useState } from "react"
 import { supabase } from "@/supabase/client"
 
 import AdminSidebar from "@/components/sidebars/AdminSidebar"
 
-import ViewUsers from "@/components/modules/admin/ViewUsers"
-import EditUser from "@/components/modules/admin/EditUser"
-
 import RequestTime from "@/components/modules/holiday/RequestTime"
 import ApproveRequests from "@/components/modules/holiday/ApproveRequests"
 import HolidayCalendar from "@/components/modules/holiday/HolidayCalendar"
-import HolidayBalance from "@/components/modules/admin/HolidayBalance"
+import HolidayBalance from "@/components/modules/holiday/HolidayBalance"
 import HolidaySettings from "@/components/modules/holiday/HolidaySettings"
 
 import "@/styles/layout.css"
 
 export default function AdminDashboard(){
 
-const [page,setPage] = useState("dashboard")
+  const [page,setPage] = useState("dashboard")
+  const [editUser,setEditUser] = useState<any>(null)
 
-const [editUser,setEditUser] = useState<any>(null)
+  const [user,setUser] = useState<any>(null)
+  const [features,setFeatures] = useState<string[]>([])
 
-const [company,setCompany] = useState<any>(null)
-const [user,setUser] = useState<any>(null)
+  useEffect(()=>{
+    loadUserAndFeatures()
+  },[])
 
-const [companyFeatures,setCompanyFeatures] = useState<string[]>([])
+  /* =========================
+     LOAD USER + FEATURES
+  ========================= */
 
-/* LOAD USER + COMPANY */
+  const loadUserAndFeatures = async ()=>{
 
-useEffect(()=>{
-loadUser()
-},[])
+    const { data:userData } = await supabase.auth.getUser()
+    const authUser = userData?.user
 
-const loadUser = async()=>{
+    if(!authUser) return
 
-const { data:userData } =
-await supabase.auth.getUser()
+    setUser(authUser)
 
-const userId = userData?.user?.id
+    /* 🔥 FIXED: USE auth_user_id NOT id */
 
-setUser(userData?.user)
+    const { data:userRow } = await supabase
+      .from("company_users")
+      .select("company_id, role")
+      .eq("auth_user_id", authUser.id)   // ✅ FIX
+      .single()
 
-/* GET COMPANY */
+    if(!userRow) return
 
-const { data } = await supabase
-.from("company_users")
-.select("company_id")
-.eq("id",userId)
-.single()
+    console.log("Role:", userRow.role)
 
-setCompany(data)
+    /* 🔥 ADMIN = FULL ACCESS */
 
-/* LOAD FEATURES */
+    if(userRow.role === "admin"){
+      setFeatures(["ALL"])
+      console.log("Admin → ALL features enabled")
+      return
+    }
 
-if(data?.company_id){
-loadFeatures(data.company_id)
-}
+    /* 🔥 LOAD COMPANY FEATURES */
 
-}
+    const { data:cf, error } = await supabase
+      .from("company_features")
+      .select(`
+        feature_id,
+        features:feature_id (
+          id,
+          name
+        )
+      `)
+      .eq("company_id", userRow.company_id)
+      .eq("enabled", true)
 
-/* 🔥 LOAD FEATURES (FIXED) */
+    if(error){
+      console.error("Feature load error:", error)
+      return
+    }
 
-const loadFeatures = async(companyId:string)=>{
+    const names = cf
+      ?.map((f:any)=>f.features?.name)
+      .filter(Boolean) || []
 
-const { data:cfData } = await supabase
-.from("company_features")
-.select("feature_id")
-.eq("company_id",companyId)
-.eq("enabled",true)
+    console.log("Company Features:", names)
 
-if(!cfData || cfData.length === 0){
-setCompanyFeatures([])
-return
-}
+    setFeatures(names)
+  }
 
-const ids = cfData.map((f:any)=>f.feature_id)
+  /* =========================
+     FEATURE CHECK
+  ========================= */
 
-const { data:features } = await supabase
-.from("features")
-.select("id,name")
-.in("id",ids)
+  const hasFeature = (name:string)=>{
+    return features.includes("ALL") || features.includes(name)
+  }
 
-const names = features?.map((f:any)=>f.name.toLowerCase()) || []
+  return(
 
-setCompanyFeatures(names)
+    <div className="dev-layout">
 
-}
+      <AdminSidebar
+        setPage={setPage}
+        features={features}
+      />
 
-/* 🔥 HELPER */
+      <div className="dev-content">
 
-const hasFeature = (feature:string)=>{
-return companyFeatures.includes(feature.toLowerCase())
-}
+        {/* DASHBOARD */}
 
-return(
+        {page === "dashboard" && (
+          <div>
+            <h1>Company Dashboard</h1>
+            <p>Manage your company users and system.</p>
+          </div>
+        )}
 
-<div className="dev-layout">
+        {/* 🔥 HOLIDAY FEATURES */}
 
-<AdminSidebar setPage={setPage} features={companyFeatures} />
+        {hasFeature("Holiday") && page === "holiday-request" && (
+          <RequestTime
+            user={user}
+            close={()=>setPage("dashboard")}
+          />
+        )}
 
-<div className="dev-content">
+        {hasFeature("Holiday") && page === "holiday-approve" && (
+          <ApproveRequests />
+        )}
 
-{/* DASHBOARD */}
+        {hasFeature("Holiday") && page === "holiday-balance" && (
+          <HolidayBalance />
+        )}
 
-{page === "dashboard" && (
+        {hasFeature("Holiday") && page === "holiday-calendar" && (
+          <HolidayCalendar />
+        )}
 
-<div>
-<h1>Company Dashboard</h1>
-<p>Manage your company users and system.</p>
-</div>
+        {hasFeature("Holiday") && page === "holiday-settings" && (
+          <HolidaySettings />
+        )}
 
-)}
+      </div>
 
-{/* USERS */}
-
-{page === "users" && !editUser && (
-
-<ViewUsers
-company={company}
-openEditUser={setEditUser}
-/>
-
-)}
-
-{page === "users" && editUser && (
-
-<EditUser
-user={editUser}
-close={()=>setEditUser(null)}
-/>
-
-)}
-
-{/* 🔥 HOLIDAY FEATURES LOCKED */}
-
-{hasFeature("holiday") && (
-
-<>
-
-{page === "holiday-request" && (
-<RequestTime user={user} close={()=>setPage("dashboard")} />
-)}
-
-{page === "holiday-approve" && (
-<ApproveRequests company={company} />
-)}
-
-{page === "holiday-balance" && (
-<HolidayBalance company={company} />
-)}
-
-{page === "holiday-calendar" && (
-<HolidayCalendar company={company} />
-)}
-
-{page === "holiday-settings" && (
-<HolidaySettings company={company} />
-)}
-
-</>
-
-)}
-
-{/* 🚫 OPTIONAL: BLOCK ACCESS MESSAGE */}
-
-{!hasFeature("holiday") && page.startsWith("holiday") && (
-
-<div>
-<h2>Feature Not Enabled</h2>
-<p>This company does not have access to the holiday system.</p>
-</div>
-
-)}
-
-</div>
-
-</div>
-
-)
-
+    </div>
+  )
 }

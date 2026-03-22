@@ -1,169 +1,210 @@
 "use client"
 
-import { useEffect,useState } from "react"
+import { useEffect, useState } from "react"
 import { supabase } from "@/supabase/client"
 
 const months = [
-{value:1,label:"January"},
-{value:2,label:"February"},
-{value:3,label:"March"},
-{value:4,label:"April"},
-{value:5,label:"May"},
-{value:6,label:"June"},
-{value:7,label:"July"},
-{value:8,label:"August"},
-{value:9,label:"September"},
-{value:10,label:"October"},
-{value:11,label:"November"},
-{value:12,label:"December"},
+  {value:1,label:"January"},
+  {value:2,label:"February"},
+  {value:3,label:"March"},
+  {value:4,label:"April"},
+  {value:5,label:"May"},
+  {value:6,label:"June"},
+  {value:7,label:"July"},
+  {value:8,label:"August"},
+  {value:9,label:"September"},
+  {value:10,label:"October"},
+  {value:11,label:"November"},
+  {value:12,label:"December"},
 ]
 
 export default function HolidaySettings(){
 
-const [companyId,setCompanyId] = useState("")
-const [startMonth,setStartMonth] = useState(1)
-const [endMonth,setEndMonth] = useState(12)
+  const [companyId,setCompanyId] = useState<string | null>(null)
 
-const [allowHalf,setAllowHalf] = useState(true)
-const [allowEarly,setAllowEarly] = useState(true)
+  const [startMonth,setStartMonth] = useState(1)
+  const [endMonth,setEndMonth] = useState(12)
 
-useEffect(()=>{
-loadSettings()
-},[])
+  const [allowHalf,setAllowHalf] = useState(true)
+  const [allowEarly,setAllowEarly] = useState(true)
 
-const loadSettings = async ()=>{
+  const [loading,setLoading] = useState(true)
+  const [saving,setSaving] = useState(false)
 
-const { data:session } = await supabase.auth.getSession()
-const userId = session?.session?.user?.id
-if(!userId) return
+  useEffect(()=>{
+    loadSettings()
+  },[])
 
-const { data:user } = await supabase
-.from("company_users")
-.select("company_id")
-.eq("id",userId)
-.single()
+  /* LOAD SETTINGS */
 
-if(!user) return
+  const loadSettings = async ()=>{
 
-setCompanyId(user.company_id)
+    setLoading(true)
 
-const { data:settings } = await supabase
-.from("holiday_settings")
-.select("*")
-.eq("company_id",user.company_id)
-.single()
+    const { data:session } = await supabase.auth.getSession()
+    const userId = session?.session?.user?.id
 
-if(settings){
+    if(!userId){
+      setLoading(false)
+      return
+    }
 
-setStartMonth(settings.holiday_start_month)
-setEndMonth(settings.holiday_end_month)
-setAllowHalf(settings.allow_half_days)
-setAllowEarly(settings.allow_early_finish)
+    const { data:user } = await supabase
+      .from("company_users")
+      .select("company_id")
+      .eq("id",userId)
+      .single()
 
-}
+    if(!user){
+      setLoading(false)
+      return
+    }
 
-}
+    console.log("Loaded companyId:", user.company_id)
 
-const saveSettings = async ()=>{
+    setCompanyId(user.company_id)
 
-const { error } = await supabase
-.from("holiday_settings")
-.upsert({
-company_id:companyId,
-holiday_start_month:startMonth,
-holiday_end_month:endMonth,
-allow_half_days:allowHalf,
-allow_early_finish:allowEarly
-})
+    const { data:settings } = await supabase
+      .from("holiday_settings")
+      .select("*")
+      .eq("company_id",user.company_id)
+      .maybeSingle()
 
-if(error){
-alert(error.message)
-return
-}
+    if(settings){
 
-alert("Holiday settings saved")
+      setStartMonth(settings.holiday_start_month)
+      setEndMonth(settings.holiday_end_month)
+      setAllowHalf(settings.allow_half_days)
+      setAllowEarly(settings.allow_early_finish)
 
-}
+    }
 
-return(
+    setLoading(false)
+  }
 
-<div className="page-container">
+  /* SAVE SETTINGS */
 
-<h1>Holiday Settings</h1>
+  const saveSettings = async ()=>{
 
-<div className="form">
+    if(!companyId){
+      alert("Company not loaded yet")
+      return
+    }
 
-<div className="form-group">
+    setSaving(true)
 
-<label>Holiday Year Start</label>
+    const { error } = await supabase
+      .from("holiday_settings")
+      .upsert(
+        {
+          company_id: companyId,
+          holiday_start_month: startMonth,
+          holiday_end_month: endMonth,
+          allow_half_days: allowHalf,
+          allow_early_finish: allowEarly
+        },
+        {
+          onConflict: "company_id" // 🔥 FIX FOR DUPLICATE ERROR
+        }
+      )
 
-<select
-value={startMonth}
-onChange={(e)=>setStartMonth(Number(e.target.value))}
->
-{months.map(m=>(
-<option key={m.value} value={m.value}>
-{m.label}
-</option>
-))}
-</select>
+    if(error){
+      console.error("Save error:", error)
+      alert(error.message)
+      setSaving(false)
+      return
+    }
 
-</div>
+    alert("Holiday settings saved")
+    setSaving(false)
+  }
 
-<div className="form-group">
+  /* LOADING UI */
 
-<label>Holiday Year End</label>
+  if(loading){
+    return <p>Loading settings...</p>
+  }
 
-<select
-value={endMonth}
-onChange={(e)=>setEndMonth(Number(e.target.value))}
->
-{months.map(m=>(
-<option key={m.value} value={m.value}>
-{m.label}
-</option>
-))}
-</select>
+  return(
 
-</div>
+    <div className="page-container">
 
-<div className="form-group">
+      <h1>Holiday Settings</h1>
 
-<label>
-<input
-type="checkbox"
-checked={allowHalf}
-onChange={(e)=>setAllowHalf(e.target.checked)}
-/>
-Allow Half Days
-</label>
+      <div className="form">
 
-</div>
+        {/* START MONTH */}
 
-<div className="form-group">
+        <div className="form-group">
+          <label>Holiday Year Start</label>
+          <select
+            value={startMonth}
+            onChange={(e)=>setStartMonth(Number(e.target.value))}
+          >
+            {months.map(m=>(
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
-<label>
-<input
-type="checkbox"
-checked={allowEarly}
-onChange={(e)=>setAllowEarly(e.target.checked)}
-/>
-Allow Early Finish
-</label>
+        {/* END MONTH */}
 
-</div>
+        <div className="form-group">
+          <label>Holiday Year End</label>
+          <select
+            value={endMonth}
+            onChange={(e)=>setEndMonth(Number(e.target.value))}
+          >
+            {months.map(m=>(
+              <option key={m.value} value={m.value}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+        </div>
 
-<button
-className="primary-button"
-onClick={saveSettings}
->
-Save Settings
-</button>
+        {/* HALF DAYS */}
 
-</div>
+        <div className="form-group">
+          <label>
+            <input
+              type="checkbox"
+              checked={allowHalf}
+              onChange={(e)=>setAllowHalf(e.target.checked)}
+            />
+            Allow Half Days
+          </label>
+        </div>
 
-</div>
+        {/* EARLY FINISH */}
 
-)
+        <div className="form-group">
+          <label>
+            <input
+              type="checkbox"
+              checked={allowEarly}
+              onChange={(e)=>setAllowEarly(e.target.checked)}
+            />
+            Allow Early Finish
+          </label>
+        </div>
+
+        {/* SAVE BUTTON */}
+
+        <button
+          className="primary-button"
+          onClick={saveSettings}
+          disabled={!companyId || saving}
+        >
+          {saving ? "Saving..." : "Save Settings"}
+        </button>
+
+      </div>
+
+    </div>
+
+  )
 
 }

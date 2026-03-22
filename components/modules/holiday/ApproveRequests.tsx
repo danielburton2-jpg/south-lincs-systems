@@ -3,134 +3,238 @@
 import { useEffect, useState } from "react"
 import { supabase } from "@/supabase/client"
 
+import "@/styles/tables.css"
+
 export default function ApproveRequests(){
 
-const [requests,setRequests] = useState<any[]>([])
-const [loading,setLoading] = useState(true)
+  const [requests,setRequests] = useState<any[]>([])
+  const [currentUserId,setCurrentUserId] = useState<string | null>(null)
+  const [companyId,setCompanyId] = useState<string | null>(null)
+  const [loading,setLoading] = useState(true)
 
-useEffect(()=>{
-loadRequests()
-},[])
+  /* LOAD USER + COMPANY */
 
-const loadRequests = async ()=>{
+  useEffect(()=>{
+    loadUserAndCompany()
+  },[])
 
-setLoading(true)
+  const loadUserAndCompany = async ()=>{
 
-const { data,error } = await supabase
-.from("holiday_requests")
-.select(`
-id,
-start_date,
-end_date,
-reason,
-status,
-company_users (
-first_name,
-last_name
-)
-`)
-.eq("status","pending")
-.order("start_date",{ ascending:true })
+    const { data:userData } = await supabase.auth.getUser()
+    const user = userData?.user
 
-if(!error && data){
-setRequests(data)
-}
+    if(!user){
+      setLoading(false)
+      return
+    }
 
-setLoading(false)
+    setCurrentUserId(user.id)
 
-}
+    const { data:companyUser } = await supabase
+      .from("company_users")
+      .select("company_id")
+      .eq("id",user.id)
+      .single()
 
-const updateStatus = async (id:any,status:any)=>{
+    if(!companyUser){
+      console.log("No company found")
+      setLoading(false)
+      return
+    }
 
-await supabase
-.from("holiday_requests")
-.update({ status })
-.eq("id",id)
+    setCompanyId(companyUser.company_id)
 
-/* Remove from UI immediately */
+    loadRequests(companyUser.company_id)
+  }
 
-setRequests(prev => prev.filter(r => r.id !== id))
+  /* LOAD REQUESTS */
 
-}
+  const loadRequests = async (companyId:string)=>{
 
-if(loading){
-return <p>Loading requests...</p>
-}
+    try{
 
-return(
+      setLoading(true)
 
-<div className="page-container">
+      const { data,error } = await supabase
+        .from("holiday_requests")
+        .select(`
+          id,
+          user_id,
+          start_date,
+          end_date,
+          reason,
+          status,
+          delete_requested,
+          company_users (
+            first_name,
+            last_name
+          )
+        `)
+        .eq("company_id",companyId)
+        .order("created_at",{ ascending:false })
 
-<h1 className="page-title">
-Approve Holiday Requests
-</h1>
+      if(error){
+        console.error("Load error:", error)
+      }
 
-<table className="table">
+      setRequests(data || [])
 
-<thead>
+    } catch(err){
+      console.error("Crash:", err)
+    } finally {
+      setLoading(false)
+    }
 
-<tr>
-<th>Employee</th>
-<th>Start Date</th>
-<th>End Date</th>
-<th>Reason</th>
-<th>Action</th>
-</tr>
+  }
 
-</thead>
+  /* UPDATE STATUS */
 
-<tbody>
+  const updateStatus = async (id:string,status:string)=>{
 
-{requests.length === 0 && (
+    const { error } = await supabase
+      .from("holiday_requests")
+      .update({ status })
+      .eq("id",id)
 
-<tr>
-<td colSpan={5}>
-No pending requests
-</td>
-</tr>
+    if(error){
+      alert(error.message)
+      return
+    }
 
-)}
+    loadRequests(companyId!)
+  }
 
-{requests.map((r)=>(
+  /* APPROVE DELETE */
 
-<tr key={r.id}>
+  const approveDelete = async (id:string)=>{
 
-<td>
-{r.company_users?.first_name} {r.company_users?.last_name}
-</td>
+    const { error } = await supabase
+      .from("holiday_requests")
+      .delete()
+      .eq("id",id)
 
-<td>{r.start_date}</td>
-<td>{r.end_date}</td>
-<td>{r.reason}</td>
+    if(error){
+      alert(error.message)
+      return
+    }
 
-<td>
+    loadRequests(companyId!)
+  }
 
-<button
-className="approve-btn"
-onClick={()=>updateStatus(r.id,"approved")}
->
-Approve
-</button>
+  /* UI */
 
-<button
-className="reject-btn"
-onClick={()=>updateStatus(r.id,"rejected")}
->
-Reject
-</button>
+  if(loading){
+    return <p>Loading requests...</p>
+  }
 
-</td>
+  return(
 
-</tr>
+    <div className="page-container">
 
-))}
+      <h1 className="page-title">Approve Requests</h1>
 
-</tbody>
+      <div className="table-wrapper">
 
-</table>
+        <table className="admin-table">
 
-</div>
+          <thead>
+            <tr>
+              <th>Employee</th>
+              <th>Dates</th>
+              <th>Reason</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
 
-)
+          <tbody>
+
+            {requests.length === 0 && (
+              <tr>
+                <td colSpan={5}>
+                  No requests found
+                </td>
+              </tr>
+            )}
+
+            {requests.map((r)=>{
+
+              const isOwn = r.user_id === currentUserId
+
+              return(
+
+                <tr key={r.id}>
+
+                  <td className="col-employee">
+                    {r.company_users?.first_name} {r.company_users?.last_name}
+                    {isOwn && <span className="tag-you">You</span>}
+                  </td>
+
+                  <td className="col-dates">
+                    {r.start_date} → {r.end_date}
+                  </td>
+
+                  <td className="col-reason">
+                    {r.reason || "-"}
+                  </td>
+
+                  <td className="col-status">
+                    <span className={`status-pill ${r.status}`}>
+                      {r.status}
+                    </span>
+                  </td>
+
+                  <td className="col-actions">
+
+                    {!isOwn && r.status === "pending" && (
+                      <>
+                        <button
+                          className="btn-approve"
+                          onClick={()=>updateStatus(r.id,"approved")}
+                        >
+                          Approve
+                        </button>
+
+                        <button
+                          className="btn-reject"
+                          onClick={()=>updateStatus(r.id,"rejected")}
+                        >
+                          Reject
+                        </button>
+                      </>
+                    )}
+
+                    {isOwn && (
+                      <span className="muted">
+                        Cannot approve your own
+                      </span>
+                    )}
+
+                    {r.delete_requested && !isOwn && (
+                      <button
+                        className="btn-reject"
+                        onClick={()=>approveDelete(r.id)}
+                      >
+                        Approve Delete
+                      </button>
+                    )}
+
+                  </td>
+
+                </tr>
+
+              )
+
+            })}
+
+          </tbody>
+
+        </table>
+
+      </div>
+
+    </div>
+
+  )
 
 }

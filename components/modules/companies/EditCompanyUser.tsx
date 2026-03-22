@@ -6,19 +6,26 @@ import { auditLog } from "@/lib/audit/auditLogger"
 
 import "@/styles/forms.css"
 
-export default function EditCompanyUser({ user, close }:any){
+export default function EditCompanyUser({ user, close }: any){
+
+/* BASIC */
 
 const [firstName,setFirstName] = useState("")
 const [lastName,setLastName] = useState("")
 const [email,setEmail] = useState("")
+const [phone,setPhone] = useState("")
+const [employeeNumber,setEmployeeNumber] = useState("")
 const [role,setRole] = useState("")
 const [jobTitle,setJobTitle] = useState("")
 const [status,setStatus] = useState("active")
-
 const [password,setPassword] = useState("")
 
-const [jobTitles,setJobTitles] = useState<string[]>([])
-const [managerTitles,setManagerTitles] = useState<any>({})
+/* HOLIDAY */
+
+const [holidayEnabled,setHolidayEnabled] = useState(false)
+const [holidayEntitlement,setHolidayEntitlement] = useState<number | "">("")
+
+/* FEATURES */
 
 const [companyFeatures,setCompanyFeatures] = useState<string[]>([])
 const [loading,setLoading] = useState(false)
@@ -32,111 +39,58 @@ if(!user) return
 setFirstName(user.first_name || "")
 setLastName(user.last_name || "")
 setEmail(user.email || "")
+setPhone(user.phone || "")
+setEmployeeNumber(user.employee_number || "")
 setRole(user.role || "")
 setJobTitle(user.job_title || "")
 setStatus(user.status || "active")
 
-loadJobTitles()
-loadManagerTitles()
+setHolidayEnabled(user.holiday_enabled || false)
+setHolidayEntitlement(user.holiday_entitlement || "")
+
 loadFeatures()
 
 },[user])
 
-/* 🔥 CLEAN FEATURE LOADER (NO JOINS) */
+/* LOAD COMPANY FEATURES */
 
 const loadFeatures = async()=>{
 
 if(!user?.company_id) return
 
-try{
-
-// STEP 1: GET FEATURE IDS
-const { data:cfData, error:cfError } = await supabase
+const { data,error } = await supabase
 .from("company_features")
 .select("feature_id")
 .eq("company_id",user.company_id)
 .eq("enabled",true)
 
-if(cfError){
-console.error("Company feature error:", cfError)
+if(error){
+console.error(error)
 return
 }
 
-if(!cfData || cfData.length === 0){
+if(!data?.length){
 setCompanyFeatures([])
 return
 }
 
-// STEP 2: GET FEATURE NAMES
-const ids = cfData.map((f:any)=>f.feature_id)
+const ids = data.map((f:any)=>f.feature_id)
 
-const { data:featuresData, error:fError } = await supabase
+const { data:features } = await supabase
 .from("features")
 .select("id,name")
 .in("id",ids)
 
-if(fError){
-console.error("Feature names error:", fError)
-return
-}
-
-const names = (featuresData || []).map((f:any)=>
-f.name.toLowerCase()
-)
+const names = (features || []).map((f:any)=>f.name.toLowerCase())
 
 setCompanyFeatures(names)
 
-}catch(err){
-console.error("Feature load crash:", err)
 }
 
-}
+/* HELPERS */
 
-/* HELPER */
-
-const hasFeature = (feature:string)=>{
-return companyFeatures.includes(feature.toLowerCase())
-}
-
-/* JOB TITLES */
-
-const loadJobTitles = async()=>{
-
-const { data } = await supabase
-.from("company_users")
-.select("job_title")
-.eq("company_id",user.company_id)
-.eq("role","employee")
-
-const unique = [
-...new Set(data?.map((u:any)=>u.job_title).filter(Boolean))
-]
-
-setJobTitles(unique)
-
-}
-
-/* MANAGER TITLES */
-
-const loadManagerTitles = async()=>{
-
-const { data } = await supabase
-.from("manager_job_titles")
-.select("job_title")
-.eq("manager_id",user.id)
-
-const map:any={}
-data?.forEach((t:any)=>{ map[t.job_title]=true })
-
-setManagerTitles(map)
-
-}
-
-const toggleTitle = (title:any)=>{
-setManagerTitles((prev:any)=>({
-...prev,
-[title]:!prev[title]
-}))
+const hasHolidayFeature = ()=>{
+return companyFeatures.includes("holiday")
 }
 
 /* SAVE */
@@ -144,6 +98,16 @@ setManagerTitles((prev:any)=>({
 const saveUser = async()=>{
 
 setLoading(true)
+
+/* VALIDATION */
+
+if(hasHolidayFeature() && (role==="admin" || holidayEnabled)){
+  if(!holidayEntitlement){
+    alert("Please enter holiday entitlement")
+    setLoading(false)
+    return
+  }
+}
 
 /* UPDATE USER */
 
@@ -153,9 +117,16 @@ const { error } = await supabase
 first_name:firstName,
 last_name:lastName,
 email,
+phone,
+employee_number:employeeNumber,
 role,
-job_title:jobTitle.trim(),
-status
+job_title:jobTitle,
+status,
+holiday_enabled: role==="admin" ? true : holidayEnabled,
+holiday_entitlement:
+  (role==="admin" || holidayEnabled)
+    ? holidayEntitlement
+    : null
 })
 .eq("id",user.id)
 
@@ -165,10 +136,9 @@ setLoading(false)
 return
 }
 
-/* PASSWORD */
+/* PASSWORD UPDATE */
 
 if(password){
-
 await fetch("/api/admin/update-password",{
 method:"POST",
 headers:{ "Content-Type":"application/json" },
@@ -177,44 +147,9 @@ userId:user.id,
 password
 })
 })
-
-}
-
-/* MANAGER TITLES */
-
-await supabase
-.from("manager_job_titles")
-.delete()
-.eq("manager_id",user.id)
-
-if(role==="manager"){
-
-const rows = Object.keys(managerTitles)
-.filter(t=>managerTitles[t])
-.map(t=>({
-manager_id:user.id,
-job_title:t
-}))
-
-if(rows.length){
-await supabase.from("manager_job_titles").insert(rows)
-}
-
 }
 
 /* AUDIT */
-
-if(email !== user.email){
-await auditLog({
-action:"update",
-table:"company_users",
-fieldName:"email",
-oldValue:user.email,
-newValue:email,
-companyId:user.company_id,
-targetId:user.id
-})
-}
 
 await auditLog({
 action:"update_user",
@@ -231,39 +166,73 @@ close()
 
 }
 
+/* UI */
+
 return(
 
 <div className="form-container">
 
 <h1>Edit User</h1>
 
-<div className="stack-form">
+<form className="form">
 
+{/* FIRST NAME */}
+<div className="form-group">
 <label>First Name</label>
 <input value={firstName} onChange={(e)=>setFirstName(e.target.value)} />
+</div>
 
+{/* LAST NAME */}
+<div className="form-group">
 <label>Last Name</label>
 <input value={lastName} onChange={(e)=>setLastName(e.target.value)} />
+</div>
 
+{/* EMAIL */}
+<div className="form-group">
 <label>Email</label>
 <input value={email} onChange={(e)=>setEmail(e.target.value)} />
+</div>
 
+{/* PHONE */}
+<div className="form-group">
+<label>Phone</label>
+<input value={phone} onChange={(e)=>setPhone(e.target.value)} />
+</div>
+
+{/* 🔥 ADDED BACK */}
+
+<div className="form-group">
+<label>Employee Number</label>
+<input value={employeeNumber} onChange={(e)=>setEmployeeNumber(e.target.value)} />
+</div>
+
+<div className="form-group">
+<label>Job Title</label>
+<input value={jobTitle} onChange={(e)=>setJobTitle(e.target.value)} />
+</div>
+
+{/* ROLE */}
+<div className="form-group">
 <label>Role</label>
 <select value={role} onChange={(e)=>setRole(e.target.value)}>
 <option value="admin">Admin</option>
 <option value="manager">Manager</option>
 <option value="employee">Employee</option>
 </select>
+</div>
 
-<label>Job Title</label>
-<input value={jobTitle} onChange={(e)=>setJobTitle(e.target.value)} />
-
+{/* STATUS */}
+<div className="form-group">
 <label>Status</label>
 <select value={status} onChange={(e)=>setStatus(e.target.value)}>
 <option value="active">Active</option>
 <option value="inactive">Inactive</option>
 </select>
+</div>
 
+{/* PASSWORD */}
+<div className="form-group">
 <label>New Password</label>
 <input
 type="password"
@@ -271,79 +240,62 @@ placeholder="Leave blank to keep current"
 value={password}
 onChange={(e)=>setPassword(e.target.value)}
 />
-
-{/* 🔥 FEATURE CONTROL */}
-
-{role !== "admin" && (
-
-<div className="feature-section">
-
-<h3>Company Features</h3>
-
-{companyFeatures.length === 0 && (
-<p>No features enabled</p>
-)}
-
-{companyFeatures.map(f=>(
-<div key={f} className="feature-row">
-✓ {f}
-</div>
-))}
-
-{hasFeature("holiday")
-? <div className="feature-highlight">Holiday Enabled</div>
-: <div className="feature-disabled">Holiday Disabled</div>
-}
-
 </div>
 
-)}
+{/* 🔥 HOLIDAY TOGGLE */}
 
-{/* MANAGER TITLES */}
+{hasHolidayFeature() && role !== "admin" && (
 
-{role==="manager" && (
+<div className="form-group">
 
-<div className="feature-section">
-
-<h3>Manage Job Titles</h3>
-
-{jobTitles.map(title=>(
-
-<label key={title} className="feature-row">
-
+<div className="checkbox-row">
 <input
 type="checkbox"
-checked={managerTitles[title] || false}
-onChange={()=>toggleTitle(title)}
+checked={holidayEnabled}
+onChange={(e)=>setHolidayEnabled(e.target.checked)}
 />
-
-{title}
-
-</label>
-
-))}
+<label>Enable Holiday Feature</label>
+</div>
 
 </div>
 
 )}
+
+{/* 🔥 ENTITLEMENT */}
+
+{hasHolidayFeature() && (role==="admin" || holidayEnabled) && (
+
+<div className="form-group">
+
+<label>Holiday Entitlement (Days)</label>
+
+<input
+type="number"
+className="entitlement-input"
+placeholder="e.g. 25"
+value={holidayEntitlement}
+onChange={(e)=>setHolidayEntitlement(Number(e.target.value))}
+/>
+
+</div>
+
+)}
+
+{/* BUTTONS */}
 
 <div className="form-buttons">
 
-<button className="secondary-button" onClick={close}>
+<button type="button" onClick={close}>
 Cancel
 </button>
 
-<button
-className="primary-button"
-onClick={saveUser}
-disabled={loading}
->
+<button type="button" onClick={saveUser} disabled={loading}>
 {loading ? "Saving..." : "Save Changes"}
 </button>
 
 </div>
 
-</div>
+</form>
 
 </div>
 
