@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { startRegistration } from '@simplewebauthn/browser'
 
 const supabase = createClient()
 
@@ -12,9 +11,6 @@ export default function EmployeeHome() {
   const [company, setCompany] = useState<any>(null)
   const [userFeatures, setUserFeatures] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [showBiometricPrompt, setShowBiometricPrompt] = useState(false)
-  const [biometricRegistering, setBiometricRegistering] = useState(false)
-  const [biometricMessage, setBiometricMessage] = useState('')
   const router = useRouter()
 
   const fetchData = useCallback(async () => {
@@ -59,96 +55,12 @@ export default function EmployeeHome() {
       .eq('is_enabled', true)
 
     setUserFeatures(featuresData || [])
-
-    // Show biometric prompt if:
-    // - Browser supports WebAuthn
-    // - User hasn't set up biometric on this device yet
-    // - User hasn't dismissed the prompt on this device
-    const biometricSetup = localStorage.getItem('biometric_email')
-    const biometricDismissed = localStorage.getItem('biometric_dismissed')
-
-    if (
-      typeof window !== 'undefined' &&
-      window.PublicKeyCredential &&
-      !biometricSetup &&
-      !biometricDismissed
-    ) {
-      // Check if platform authenticator is available
-      try {
-        const available = await (window.PublicKeyCredential as any)
-          .isUserVerifyingPlatformAuthenticatorAvailable()
-        if (available) {
-          setShowBiometricPrompt(true)
-        }
-      } catch (e) {
-        // Not available
-      }
-    }
-
     setLoading(false)
   }, [router])
 
   useEffect(() => {
     fetchData()
   }, [fetchData])
-
-  const handleEnableBiometric = async () => {
-    setBiometricRegistering(true)
-    setBiometricMessage('')
-
-    try {
-      // Get registration options
-      const optRes = await fetch('/api/biometric/register-options', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: currentUser.id }),
-      })
-
-      if (!optRes.ok) {
-        setBiometricMessage('Could not set up biometric login')
-        setBiometricRegistering(false)
-        return
-      }
-
-      const options = await optRes.json()
-
-      // Prompt user for biometric
-      const response = await startRegistration({ optionsJSON: options })
-
-      // Verify with server
-      const verifyRes = await fetch('/api/biometric/register-verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: currentUser.id,
-          response,
-          device_name: navigator.userAgent.includes('iPhone') ? 'iPhone' :
-                       navigator.userAgent.includes('Android') ? 'Android Device' :
-                       'My Device',
-        }),
-      })
-
-      if (!verifyRes.ok) {
-        const err = await verifyRes.json()
-        setBiometricMessage('Setup failed: ' + err.error)
-        setBiometricRegistering(false)
-        return
-      }
-
-      // Save email so we can use it for future login
-      localStorage.setItem('biometric_email', currentUser.email)
-      setShowBiometricPrompt(false)
-      setBiometricMessage('')
-    } catch (err: any) {
-      setBiometricMessage('Biometric setup cancelled or failed')
-      setBiometricRegistering(false)
-    }
-  }
-
-  const handleDismissBiometric = () => {
-    localStorage.setItem('biometric_dismissed', 'true')
-    setShowBiometricPrompt(false)
-  }
 
   const getGreeting = () => {
     const hour = new Date().getHours()
@@ -242,43 +154,6 @@ export default function EmployeeHome() {
 
   return (
     <main className="min-h-screen bg-gray-50 pb-24">
-      {/* Biometric setup modal */}
-      {showBiometricPrompt && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
-          <div className="bg-white rounded-3xl sm:rounded-2xl w-full max-w-md p-6 shadow-2xl">
-            <div className="text-center">
-              <div className="text-6xl mb-4">👆</div>
-              <h2 className="text-2xl font-bold text-gray-800 mb-2">
-                Enable Face ID / Fingerprint?
-              </h2>
-              <p className="text-gray-600 text-sm mb-6">
-                Sign in quickly and securely next time with your biometrics instead of typing your password.
-              </p>
-
-              {biometricMessage && (
-                <div className="bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg px-4 py-3 mb-4">
-                  {biometricMessage}
-                </div>
-              )}
-
-              <button
-                onClick={handleEnableBiometric}
-                disabled={biometricRegistering}
-                className="w-full bg-gradient-to-br from-blue-600 to-blue-800 text-white py-4 rounded-xl font-medium mb-3 disabled:opacity-50"
-              >
-                {biometricRegistering ? 'Setting up...' : 'Enable Biometric Login'}
-              </button>
-              <button
-                onClick={handleDismissBiometric}
-                className="w-full bg-gray-100 text-gray-700 py-3 rounded-xl font-medium"
-              >
-                Not Now
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Header */}
       <div className="bg-gradient-to-br from-blue-600 to-blue-800 text-white px-6 pt-10 pb-8 rounded-b-3xl shadow-lg">
         <div className="flex items-center justify-between mb-1">
