@@ -86,7 +86,6 @@ export default function EmployeeHome() {
     return icons[name] || '📌'
   }
 
-  // Check if user has a specific feature enabled
   const hasFeature = (name: string) => {
     return userFeatures.some((uf: any) => uf.features?.name === name)
   }
@@ -105,7 +104,6 @@ export default function EmployeeHome() {
     )
   }
 
-  // Build the quick overview cards based on what features user has
   const overviewCards = []
 
   if (hasFeature('Holidays')) {
@@ -130,6 +128,33 @@ export default function EmployeeHome() {
     overviewCards.push({ icon: '📊', value: '—', label: 'Available reports' })
   }
 
+  // Build dynamic bottom nav based on features
+  const bottomNavItems = [
+    { icon: '🏠', label: 'Home', path: '/employee', alwaysShow: true, active: true },
+  ]
+
+  if (hasFeature('Holidays')) {
+    bottomNavItems.push({ icon: '🏖️', label: 'Holidays', path: '/employee/holidays', alwaysShow: false, active: false })
+  }
+  if (hasFeature('Schedules')) {
+    bottomNavItems.push({ icon: '📅', label: 'Schedule', path: '/employee/schedules', alwaysShow: false, active: false })
+  }
+  if (hasFeature('Timesheets')) {
+    bottomNavItems.push({ icon: '⏱️', label: 'Hours', path: '/employee/timesheets', alwaysShow: false, active: false })
+  }
+  if (hasFeature('Tasks')) {
+    bottomNavItems.push({ icon: '✅', label: 'Tasks', path: '/employee/tasks', alwaysShow: false, active: false })
+  }
+  if (hasFeature('Messaging')) {
+    bottomNavItems.push({ icon: '💬', label: 'Messages', path: '/employee/messaging', alwaysShow: false, active: false })
+  }
+
+  // Always show Profile last
+  bottomNavItems.push({ icon: '👤', label: 'Profile', path: '/employee/profile', alwaysShow: true, active: false })
+
+  // Limit to max 5 items in bottom nav (best mobile practice)
+  const visibleNavItems = bottomNavItems.slice(0, 5)
+
   return (
     <main className="min-h-screen bg-gray-50 pb-24">
       {/* Header */}
@@ -151,7 +176,6 @@ export default function EmployeeHome() {
 
       <div className="px-6 pt-6 space-y-6">
 
-        {/* Quick Overview Cards — only shown if user has features */}
         {overviewCards.length > 0 && (
           <div>
             <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
@@ -169,7 +193,6 @@ export default function EmployeeHome() {
           </div>
         )}
 
-        {/* Features */}
         <div>
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
             Your Apps
@@ -201,37 +224,21 @@ export default function EmployeeHome() {
 
       </div>
 
-      {/* Bottom Navigation */}
+      {/* Bottom Navigation - dynamic based on features */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
         <div className="flex justify-around items-center h-16 max-w-md mx-auto">
-          <button
-            onClick={() => router.push('/employee')}
-            className="flex flex-col items-center gap-0.5 text-blue-600"
-          >
-            <span className="text-xl">🏠</span>
-            <span className="text-xs font-medium">Home</span>
-          </button>
-          <button
-            onClick={() => router.push('/employee/requests')}
-            className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-600"
-          >
-            <span className="text-xl">📋</span>
-            <span className="text-xs font-medium">Requests</span>
-          </button>
-          <button
-            onClick={() => router.push('/employee/schedule')}
-            className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-600"
-          >
-            <span className="text-xl">📅</span>
-            <span className="text-xs font-medium">Schedule</span>
-          </button>
-          <button
-            onClick={() => router.push('/employee/profile')}
-            className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-600"
-          >
-            <span className="text-xl">👤</span>
-            <span className="text-xs font-medium">Profile</span>
-          </button>
+          {visibleNavItems.map((item) => (
+            <button
+              key={item.path}
+              onClick={() => router.push(item.path)}
+              className={`flex flex-col items-center gap-0.5 ${
+                item.active ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              <span className="text-xl">{item.icon}</span>
+              <span className="text-xs font-medium">{item.label}</span>
+            </button>
+          ))}
         </div>
       </nav>
     </main>
