@@ -86,6 +86,11 @@ export default function EmployeeHome() {
     return icons[name] || '📌'
   }
 
+  // Check if user has a specific feature enabled
+  const hasFeature = (name: string) => {
+    return userFeatures.some((uf: any) => uf.features?.name === name)
+  }
+
   const today = new Date().toLocaleDateString('en-GB', {
     weekday: 'long',
     day: 'numeric',
@@ -98,6 +103,31 @@ export default function EmployeeHome() {
         <p className="text-gray-500">Loading...</p>
       </main>
     )
+  }
+
+  // Build the quick overview cards based on what features user has
+  const overviewCards = []
+
+  if (hasFeature('Holidays')) {
+    overviewCards.push({ icon: '🏖️', value: '—', label: 'Days holiday left' })
+  }
+  if (hasFeature('Schedules')) {
+    overviewCards.push({ icon: '📅', value: '—', label: 'Shifts this week' })
+  }
+  if (hasFeature('Timesheets')) {
+    overviewCards.push({ icon: '⏱️', value: '—', label: 'Hours this week' })
+  }
+  if (hasFeature('Tasks')) {
+    overviewCards.push({ icon: '✅', value: '—', label: 'Open tasks' })
+  }
+  if (hasFeature('Messaging')) {
+    overviewCards.push({ icon: '💬', value: '—', label: 'New messages' })
+  }
+  if (hasFeature('Documents')) {
+    overviewCards.push({ icon: '📄', value: '—', label: 'New documents' })
+  }
+  if (hasFeature('Reports')) {
+    overviewCards.push({ icon: '📊', value: '—', label: 'Available reports' })
   }
 
   return (
@@ -121,34 +151,23 @@ export default function EmployeeHome() {
 
       <div className="px-6 pt-6 space-y-6">
 
-        {/* Quick Overview Cards */}
-        <div>
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-            Quick Overview
-          </h2>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-white rounded-2xl shadow-sm p-4 border border-gray-100">
-              <div className="text-3xl mb-1">🏖️</div>
-              <p className="text-2xl font-bold text-gray-800">—</p>
-              <p className="text-xs text-gray-500 mt-0.5">Days holiday left</p>
-            </div>
-            <div className="bg-white rounded-2xl shadow-sm p-4 border border-gray-100">
-              <div className="text-3xl mb-1">📅</div>
-              <p className="text-2xl font-bold text-gray-800">—</p>
-              <p className="text-xs text-gray-500 mt-0.5">Shifts this week</p>
-            </div>
-            <div className="bg-white rounded-2xl shadow-sm p-4 border border-gray-100">
-              <div className="text-3xl mb-1">⏱️</div>
-              <p className="text-2xl font-bold text-gray-800">—</p>
-              <p className="text-xs text-gray-500 mt-0.5">Hours this week</p>
-            </div>
-            <div className="bg-white rounded-2xl shadow-sm p-4 border border-gray-100">
-              <div className="text-3xl mb-1">✅</div>
-              <p className="text-2xl font-bold text-gray-800">—</p>
-              <p className="text-xs text-gray-500 mt-0.5">Open tasks</p>
+        {/* Quick Overview Cards — only shown if user has features */}
+        {overviewCards.length > 0 && (
+          <div>
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+              Quick Overview
+            </h2>
+            <div className="grid grid-cols-2 gap-3">
+              {overviewCards.map((card, i) => (
+                <div key={i} className="bg-white rounded-2xl shadow-sm p-4 border border-gray-100">
+                  <div className="text-3xl mb-1">{card.icon}</div>
+                  <p className="text-2xl font-bold text-gray-800">{card.value}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{card.label}</p>
+                </div>
+              ))}
             </div>
           </div>
-        </div>
+        )}
 
         {/* Features */}
         <div>
