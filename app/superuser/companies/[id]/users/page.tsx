@@ -3,8 +3,40 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
+import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
 
 const supabase = createClient()
+
+// Calculate pro-rata holiday entitlement
+const calculateProRata = (
+  fullEntitlement: number,
+  startDate: string,
+  holidayYearStart: string
+): number => {
+  if (!fullEntitlement || !startDate || !holidayYearStart) return 0
+
+  const start = new Date(startDate)
+  const yearStartMonth = new Date(holidayYearStart).getMonth()
+  const yearStartDay = new Date(holidayYearStart).getDate()
+
+  // Find the most recent year start before/on the employee's start date
+  let yearStart = new Date(start.getFullYear(), yearStartMonth, yearStartDay)
+  if (yearStart > start) {
+    yearStart = new Date(start.getFullYear() - 1, yearStartMonth, yearStartDay)
+  }
+
+  // End of holiday year is one day before next year start
+  const yearEnd = new Date(yearStart.getFullYear() + 1, yearStartMonth, yearStartDay)
+  yearEnd.setDate(yearEnd.getDate() - 1)
+
+  const totalDaysInYear = Math.ceil((yearEnd.getTime() - yearStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+  const remainingDays = Math.ceil((yearEnd.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1
+
+  if (remainingDays <= 0) return 0
+
+  const proRata = (fullEntitlement * remainingDays) / totalDaysInYear
+  return Math.round(proRata * 2) / 2 // round to nearest 0.5
+}
 
 export default function CompanyUsersPage() {
   const [company, setCompany] = useState<any>(null)
@@ -25,6 +57,10 @@ export default function CompanyUsersPage() {
   const [newJobTitle, setNewJobTitle] = useState('')
   const [newUserFeatures, setNewUserFeatures] = useState<Record<string, boolean>>({})
   const [newManagerTitles, setNewManagerTitles] = useState<string[]>([])
+  const [newEmploymentStart, setNewEmploymentStart] = useState('')
+  const [newFullEntitlement, setNewFullEntitlement] = useState('')
+  const [newCalculatedEntitlement, setNewCalculatedEntitlement] = useState('')
+  const [newOverrideEntitlement, setNewOverrideEntitlement] = useState('')
 
   // Edit user form
   const [editName, setEditName] = useState('')
@@ -33,10 +69,13 @@ export default function CompanyUsersPage() {
   const [editJobTitle, setEditJobTitle] = useState('')
   const [editUserFeatures, setEditUserFeatures] = useState<Record<string, boolean>>({})
   const [editManagerTitles, setEditManagerTitles] = useState<string[]>([])
+  const [editEmploymentStart, setEditEmploymentStart] = useState('')
+  const [editEntitlement, setEditEntitlement] = useState('')
 
   const router = useRouter()
   const params = useParams()
   const companyId = params.id as string
+  const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
   const showMessage = (msg: string, type: 'success' | 'error') => {
     setMessage(msg)
@@ -103,7 +142,20 @@ export default function CompanyUsersPage() {
     fetchUsers()
   }, [fetchCurrentUser, fetchFeatures, fetchCompany, fetchUsers])
 
-  // Get job titles excluding admins (managers shouldn't manage admins)
+  // Auto-calculate pro-rata entitlement
+  useEffect(() => {
+    if (newFullEntitlement && newEmploymentStart && company?.holiday_year_start) {
+      const calculated = calculateProRata(
+        parseFloat(newFullEntitlement),
+        newEmploymentStart,
+        company.holiday_year_start
+      )
+      setNewCalculatedEntitlement(calculated.toString())
+    } else {
+      setNewCalculatedEntitlement('')
+    }
+  }, [newFullEntitlement, newEmploymentStart, company])
+
   const jobTitles = [...new Set(
     users
       .filter(u => u.role !== 'admin')
@@ -111,7 +163,6 @@ export default function CompanyUsersPage() {
       .filter(Boolean)
   )] as string[]
 
-  // All job titles for the job title input datalist (including admins so you can type)
   const allJobTitles = [...new Set(users.map(u => u.job_title).filter(Boolean))] as string[]
 
   const toggleNewManagerTitle = (title: string) => {
@@ -130,8 +181,26 @@ export default function CompanyUsersPage() {
     }
   }
 
+  const userHasHolidaysFeature = (featuresState: Record<string, boolean>) => {
+    const holidaysFeature = features.find(f => f.name === 'Holidays')
+    if (!holidaysFeature) return false
+    return featuresState[holidaysFeature.id] === true
+  }
+
+  const companyHasHolidaysFeature = () => {
+    const holidaysFeature = features.find(f => f.name === 'Holidays')
+    if (!holidaysFeature) return false
+    return companyFeatures.includes(holidaysFeature.id)
+  }
+
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    const finalEntitlement = newOverrideEntitlement
+      ? parseFloat(newOverrideEntitlement)
+      : newCalculatedEntitlement
+      ? parseFloat(newCalculatedEntitlement)
+      : null
 
     const res = await fetch('/api/create-user', {
       method: 'POST',
@@ -143,6 +212,8 @@ export default function CompanyUsersPage() {
         role: newRole,
         job_title: newJobTitle,
         company_id: companyId,
+        employment_start_date: newEmploymentStart || null,
+        holiday_entitlement: finalEntitlement,
         user_features: newRole === 'admin'
           ? companyFeatures.map(id => ({ feature_id: id, is_enabled: true }))
           : companyFeatures.map(id => ({ feature_id: id, is_enabled: newUserFeatures[id] || false })),
@@ -167,6 +238,10 @@ export default function CompanyUsersPage() {
     setNewRole('user')
     setNewJobTitle('')
     setNewManagerTitles([])
+    setNewEmploymentStart('')
+    setNewFullEntitlement('')
+    setNewCalculatedEntitlement('')
+    setNewOverrideEntitlement('')
     const defaults: Record<string, boolean> = {}
     companyFeatures.forEach(id => { defaults[id] = false })
     setNewUserFeatures(defaults)
@@ -180,6 +255,8 @@ export default function CompanyUsersPage() {
     setEditEmail(user.email)
     setEditRole(user.role)
     setEditJobTitle(user.job_title || '')
+    setEditEmploymentStart(user.employment_start_date || '')
+    setEditEntitlement(user.holiday_entitlement?.toString() || '')
 
     const featureState: Record<string, boolean> = {}
     companyFeatures.forEach(id => { featureState[id] = false })
@@ -207,6 +284,8 @@ export default function CompanyUsersPage() {
         email: editEmail,
         role: editRole,
         job_title: editJobTitle,
+        employment_start_date: editEmploymentStart || null,
+        holiday_entitlement: editEntitlement ? parseFloat(editEntitlement) : null,
         user_features: editRole === 'admin'
           ? companyFeatures.map(id => ({ feature_id: id, is_enabled: true }))
           : companyFeatures.map(id => ({ feature_id: id, is_enabled: editUserFeatures[id] || false })),
@@ -396,8 +475,13 @@ export default function CompanyUsersPage() {
     </div>
   )
 
+  const showHolidayFields = companyHasHolidaysFeature() && (newRole === 'admin' || userHasHolidaysFeature(newUserFeatures))
+  const showEditHolidayFields = companyHasHolidaysFeature() && (editRole === 'admin' || userHasHolidaysFeature(editUserFeatures))
+
   return (
     <main className="min-h-screen bg-gray-100">
+      <IdleWarningModal show={showWarning} secondsLeft={secondsLeft} onStay={stayLoggedIn} />
+
       <div className="bg-blue-700 text-white px-6 py-4 flex justify-between items-center">
         <h1 className="text-2xl font-bold">South Lincs Systems</h1>
         <button
@@ -410,7 +494,6 @@ export default function CompanyUsersPage() {
 
       <div className="max-w-5xl mx-auto p-6 space-y-6">
 
-        {/* Company Header */}
         {company && (
           <div className="bg-white rounded-xl shadow p-6">
             <h2 className="text-2xl font-bold text-gray-800">{company.name}</h2>
@@ -420,10 +503,14 @@ export default function CompanyUsersPage() {
                 ? new Date(company.override_end_date || company.end_date).toLocaleDateString('en-GB')
                 : '—'}
             </p>
+            {company.holiday_year_start && (
+              <p className="text-gray-500 text-sm mt-1">
+                Holiday year starts: {new Date(company.holiday_year_start).toLocaleDateString('en-GB', { day: '2-digit', month: 'long' })}
+              </p>
+            )}
           </div>
         )}
 
-        {/* Stats */}
         <div className="grid grid-cols-4 gap-4">
           <div className="bg-white rounded-xl shadow p-4 text-center">
             <p className="text-2xl font-bold text-gray-800">{users.length}</p>
@@ -443,7 +530,6 @@ export default function CompanyUsersPage() {
           </div>
         </div>
 
-        {/* Page Title */}
         <div className="flex justify-between items-center">
           <h3 className="text-xl font-bold text-gray-800">
             Users
@@ -459,7 +545,6 @@ export default function CompanyUsersPage() {
           </button>
         </div>
 
-        {/* Message */}
         {message && (
           <div className={`p-4 rounded-lg text-sm font-medium ${
             messageType === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
@@ -468,7 +553,6 @@ export default function CompanyUsersPage() {
           </div>
         )}
 
-        {/* Add User Form */}
         {showAddForm && (
           <div className="bg-white rounded-xl shadow p-6">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">New User</h3>
@@ -529,6 +613,16 @@ export default function CompanyUsersPage() {
               </div>
 
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Employment Start Date</label>
+                <input
+                  type="date"
+                  value={newEmploymentStart}
+                  onChange={(e) => setNewEmploymentStart(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
                 <select
                   value={newRole}
@@ -555,6 +649,66 @@ export default function CompanyUsersPage() {
                 {renderFeatureSelector(newRole, newUserFeatures, setNewUserFeatures)}
               </div>
 
+              {/* Holiday entitlement section - only show if Holidays feature is enabled */}
+              {showHolidayFields && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 space-y-4">
+                  <h4 className="font-semibold text-yellow-800">🏖️ Holiday Entitlement</h4>
+
+                  {!company?.holiday_year_start && (
+                    <p className="text-sm text-yellow-700 italic">
+                      ⚠️ Set the company holiday year start date first to enable auto-calculation.
+                    </p>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Annual Entitlement
+                        <span className="ml-1 text-xs text-gray-400">(full year days)</span>
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        value={newFullEntitlement}
+                        onChange={(e) => setNewFullEntitlement(e.target.value)}
+                        placeholder="e.g. 25"
+                        className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Pro-Rata This Year
+                        <span className="ml-1 text-xs text-gray-400">(auto-calculated)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={newCalculatedEntitlement ? `${newCalculatedEntitlement} days` : ''}
+                        disabled
+                        placeholder="—"
+                        className="w-full border border-gray-200 rounded-lg px-4 py-2 bg-gray-50 text-gray-700 font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Override Pro-Rata
+                      <span className="ml-1 text-xs text-gray-400">(optional - leave blank to use calculated amount)</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      value={newOverrideEntitlement}
+                      onChange={(e) => setNewOverrideEntitlement(e.target.value)}
+                      placeholder="Leave blank to use calculated amount"
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              )}
+
               <button
                 type="submit"
                 className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition font-medium"
@@ -565,7 +719,6 @@ export default function CompanyUsersPage() {
           </div>
         )}
 
-        {/* Edit User Form */}
         {editingUser && (
           <div className="bg-white rounded-xl shadow p-6 border-l-4 border-blue-500">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">Edit — {editingUser.full_name}</h3>
@@ -588,7 +741,6 @@ export default function CompanyUsersPage() {
                     type="text"
                     value={editJobTitle}
                     onChange={(e) => setEditJobTitle(e.target.value)}
-                    placeholder="e.g. Driver, Manager, Cleaner"
                     list="existing-job-titles-edit"
                     className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     autoComplete="off"
@@ -610,6 +762,16 @@ export default function CompanyUsersPage() {
                   className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   autoComplete="off"
                   required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Employment Start Date</label>
+                <input
+                  type="date"
+                  value={editEmploymentStart}
+                  onChange={(e) => setEditEmploymentStart(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
@@ -640,6 +802,26 @@ export default function CompanyUsersPage() {
                 {renderFeatureSelector(editRole, editUserFeatures, setEditUserFeatures)}
               </div>
 
+              {showEditHolidayFields && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <h4 className="font-semibold text-yellow-800 mb-3">🏖️ Holiday Entitlement</h4>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Days Remaining This Year
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      value={editEntitlement}
+                      onChange={(e) => setEditEntitlement(e.target.value)}
+                      placeholder="e.g. 12.5"
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-3">
                 <button
                   type="submit"
@@ -659,7 +841,6 @@ export default function CompanyUsersPage() {
           </div>
         )}
 
-        {/* Users List */}
         <div className="bg-white rounded-xl shadow p-6">
           <h3 className="text-lg font-semibold text-gray-800 mb-4">
             All Users ({users.length})
@@ -685,6 +866,11 @@ export default function CompanyUsersPage() {
                         {user.job_title && (
                           <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                             {user.job_title}
+                          </span>
+                        )}
+                        {user.holiday_entitlement !== null && user.holiday_entitlement !== undefined && (
+                          <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
+                            🏖️ {user.holiday_entitlement} days
                           </span>
                         )}
                         {user.is_frozen && (

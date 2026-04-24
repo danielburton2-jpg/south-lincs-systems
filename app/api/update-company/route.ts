@@ -10,6 +10,7 @@ export async function POST(request: Request) {
       end_date,
       override_end_date,
       notes,
+      holiday_year_start,
       features,
       is_active,
       toggle_only,
@@ -46,7 +47,13 @@ export async function POST(request: Request) {
 
     const { error } = await supabase
       .from('companies')
-      .update({ name, end_date, override_end_date, notes })
+      .update({
+        name,
+        end_date,
+        override_end_date,
+        notes,
+        holiday_year_start: holiday_year_start || null,
+      })
       .eq('id', company_id)
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 })
@@ -91,7 +98,7 @@ export async function POST(request: Request) {
       action: 'EDIT_COMPANY',
       entity: 'company',
       entity_id: company_id,
-      details: { name, end_date, override_end_date },
+      details: { name, end_date, override_end_date, holiday_year_start },
       ip_address: request.headers.get('x-forwarded-for') || undefined,
     })
 

@@ -9,6 +9,7 @@ export async function POST(request: Request) {
       start_date,
       end_date,
       notes,
+      holiday_year_start,
       features,
       actor_id,
       actor_email,
@@ -22,7 +23,13 @@ export async function POST(request: Request) {
 
     const { data: company, error } = await supabase
       .from('companies')
-      .insert({ name, start_date, end_date, notes: notes || null })
+      .insert({
+        name,
+        start_date,
+        end_date,
+        notes: notes || null,
+        holiday_year_start: holiday_year_start || null,
+      })
       .select()
       .single()
 
@@ -47,7 +54,7 @@ export async function POST(request: Request) {
       action: 'CREATE_COMPANY',
       entity: 'company',
       entity_id: company.id,
-      details: { name, end_date },
+      details: { name, end_date, holiday_year_start },
       ip_address: request.headers.get('x-forwarded-for') || undefined,
     })
 

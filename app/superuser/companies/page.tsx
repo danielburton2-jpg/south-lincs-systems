@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
 
 const supabase = createClient()
 
@@ -36,15 +37,14 @@ export default function CompaniesPage() {
   const [editingCompany, setEditingCompany] = useState<any>(null)
   const [expiringCompanies, setExpiringCompanies] = useState<any[]>([])
 
-  // New company form
   const [newName, setNewName] = useState('')
   const [newSubInput, setNewSubInput] = useState('')
   const [newSubPreview, setNewSubPreview] = useState('')
   const [newSubError, setNewSubError] = useState('')
   const [newNotes, setNewNotes] = useState('')
   const [newFeatures, setNewFeatures] = useState<Record<string, boolean>>({})
+  const [newHolidayYearStart, setNewHolidayYearStart] = useState('')
 
-  // Edit company form
   const [editName, setEditName] = useState('')
   const [editSubInput, setEditSubInput] = useState('')
   const [editSubPreview, setEditSubPreview] = useState('')
@@ -53,8 +53,10 @@ export default function CompaniesPage() {
   const [editOverridePreview, setEditOverridePreview] = useState('')
   const [editNotes, setEditNotes] = useState('')
   const [editFeatures, setEditFeatures] = useState<Record<string, boolean>>({})
+  const [editHolidayYearStart, setEditHolidayYearStart] = useState('')
 
   const router = useRouter()
+  const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
   const showMessage = (msg: string, type: 'success' | 'error') => {
     setMessage(msg)
@@ -201,6 +203,7 @@ export default function CompaniesPage() {
         start_date: new Date().toISOString().slice(0, 10),
         end_date: endDate.toISOString().slice(0, 10),
         notes: newNotes || null,
+        holiday_year_start: newHolidayYearStart || null,
         features: features.map((f: any) => ({
           feature_id: f.id,
           is_enabled: newFeatures[f.id] || false,
@@ -222,6 +225,7 @@ export default function CompaniesPage() {
     setNewName('')
     setNewSubInput('')
     setNewNotes('')
+    setNewHolidayYearStart('')
     const defaults: Record<string, boolean> = {}
     features.forEach((f: any) => { defaults[f.id] = false })
     setNewFeatures(defaults)
@@ -245,6 +249,7 @@ export default function CompaniesPage() {
         })
       : '')
     setEditNotes(company.notes || '')
+    setEditHolidayYearStart(company.holiday_year_start || '')
     const featureState: Record<string, boolean> = {}
     company.company_features?.forEach((cf: any) => {
       featureState[cf.feature_id] = cf.is_enabled
@@ -284,6 +289,7 @@ export default function CompaniesPage() {
         end_date: newEndDate || null,
         override_end_date: newOverrideDate || null,
         notes: editNotes || null,
+        holiday_year_start: editHolidayYearStart || null,
         features: features.map((f: any) => ({
           feature_id: f.id,
           is_enabled: editFeatures[f.id] || false,
@@ -331,6 +337,8 @@ export default function CompaniesPage() {
 
   return (
     <main className="min-h-screen bg-gray-100">
+      <IdleWarningModal show={showWarning} secondsLeft={secondsLeft} onStay={stayLoggedIn} />
+
       <div className="bg-blue-700 text-white px-6 py-4 flex justify-between items-center">
         <h1 className="text-2xl font-bold">South Lincs Systems</h1>
         <button
@@ -422,6 +430,19 @@ export default function CompaniesPage() {
                     <p className="mt-1 text-sm text-red-500">{newSubError}</p>
                   )}
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Holiday Year Start Date
+                  <span className="ml-1 text-xs text-gray-400">(e.g. April 1st = 2025-04-01)</span>
+                </label>
+                <input
+                  type="date"
+                  value={newHolidayYearStart}
+                  onChange={(e) => setNewHolidayYearStart(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
               </div>
 
               <div>
@@ -529,6 +550,16 @@ export default function CompaniesPage() {
                     <p className="mt-1 text-sm text-blue-600 font-medium">{editOverridePreview}</p>
                   )}
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Holiday Year Start Date</label>
+                <input
+                  type="date"
+                  value={editHolidayYearStart}
+                  onChange={(e) => setEditHolidayYearStart(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
               </div>
 
               <div>

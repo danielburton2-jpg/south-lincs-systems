@@ -10,6 +10,8 @@ export async function POST(request: Request) {
       email,
       role,
       job_title,
+      employment_start_date,
+      holiday_entitlement,
       user_features,
       manager_titles,
       actor_id,
@@ -23,15 +25,20 @@ export async function POST(request: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
 
-    // Update profile
     const { error } = await supabase
       .from('profiles')
-      .update({ full_name, email, role, job_title: job_title || null })
+      .update({
+        full_name,
+        email,
+        role,
+        job_title: job_title || null,
+        employment_start_date: employment_start_date || null,
+        holiday_entitlement: holiday_entitlement ?? null,
+      })
       .eq('id', user_id)
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
-    // Update user features
     if (user_features && user_features.length > 0) {
       for (const f of user_features) {
         const { data: existing } = await supabase
@@ -55,7 +62,6 @@ export async function POST(request: Request) {
       }
     }
 
-    // Update manager job titles
     await supabase.from('manager_job_titles').delete().eq('manager_id', user_id)
     if (manager_titles && manager_titles.length > 0) {
       await supabase.from('manager_job_titles').insert(
@@ -73,7 +79,7 @@ export async function POST(request: Request) {
       action: 'EDIT_COMPANY_USER',
       entity: 'profile',
       entity_id: user_id,
-      details: { full_name, email, role, job_title, company_name },
+      details: { full_name, email, role, job_title, company_name, holiday_entitlement, employment_start_date },
       ip_address: request.headers.get('x-forwarded-for') || undefined,
     })
 

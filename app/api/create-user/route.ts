@@ -11,6 +11,8 @@ export async function POST(request: Request) {
       role,
       company_id,
       job_title,
+      employment_start_date,
+      holiday_entitlement,
       user_features,
       manager_titles,
       actor_id,
@@ -51,13 +53,14 @@ export async function POST(request: Request) {
         role,
         company_id: company_id || null,
         job_title: job_title || null,
+        employment_start_date: employment_start_date || null,
+        holiday_entitlement: holiday_entitlement ?? null,
       })
 
     if (profileError) {
       return NextResponse.json({ error: profileError.message }, { status: 400 })
     }
 
-    // Insert user features
     if (user_features && user_features.length > 0) {
       await supabase.from('user_features').insert(
         user_features.map((f: any) => ({
@@ -68,7 +71,6 @@ export async function POST(request: Request) {
       )
     }
 
-    // Insert manager job title access
     if (manager_titles && manager_titles.length > 0) {
       await supabase.from('manager_job_titles').insert(
         manager_titles.map((title: string) => ({
@@ -85,7 +87,7 @@ export async function POST(request: Request) {
       action: 'CREATE_USER',
       entity: 'profile',
       entity_id: data.user.id,
-      details: { email, role, full_name, job_title, company_id },
+      details: { email, role, full_name, job_title, company_id, holiday_entitlement, employment_start_date },
       ip_address: request.headers.get('x-forwarded-for') || undefined,
     })
 
