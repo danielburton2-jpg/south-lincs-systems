@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
 
 const supabase = createClient()
 
@@ -14,6 +15,7 @@ export default function Dashboard() {
   const [users, setUsers] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const router = useRouter()
+  const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -24,7 +26,6 @@ export default function Dashboard() {
       return
     }
 
-    // Get current user profile
     const { data: profile } = await supabase
       .from('profiles')
       .select('*')
@@ -38,7 +39,6 @@ export default function Dashboard() {
 
     setCurrentUser(profile)
 
-    // Get company
     if (profile.company_id) {
       const { data: companyData } = await supabase
         .from('companies')
@@ -55,7 +55,6 @@ export default function Dashboard() {
       setCompany(companyData)
     }
 
-    // Get user's features
     const { data: featuresData } = await supabase
       .from('user_features')
       .select(`
@@ -67,7 +66,6 @@ export default function Dashboard() {
       .eq('is_enabled', true)
     setUserFeatures(featuresData || [])
 
-    // If manager, get their job title access
     if (profile.role === 'manager') {
       const { data: titles } = await supabase
         .from('manager_job_titles')
@@ -76,7 +74,6 @@ export default function Dashboard() {
       setManagerTitles(titles?.map((t: any) => t.job_title) || [])
     }
 
-    // Get company users
     const res = await fetch('/api/get-company-users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -92,7 +89,6 @@ export default function Dashboard() {
     fetchData()
   }, [fetchData])
 
-  // Filter users based on role
   const visibleUsers = currentUser?.role === 'admin'
     ? users
     : currentUser?.role === 'manager'
@@ -140,7 +136,8 @@ export default function Dashboard() {
 
   return (
     <main className="min-h-screen bg-gray-100">
-      {/* Header */}
+      <IdleWarningModal show={showWarning} secondsLeft={secondsLeft} onStay={stayLoggedIn} />
+
       <div className="bg-blue-700 text-white px-6 py-4 flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold">{company?.name || 'Dashboard'}</h1>
@@ -162,7 +159,6 @@ export default function Dashboard() {
 
       <div className="max-w-6xl mx-auto p-6 space-y-6">
 
-        {/* Subscription Warning */}
         {daysRemaining !== null && daysRemaining <= 14 && daysRemaining >= 0 && (
           <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4">
             <p className="text-yellow-800 font-medium">
@@ -171,7 +167,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Stats */}
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-white rounded-xl shadow p-5 text-center">
             <p className="text-3xl font-bold text-blue-600">{visibleUsers.length}</p>
@@ -191,7 +186,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Your Features */}
         <div className="bg-white rounded-xl shadow p-6">
           <h2 className="text-xl font-semibold text-gray-800 mb-4">Your Features</h2>
           {currentUser?.role === 'admin' ? (
@@ -227,7 +221,6 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Users Management */}
         <div className="bg-white rounded-xl shadow p-6">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold text-gray-800">
@@ -246,7 +239,7 @@ export default function Dashboard() {
                 onClick={() => router.push('/dashboard/users')}
                 className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm"
               >
-                Manage Team →
+                View Team →
               </button>
             )}
           </div>
