@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
 import * as XLSX from 'xlsx'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -14,13 +15,21 @@ const ACTION_COLORS: Record<string, string> = {
   LOGIN_FAILED: 'bg-red-100 text-red-700',
   LOGIN_BLOCKED_FROZEN: 'bg-orange-100 text-orange-700',
   LOGOUT: 'bg-gray-100 text-gray-700',
+  LOGOUT_IDLE: 'bg-gray-100 text-gray-700',
   CREATE_USER: 'bg-blue-100 text-blue-700',
   CREATE_USER_FAILED: 'bg-red-100 text-red-700',
   CREATE_COMPANY: 'bg-purple-100 text-purple-700',
+  EDIT_COMPANY: 'bg-purple-100 text-purple-700',
   FREEZE_USER: 'bg-orange-100 text-orange-700',
   UNFREEZE_USER: 'bg-green-100 text-green-700',
   REMOVE_USER: 'bg-red-100 text-red-700',
   EDIT_USER: 'bg-yellow-100 text-yellow-700',
+  EDIT_COMPANY_USER: 'bg-yellow-100 text-yellow-700',
+  FREEZE_COMPANY_USER: 'bg-orange-100 text-orange-700',
+  UNFREEZE_COMPANY_USER: 'bg-green-100 text-green-700',
+  REMOVE_COMPANY_USER: 'bg-red-100 text-red-700',
+  ACTIVATE_COMPANY: 'bg-green-100 text-green-700',
+  DEACTIVATE_COMPANY: 'bg-orange-100 text-orange-700',
 }
 
 export default function AuditLogPage() {
@@ -28,6 +37,7 @@ export default function AuditLogPage() {
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
   const router = useRouter()
+  const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
   const fetchLogs = useCallback(async () => {
     setLoading(true)
@@ -83,7 +93,6 @@ export default function AuditLogPage() {
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Audit Log')
 
-    // Auto width columns
     const colWidths = Object.keys(rows[0] || {}).map((key) => ({
       wch: Math.max(key.length, ...rows.map((r) => String(r[key as keyof typeof r] || '').length))
     }))
@@ -184,6 +193,8 @@ export default function AuditLogPage() {
 
   return (
     <main className="min-h-screen bg-gray-100">
+      <IdleWarningModal show={showWarning} secondsLeft={secondsLeft} onStay={stayLoggedIn} />
+
       <div className="bg-blue-700 text-white px-6 py-4 flex justify-between items-center">
         <h1 className="text-2xl font-bold">South Lincs Systems</h1>
         <button

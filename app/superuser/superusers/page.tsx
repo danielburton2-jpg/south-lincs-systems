@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
 
 const supabase = createClient()
 
@@ -19,6 +20,7 @@ export default function SuperuserManagement() {
   const [editName, setEditName] = useState('')
   const [editEmail, setEditEmail] = useState('')
   const router = useRouter()
+  const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
   const showMessage = (msg: string, type: 'success' | 'error') => {
     setMessage(msg)
@@ -166,6 +168,8 @@ export default function SuperuserManagement() {
 
   return (
     <main className="min-h-screen bg-gray-100">
+      <IdleWarningModal show={showWarning} secondsLeft={secondsLeft} onStay={stayLoggedIn} />
+
       <div className="bg-blue-700 text-white px-6 py-4 flex justify-between items-center">
         <h1 className="text-2xl font-bold">South Lincs Systems</h1>
         <button

@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
 
 const supabase = createClient()
 
@@ -12,7 +11,6 @@ export default function SuperuserDashboard() {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [expiringCount, setExpiringCount] = useState(0)
   const router = useRouter()
-  const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
   const fetchCurrentUser = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -70,8 +68,7 @@ export default function SuperuserDashboard() {
 
   return (
     <main className="min-h-screen bg-gray-100">
-      <IdleWarningModal show={showWarning} secondsLeft={secondsLeft} onStay={stayLoggedIn} />
-
+      {/* Header */}
       <div className="bg-blue-700 text-white px-6 py-4 flex justify-between items-center">
         <h1 className="text-2xl font-bold">South Lincs Systems</h1>
         <div className="flex items-center gap-4">
@@ -89,6 +86,7 @@ export default function SuperuserDashboard() {
 
       <div className="max-w-4xl mx-auto p-6 space-y-6">
 
+        {/* Stats */}
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-white rounded-xl shadow p-5 text-center">
             <p className="text-3xl font-bold text-blue-600">{companies.length}</p>
@@ -108,6 +106,7 @@ export default function SuperuserDashboard() {
           </div>
         </div>
 
+        {/* Company Management */}
         <div className="bg-white rounded-xl shadow p-6">
           <h2 className="text-xl font-semibold text-gray-800 mb-2">Company Management</h2>
           <p className="text-gray-500 text-sm mb-4">
@@ -121,6 +120,7 @@ export default function SuperuserDashboard() {
           </button>
         </div>
 
+        {/* Superuser Management */}
         <div className="bg-white rounded-xl shadow p-6">
           <h2 className="text-xl font-semibold text-gray-800 mb-2">Superuser Management</h2>
           <p className="text-gray-500 text-sm mb-4">Add, edit, freeze or remove superusers</p>
@@ -132,6 +132,7 @@ export default function SuperuserDashboard() {
           </button>
         </div>
 
+        {/* Audit Log */}
         <div className="bg-white rounded-xl shadow p-6">
           <h2 className="text-xl font-semibold text-gray-800 mb-2">Audit Log</h2>
           <p className="text-gray-500 text-sm mb-4">View all system activity</p>

@@ -3,8 +3,37 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
 
 const supabase = createClient()
+
+const calculateProRata = (
+  fullEntitlement: number,
+  startDate: string,
+  holidayYearStart: string
+): number => {
+  if (!fullEntitlement || !startDate || !holidayYearStart) return 0
+
+  const start = new Date(startDate)
+  const yearStartMonth = new Date(holidayYearStart).getMonth()
+  const yearStartDay = new Date(holidayYearStart).getDate()
+
+  let yearStart = new Date(start.getFullYear(), yearStartMonth, yearStartDay)
+  if (yearStart > start) {
+    yearStart = new Date(start.getFullYear() - 1, yearStartMonth, yearStartDay)
+  }
+
+  const yearEnd = new Date(yearStart.getFullYear() + 1, yearStartMonth, yearStartDay)
+  yearEnd.setDate(yearEnd.getDate() - 1)
+
+  const totalDaysInYear = Math.ceil((yearEnd.getTime() - yearStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
+  const remainingDays = Math.ceil((yearEnd.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1
+
+  if (remainingDays <= 0) return 0
+
+  const proRata = (fullEntitlement * remainingDays) / totalDaysInYear
+  return Math.round(proRata * 2) / 2
+}
 
 export default function DashboardUsersPage() {
   const [currentUser, setCurrentUser] = useState<any>(null)
@@ -27,6 +56,10 @@ export default function DashboardUsersPage() {
   const [newJobTitle, setNewJobTitle] = useState('')
   const [newUserFeatures, setNewUserFeatures] = useState<Record<string, boolean>>({})
   const [newManagerTitles, setNewManagerTitles] = useState<string[]>([])
+  const [newEmploymentStart, setNewEmploymentStart] = useState('')
+  const [newFullEntitlement, setNewFullEntitlement] = useState('')
+  const [newCalculatedEntitlement, setNewCalculatedEntitlement] = useState('')
+  const [newOverrideEntitlement, setNewOverrideEntitlement] = useState('')
 
   // Edit form
   const [editName, setEditName] = useState('')
@@ -35,8 +68,11 @@ export default function DashboardUsersPage() {
   const [editJobTitle, setEditJobTitle] = useState('')
   const [editUserFeatures, setEditUserFeatures] = useState<Record<string, boolean>>({})
   const [editManagerTitles, setEditManagerTitles] = useState<string[]>([])
+  const [editEmploymentStart, setEditEmploymentStart] = useState('')
+  const [editEntitlement, setEditEntitlement] = useState('')
 
   const router = useRouter()
+  const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
   const showMessage = (msg: string, type: 'success' | 'error') => {
     setMessage(msg)
@@ -117,6 +153,20 @@ export default function DashboardUsersPage() {
     fetchData()
   }, [fetchData])
 
+  // Auto-calculate pro-rata
+  useEffect(() => {
+    if (newFullEntitlement && newEmploymentStart && company?.holiday_year_start) {
+      const calculated = calculateProRata(
+        parseFloat(newFullEntitlement),
+        newEmploymentStart,
+        company.holiday_year_start
+      )
+      setNewCalculatedEntitlement(calculated.toString())
+    } else {
+      setNewCalculatedEntitlement('')
+    }
+  }, [newFullEntitlement, newEmploymentStart, company])
+
   const visibleUsers = currentUser?.role === 'admin'
     ? users
     : currentUser?.role === 'manager'
@@ -148,8 +198,26 @@ export default function DashboardUsersPage() {
     }
   }
 
+  const userHasHolidaysFeature = (featuresState: Record<string, boolean>) => {
+    const holidaysFeature = features.find(f => f.name === 'Holidays')
+    if (!holidaysFeature) return false
+    return featuresState[holidaysFeature.id] === true
+  }
+
+  const companyHasHolidaysFeature = () => {
+    const holidaysFeature = features.find(f => f.name === 'Holidays')
+    if (!holidaysFeature) return false
+    return companyFeatures.includes(holidaysFeature.id)
+  }
+
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    const finalEntitlement = newOverrideEntitlement
+      ? parseFloat(newOverrideEntitlement)
+      : newCalculatedEntitlement
+      ? parseFloat(newCalculatedEntitlement)
+      : null
 
     const res = await fetch('/api/create-user', {
       method: 'POST',
@@ -161,6 +229,8 @@ export default function DashboardUsersPage() {
         role: newRole,
         job_title: newJobTitle,
         company_id: currentUser?.company_id,
+        employment_start_date: newEmploymentStart || null,
+        holiday_entitlement: finalEntitlement,
         user_features: newRole === 'admin'
           ? companyFeatures.map(id => ({ feature_id: id, is_enabled: true }))
           : companyFeatures.map(id => ({ feature_id: id, is_enabled: newUserFeatures[id] || false })),
@@ -185,6 +255,10 @@ export default function DashboardUsersPage() {
     setNewRole('user')
     setNewJobTitle('')
     setNewManagerTitles([])
+    setNewEmploymentStart('')
+    setNewFullEntitlement('')
+    setNewCalculatedEntitlement('')
+    setNewOverrideEntitlement('')
     const defaults: Record<string, boolean> = {}
     companyFeatures.forEach(id => { defaults[id] = false })
     setNewUserFeatures(defaults)
@@ -198,6 +272,8 @@ export default function DashboardUsersPage() {
     setEditEmail(user.email)
     setEditRole(user.role)
     setEditJobTitle(user.job_title || '')
+    setEditEmploymentStart(user.employment_start_date || '')
+    setEditEntitlement(user.holiday_entitlement?.toString() || '')
 
     const featureState: Record<string, boolean> = {}
     companyFeatures.forEach(id => { featureState[id] = false })
@@ -225,6 +301,8 @@ export default function DashboardUsersPage() {
         email: editEmail,
         role: editRole,
         job_title: editJobTitle,
+        employment_start_date: editEmploymentStart || null,
+        holiday_entitlement: editEntitlement ? parseFloat(editEntitlement) : null,
         user_features: editRole === 'admin'
           ? companyFeatures.map(id => ({ feature_id: id, is_enabled: true }))
           : companyFeatures.map(id => ({ feature_id: id, is_enabled: editUserFeatures[id] || false })),
@@ -413,8 +491,13 @@ export default function DashboardUsersPage() {
     )
   }
 
+  const showHolidayFields = companyHasHolidaysFeature() && (newRole === 'admin' || userHasHolidaysFeature(newUserFeatures))
+  const showEditHolidayFields = companyHasHolidaysFeature() && (editRole === 'admin' || userHasHolidaysFeature(editUserFeatures))
+
   return (
     <main className="min-h-screen bg-gray-100">
+      <IdleWarningModal show={showWarning} secondsLeft={secondsLeft} onStay={stayLoggedIn} />
+
       <div className="bg-blue-700 text-white px-6 py-4 flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold">{company?.name}</h1>
@@ -530,6 +613,16 @@ export default function DashboardUsersPage() {
               </div>
 
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Employment Start Date</label>
+                <input
+                  type="date"
+                  value={newEmploymentStart}
+                  onChange={(e) => setNewEmploymentStart(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
                 <select
                   value={newRole}
@@ -555,6 +648,65 @@ export default function DashboardUsersPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Feature Access</label>
                 {renderFeatureSelector(newRole, newUserFeatures, setNewUserFeatures)}
               </div>
+
+              {showHolidayFields && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 space-y-4">
+                  <h4 className="font-semibold text-yellow-800">🏖️ Holiday Entitlement</h4>
+
+                  {!company?.holiday_year_start && (
+                    <p className="text-sm text-yellow-700 italic">
+                      ⚠️ Set the company holiday year start date first to enable auto-calculation.
+                    </p>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Annual Entitlement
+                        <span className="ml-1 text-xs text-gray-400">(full year days)</span>
+                      </label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        min="0"
+                        value={newFullEntitlement}
+                        onChange={(e) => setNewFullEntitlement(e.target.value)}
+                        placeholder="e.g. 25"
+                        className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Pro-Rata This Year
+                        <span className="ml-1 text-xs text-gray-400">(auto-calculated)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={newCalculatedEntitlement ? `${newCalculatedEntitlement} days` : ''}
+                        disabled
+                        placeholder="—"
+                        className="w-full border border-gray-200 rounded-lg px-4 py-2 bg-gray-50 text-gray-700 font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Override Pro-Rata
+                      <span className="ml-1 text-xs text-gray-400">(optional - leave blank to use calculated amount)</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      value={newOverrideEntitlement}
+                      onChange={(e) => setNewOverrideEntitlement(e.target.value)}
+                      placeholder="Leave blank to use calculated amount"
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              )}
 
               <button
                 type="submit"
@@ -614,6 +766,16 @@ export default function DashboardUsersPage() {
               </div>
 
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Employment Start Date</label>
+                <input
+                  type="date"
+                  value={editEmploymentStart}
+                  onChange={(e) => setEditEmploymentStart(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
                 <select
                   value={editRole}
@@ -639,6 +801,26 @@ export default function DashboardUsersPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Feature Access</label>
                 {renderFeatureSelector(editRole, editUserFeatures, setEditUserFeatures)}
               </div>
+
+              {showEditHolidayFields && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                  <h4 className="font-semibold text-yellow-800 mb-3">🏖️ Holiday Entitlement</h4>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Days Remaining This Year
+                    </label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      min="0"
+                      value={editEntitlement}
+                      onChange={(e) => setEditEntitlement(e.target.value)}
+                      placeholder="e.g. 12.5"
+                      className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="flex gap-3">
                 <button
@@ -687,6 +869,11 @@ export default function DashboardUsersPage() {
                             {user.job_title}
                           </span>
                         )}
+                        {user.holiday_entitlement !== null && user.holiday_entitlement !== undefined && (
+                          <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
+                            🏖️ {user.holiday_entitlement} days
+                          </span>
+                        )}
                         {user.is_frozen && (
                           <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full">Frozen</span>
                         )}
@@ -714,7 +901,6 @@ export default function DashboardUsersPage() {
                       )}
                     </div>
 
-                    {/* Only admins see action buttons */}
                     {isAdmin && user.id !== currentUser?.id && (
                       <div className="flex gap-2 ml-4 flex-shrink-0">
                         <button
