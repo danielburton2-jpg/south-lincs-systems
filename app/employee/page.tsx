@@ -104,10 +104,18 @@ export default function EmployeeHome() {
     )
   }
 
-  const overviewCards = []
+  // Format holiday entitlement
+  const holidayBalance = currentUser?.holiday_entitlement
+  const showHolidayBalance = hasFeature('Holidays') && holidayBalance !== null && holidayBalance !== undefined
+
+  const overviewCards: { icon: string; value: string; label: string }[] = []
 
   if (hasFeature('Holidays')) {
-    overviewCards.push({ icon: '🏖️', value: '—', label: 'Days holiday left' })
+    overviewCards.push({
+      icon: '🏖️',
+      value: holidayBalance !== null && holidayBalance !== undefined ? holidayBalance.toString() : '—',
+      label: 'Days holiday left'
+    })
   }
   if (hasFeature('Schedules')) {
     overviewCards.push({ icon: '📅', value: '—', label: 'Shifts this week' })
@@ -172,6 +180,26 @@ export default function EmployeeHome() {
       </div>
 
       <div className="px-6 pt-6 space-y-6">
+
+        {/* Holiday Balance Highlight Card (if user has Holidays) */}
+        {showHolidayBalance && (
+          <div className="bg-gradient-to-br from-yellow-400 to-orange-500 rounded-2xl shadow-lg p-5 text-white">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm opacity-90">Your Holiday Balance</p>
+                <p className="text-4xl font-bold mt-1">
+                  {holidayBalance} <span className="text-lg font-normal">days</span>
+                </p>
+                {currentUser?.employment_start_date && (
+                  <p className="text-xs opacity-80 mt-1">
+                    Started: {new Date(currentUser.employment_start_date).toLocaleDateString('en-GB')}
+                  </p>
+                )}
+              </div>
+              <div className="text-6xl opacity-80">🏖️</div>
+            </div>
+          </div>
+        )}
 
         {overviewCards.length > 0 && (
           <div>
