@@ -44,6 +44,8 @@ export default function CompaniesPage() {
   const [newNotes, setNewNotes] = useState('')
   const [newFeatures, setNewFeatures] = useState<Record<string, boolean>>({})
   const [newHolidayYearStart, setNewHolidayYearStart] = useState('')
+  const [newAllowHalfDays, setNewAllowHalfDays] = useState(false)
+  const [newAllowEarlyFinish, setNewAllowEarlyFinish] = useState(false)
 
   const [editName, setEditName] = useState('')
   const [editSubInput, setEditSubInput] = useState('')
@@ -54,6 +56,8 @@ export default function CompaniesPage() {
   const [editNotes, setEditNotes] = useState('')
   const [editFeatures, setEditFeatures] = useState<Record<string, boolean>>({})
   const [editHolidayYearStart, setEditHolidayYearStart] = useState('')
+  const [editAllowHalfDays, setEditAllowHalfDays] = useState(false)
+  const [editAllowEarlyFinish, setEditAllowEarlyFinish] = useState(false)
 
   const router = useRouter()
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
@@ -186,6 +190,10 @@ export default function CompaniesPage() {
     return Math.ceil(diff / (1000 * 60 * 60 * 24))
   }
 
+  const hasHolidaysFeature = (companyFeatures: any[]) => {
+    return companyFeatures?.some((cf: any) => cf.is_enabled && cf.features?.name === 'Holidays')
+  }
+
   const handleCreateCompany = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -204,6 +212,8 @@ export default function CompaniesPage() {
         end_date: endDate.toISOString().slice(0, 10),
         notes: newNotes || null,
         holiday_year_start: newHolidayYearStart || null,
+        allow_half_days: newAllowHalfDays,
+        allow_early_finish: newAllowEarlyFinish,
         features: features.map((f: any) => ({
           feature_id: f.id,
           is_enabled: newFeatures[f.id] || false,
@@ -226,6 +236,8 @@ export default function CompaniesPage() {
     setNewSubInput('')
     setNewNotes('')
     setNewHolidayYearStart('')
+    setNewAllowHalfDays(false)
+    setNewAllowEarlyFinish(false)
     const defaults: Record<string, boolean> = {}
     features.forEach((f: any) => { defaults[f.id] = false })
     setNewFeatures(defaults)
@@ -250,6 +262,8 @@ export default function CompaniesPage() {
       : '')
     setEditNotes(company.notes || '')
     setEditHolidayYearStart(company.holiday_year_start || '')
+    setEditAllowHalfDays(company.allow_half_days || false)
+    setEditAllowEarlyFinish(company.allow_early_finish || false)
     const featureState: Record<string, boolean> = {}
     company.company_features?.forEach((cf: any) => {
       featureState[cf.feature_id] = cf.is_enabled
@@ -290,6 +304,8 @@ export default function CompaniesPage() {
         override_end_date: newOverrideDate || null,
         notes: editNotes || null,
         holiday_year_start: editHolidayYearStart || null,
+        allow_half_days: editAllowHalfDays,
+        allow_early_finish: editAllowEarlyFinish,
         features: features.map((f: any) => ({
           feature_id: f.id,
           is_enabled: editFeatures[f.id] || false,
@@ -445,6 +461,34 @@ export default function CompaniesPage() {
                 />
               </div>
 
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 space-y-3">
+                <h4 className="font-semibold text-yellow-800 text-sm">🏖️ Holiday Settings</h4>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newAllowHalfDays}
+                    onChange={(e) => setNewAllowHalfDays(e.target.checked)}
+                    className="w-4 h-4"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Allow half day requests</p>
+                    <p className="text-xs text-gray-500">Employees can request morning or afternoon off</p>
+                  </div>
+                </label>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newAllowEarlyFinish}
+                    onChange={(e) => setNewAllowEarlyFinish(e.target.checked)}
+                    className="w-4 h-4"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Allow early finish requests</p>
+                    <p className="text-xs text-gray-500">Employees can request to leave before normal end time</p>
+                  </div>
+                </label>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
                 <textarea
@@ -562,6 +606,34 @@ export default function CompaniesPage() {
                 />
               </div>
 
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 space-y-3">
+                <h4 className="font-semibold text-yellow-800 text-sm">🏖️ Holiday Settings</h4>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editAllowHalfDays}
+                    onChange={(e) => setEditAllowHalfDays(e.target.checked)}
+                    className="w-4 h-4"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Allow half day requests</p>
+                    <p className="text-xs text-gray-500">Employees can request morning or afternoon off</p>
+                  </div>
+                </label>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editAllowEarlyFinish}
+                    onChange={(e) => setEditAllowEarlyFinish(e.target.checked)}
+                    className="w-4 h-4"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">Allow early finish requests</p>
+                    <p className="text-xs text-gray-500">Employees can request to leave before normal end time</p>
+                  </div>
+                </label>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
                 <textarea
@@ -672,9 +744,6 @@ export default function CompaniesPage() {
                         <div className="mt-1 text-sm text-gray-500 space-x-3">
                           <span>Start: {new Date(company.start_date).toLocaleDateString('en-GB')}</span>
                           <span>End: {effectiveEnd ? new Date(effectiveEnd).toLocaleDateString('en-GB') : '—'}</span>
-                          {daysLeft !== null && !expired && (
-                            <span className="text-gray-400">({daysLeft} days remaining)</span>
-                          )}
                         </div>
 
                         <div className="mt-2 flex flex-wrap gap-1">
@@ -688,10 +757,22 @@ export default function CompaniesPage() {
                                 {cf.features?.name}
                               </span>
                             ))}
-                          {company.company_features?.filter((cf: any) => cf.is_enabled).length === 0 && (
-                            <span className="text-xs text-gray-400">No features enabled</span>
-                          )}
                         </div>
+
+                        {hasHolidaysFeature(company.company_features) && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {company.allow_half_days && (
+                              <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
+                                ½ days allowed
+                              </span>
+                            )}
+                            {company.allow_early_finish && (
+                              <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
+                                Early finish allowed
+                              </span>
+                            )}
+                          </div>
+                        )}
 
                         {company.notes && (
                           <p className="mt-2 text-xs text-gray-400 italic">{company.notes}</p>

@@ -10,6 +10,8 @@ export async function POST(request: Request) {
       end_date,
       notes,
       holiday_year_start,
+      allow_half_days,
+      allow_early_finish,
       features,
       actor_id,
       actor_email,
@@ -29,6 +31,8 @@ export async function POST(request: Request) {
         end_date,
         notes: notes || null,
         holiday_year_start: holiday_year_start || null,
+        allow_half_days: allow_half_days || false,
+        allow_early_finish: allow_early_finish || false,
       })
       .select()
       .single()
@@ -54,7 +58,7 @@ export async function POST(request: Request) {
       action: 'CREATE_COMPANY',
       entity: 'company',
       entity_id: company.id,
-      details: { name, end_date, holiday_year_start },
+      details: { name, end_date, holiday_year_start, allow_half_days, allow_early_finish },
       ip_address: request.headers.get('x-forwarded-for') || undefined,
     })
 
