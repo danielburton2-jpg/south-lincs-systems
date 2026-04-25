@@ -1,0 +1,681 @@
+'use client'
+
+import { useEffect, useState, useCallback } from 'react'
+import { createClient } from '@/lib/supabase'
+import { useRouter } from 'next/navigation'
+
+const supabase = createClient()
+
+export default function EmployeeHolidays() {
+  const [currentUser, setCurrentUser] = useState<any>(null)
+  const [company, setCompany] = useState<any>(null)
+  const [requests, setRequests] = useState<any[]>([])
+  const [userFeatures, setUserFeatures] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showRequestForm, setShowRequestForm] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [message, setMessage] = useState('')
+  const [messageType, setMessageType] = useState<'success' | 'error'>('success')
+  const [selectedRequest, setSelectedRequest] = useState<any>(null)
+
+  // Form state
+  const [requestType, setRequestType] = useState<'holiday' | 'early_finish' | 'keep_day_off'>('holiday')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [isHalfDay, setIsHalfDay] = useState(false)
+  const [halfDayType, setHalfDayType] = useState<'morning' | 'afternoon'>('morning')
+  const [earlyFinishTime, setEarlyFinishTime] = useState('')
+  const [reason, setReason] = useState('')
+
+  const router = useRouter()
+
+  const showMessage = (msg: string, type: 'success' | 'error') => {
+    setMessage(msg)
+    setMessageType(type)
+    setTimeout(() => setMessage(''), 4000)
+  }
+
+  const fetchData = useCallback(async () => {
+    setLoading(true)
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      router.push('/login')
+      return
+    }
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single()
+
+    if (!profile) {
+      router.push('/login')
+      return
+    }
+
+    setCurrentUser(profile)
+
+    if (profile.company_id) {
+      const { data: companyData } = await supabase
+        .from('companies')
+        .select('*')
+        .eq('id', profile.company_id)
+        .single()
+      setCompany(companyData)
+    }
+
+    const { data: featuresData } = await supabase
+      .from('user_features')
+      .select(`is_enabled, feature_id, features (id, name)`)
+      .eq('user_id', user.id)
+      .eq('is_enabled', true)
+
+    setUserFeatures(featuresData || [])
+
+    const res = await fetch('/api/get-holiday-requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: user.id, scope: 'mine' }),
+    })
+    const result = await res.json()
+    if (result.requests) setRequests(result.requests)
+
+    setLoading(false)
+  }, [router])
+
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
+
+  const calculateDays = () => {
+    if (requestType !== 'holiday') return 0
+    if (!startDate || !endDate) return 0
+
+    const start = new Date(startDate)
+    const end = new Date(endDate)
+    const diffTime = end.getTime() - start.getTime()
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1
+
+    if (diffDays < 0) return 0
+    if (isHalfDay && diffDays === 1) return 0.5
+    return diffDays
+  }
+
+  const daysRequested = calculateDays()
+  const balance = currentUser?.holiday_entitlement || 0
+  const balanceAfter = balance - daysRequested
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (requestType === 'holiday' && daysRequested > balance) {
+      showMessage(`You don't have enough holiday days remaining (${balance} days available)`, 'error')
+      return
+    }
+
+    if (isHalfDay && startDate !== endDate) {
+      showMessage('Half day requests must be on a single date', 'error')
+      return
+    }
+
+    setSubmitting(true)
+
+    const res = await fetch('/api/holiday-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'create',
+        user_id: currentUser.id,
+        company_id: currentUser.company_id,
+        request_type: requestType,
+        start_date: startDate,
+        end_date: requestType === 'early_finish' || requestType === 'keep_day_off' ? startDate : endDate,
+        half_day_type: isHalfDay ? halfDayType : null,
+        early_finish_time: requestType === 'early_finish' ? earlyFinishTime : null,
+        reason,
+        days_requested: daysRequested,
+      }),
+    })
+
+    const result = await res.json()
+    setSubmitting(false)
+
+    if (!res.ok) {
+      showMessage('Error: ' + result.error, 'error')
+      return
+    }
+
+    showMessage('Request submitted! Awaiting approval.', 'success')
+    setStartDate('')
+    setEndDate('')
+    setIsHalfDay(false)
+    setReason('')
+    setEarlyFinishTime('')
+    setShowRequestForm(false)
+    fetchData()
+  }
+
+  const handleCancelRequest = async (req: any) => {
+    if (req.status === 'pending') {
+      const confirmed = confirm('Cancel this pending request?')
+      if (!confirmed) return
+
+      const res = await fetch('/api/holiday-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'cancel_pending',
+          request_id: req.id,
+          user_id: currentUser.id,
+        }),
+      })
+
+      if (!res.ok) {
+        showMessage('Error cancelling request', 'error')
+        return
+      }
+      showMessage('Request cancelled', 'success')
+      setSelectedRequest(null)
+      fetchData()
+    } else if (req.status === 'approved') {
+      const confirmed = confirm('Send a cancellation request to your manager? Your days will be returned if approved.')
+      if (!confirmed) return
+
+      const res = await fetch('/api/holiday-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'request_cancel',
+          request_id: req.id,
+          user_id: currentUser.id,
+        }),
+      })
+
+      if (!res.ok) {
+        showMessage('Error requesting cancellation', 'error')
+        return
+      }
+      showMessage('Cancellation request sent for approval', 'success')
+      setSelectedRequest(null)
+      fetchData()
+    }
+  }
+
+  const hasFeature = (name: string) => {
+    return userFeatures.some((uf: any) => uf.features?.name === name)
+  }
+
+  const formatDate = (date: string) => {
+    return new Date(date).toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    })
+  }
+
+  const getStatusBadge = (status: string) => {
+    const styles: Record<string, string> = {
+      pending: 'bg-yellow-100 text-yellow-700',
+      approved: 'bg-green-100 text-green-700',
+      rejected: 'bg-red-100 text-red-700',
+      cancelled: 'bg-gray-100 text-gray-600',
+      cancel_pending: 'bg-orange-100 text-orange-700',
+      cancel_rejected: 'bg-green-100 text-green-700',
+    }
+    const labels: Record<string, string> = {
+      pending: 'Pending',
+      approved: 'Approved',
+      rejected: 'Rejected',
+      cancelled: 'Cancelled',
+      cancel_pending: 'Cancel Pending',
+      cancel_rejected: 'Approved',
+    }
+    return (
+      <span className={`text-xs px-2 py-1 rounded-full font-medium ${styles[status] || styles.pending}`}>
+        {labels[status] || status}
+      </span>
+    )
+  }
+
+  const getTypeIcon = (type: string) => {
+    if (type === 'holiday') return '🏖️'
+    if (type === 'early_finish') return '🕓'
+    if (type === 'keep_day_off') return '🚫'
+    return '📅'
+  }
+
+  const getTypeLabel = (type: string) => {
+    if (type === 'holiday') return 'Holiday'
+    if (type === 'early_finish') return 'Early Finish'
+    if (type === 'keep_day_off') return 'Keep Day Off'
+    return type
+  }
+
+  // Bottom nav
+  const bottomNavItems: any[] = [
+    { icon: '🏠', label: 'Home', path: '/employee', active: false },
+  ]
+  if (hasFeature('Holidays')) {
+    bottomNavItems.push({ icon: '🏖️', label: 'Holidays', path: '/employee/holidays', active: true })
+  }
+  if (hasFeature('Schedules')) {
+    bottomNavItems.push({ icon: '📅', label: 'Schedule', path: '/employee/schedules', active: false })
+  }
+  if (hasFeature('Timesheets')) {
+    bottomNavItems.push({ icon: '⏱️', label: 'Hours', path: '/employee/timesheets', active: false })
+  }
+  if (hasFeature('Tasks')) {
+    bottomNavItems.push({ icon: '✅', label: 'Tasks', path: '/employee/tasks', active: false })
+  }
+  if (hasFeature('Messaging')) {
+    bottomNavItems.push({ icon: '💬', label: 'Messages', path: '/employee/messaging', active: false })
+  }
+  bottomNavItems.push({ icon: '👤', label: 'Profile', path: '/employee/profile', active: false })
+  const visibleNavItems = bottomNavItems.slice(0, 5)
+
+  if (loading) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-gray-50">
+        <p className="text-gray-500">Loading...</p>
+      </main>
+    )
+  }
+
+  const today = new Date().toISOString().slice(0, 10)
+
+  return (
+    <main className="min-h-screen bg-gray-50 pb-24">
+      {/* Header */}
+      <div className="bg-gradient-to-br from-yellow-400 to-orange-500 text-white px-6 pt-10 pb-8 rounded-b-3xl shadow-lg">
+        <div className="flex items-center justify-between mb-2">
+          <button onClick={() => router.push('/employee')} className="text-white text-sm">← Back</button>
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">Holidays</h1>
+            <p className="text-orange-100 text-sm mt-1">Manage your time off</p>
+          </div>
+          <div className="text-right">
+            <p className="text-3xl font-bold">{balance}</p>
+            <p className="text-xs text-orange-100">days left</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="px-6 pt-6 space-y-4">
+
+        {message && (
+          <div className={`p-4 rounded-xl text-sm font-medium ${
+            messageType === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+          }`}>
+            {message}
+          </div>
+        )}
+
+        {/* Request button */}
+        {!showRequestForm && !selectedRequest && (
+          <button
+            onClick={() => setShowRequestForm(true)}
+            className="w-full bg-blue-600 text-white py-4 rounded-2xl font-medium shadow-md hover:bg-blue-700 active:bg-blue-800 transition"
+          >
+            + New Request
+          </button>
+        )}
+
+        {/* Request form */}
+        {showRequestForm && (
+          <div className="bg-white rounded-2xl shadow-sm p-5 border border-gray-100">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-gray-800">New Request</h2>
+              <button onClick={() => setShowRequestForm(false)} className="text-gray-400">✕</button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Request type */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Type</label>
+                <div className="grid grid-cols-1 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setRequestType('holiday')}
+                    className={`p-3 rounded-xl border-2 text-left transition ${
+                      requestType === 'holiday'
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-200'
+                    }`}
+                  >
+                    <p className="font-medium text-gray-800">🏖️ Holiday</p>
+                    <p className="text-xs text-gray-500">Take time off (deducts from balance)</p>
+                  </button>
+
+                  {company?.allow_early_finish && (
+                    <button
+                      type="button"
+                      onClick={() => setRequestType('early_finish')}
+                      className={`p-3 rounded-xl border-2 text-left transition ${
+                        requestType === 'early_finish'
+                          ? 'border-blue-500 bg-blue-50'
+                          : 'border-gray-200'
+                      }`}
+                    >
+                      <p className="font-medium text-gray-800">🕓 Early Finish</p>
+                      <p className="text-xs text-gray-500">Leave before normal end time</p>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setRequestType('keep_day_off')}
+                    className={`p-3 rounded-xl border-2 text-left transition ${
+                      requestType === 'keep_day_off'
+                        ? 'border-blue-500 bg-blue-50'
+                        : 'border-gray-200'
+                    }`}
+                  >
+                    <p className="font-medium text-gray-800">🚫 Keep Day Off</p>
+                    <p className="text-xs text-gray-500">Refuse a shift on your normal day off</p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Dates */}
+              {requestType === 'holiday' ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                    <input
+                      type="date"
+                      value={startDate}
+                      min={today}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-gray-900"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                    <input
+                      type="date"
+                      value={endDate}
+                      min={startDate || today}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="w-full border border-gray-300 rounded-xl px-3 py-2 text-gray-900"
+                      required
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    min={today}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full border border-gray-300 rounded-xl px-3 py-2 text-gray-900"
+                    required
+                  />
+                </div>
+              )}
+
+              {/* Half day option for holidays */}
+              {requestType === 'holiday' && company?.allow_half_days && startDate === endDate && startDate && (
+                <div>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isHalfDay}
+                      onChange={(e) => setIsHalfDay(e.target.checked)}
+                      className="w-4 h-4"
+                    />
+                    <span className="text-sm font-medium text-gray-700">Half day only</span>
+                  </label>
+                  {isHalfDay && (
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setHalfDayType('morning')}
+                        className={`p-2 rounded-xl border-2 text-sm font-medium ${
+                          halfDayType === 'morning' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
+                        }`}
+                      >
+                        🌅 Morning
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setHalfDayType('afternoon')}
+                        className={`p-2 rounded-xl border-2 text-sm font-medium ${
+                          halfDayType === 'afternoon' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
+                        }`}
+                      >
+                        🌇 Afternoon
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Early finish time */}
+              {requestType === 'early_finish' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Finish Time</label>
+                  <input
+                    type="time"
+                    value={earlyFinishTime}
+                    onChange={(e) => setEarlyFinishTime(e.target.value)}
+                    className="w-full border border-gray-300 rounded-xl px-3 py-2 text-gray-900"
+                    required
+                  />
+                </div>
+              )}
+
+              {/* Reason */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Reason <span className="text-gray-400">(optional)</span>
+                </label>
+                <textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  rows={2}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-gray-900"
+                  placeholder="e.g. Family wedding"
+                />
+              </div>
+
+              {/* Summary */}
+              {requestType === 'holiday' && daysRequested > 0 && (
+                <div className={`p-4 rounded-xl border ${
+                  balanceAfter < 0 ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'
+                }`}>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Days requested</span>
+                    <span className="font-bold">{daysRequested}</span>
+                  </div>
+                  <div className="flex justify-between text-sm mt-1">
+                    <span className="text-gray-600">Current balance</span>
+                    <span className="font-bold">{balance}</span>
+                  </div>
+                  <div className="flex justify-between text-sm mt-1 pt-1 border-t border-blue-200">
+                    <span className="text-gray-600">Balance after approval</span>
+                    <span className={`font-bold ${balanceAfter < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      {balanceAfter}
+                    </span>
+                  </div>
+                  {balanceAfter < 0 && (
+                    <p className="text-xs text-red-600 mt-2">⚠️ You don&apos;t have enough days available</p>
+                  )}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={submitting || (requestType === 'holiday' && balanceAfter < 0)}
+                className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium hover:bg-blue-700 transition disabled:opacity-50"
+              >
+                {submitting ? 'Submitting...' : 'Submit Request'}
+              </button>
+            </form>
+          </div>
+        )}
+
+        {/* Request detail modal */}
+        {selectedRequest && (
+          <div className="bg-white rounded-2xl shadow-sm p-5 border border-gray-100">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-bold text-gray-800">Request Details</h2>
+              <button onClick={() => setSelectedRequest(null)} className="text-gray-400">✕</button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-gray-500 uppercase">Type</p>
+                <p className="text-gray-800 font-medium">
+                  {getTypeIcon(selectedRequest.request_type)} {getTypeLabel(selectedRequest.request_type)}
+                </p>
+              </div>
+
+              <div>
+                <p className="text-xs text-gray-500 uppercase">Date</p>
+                <p className="text-gray-800 font-medium">
+                  {selectedRequest.start_date === selectedRequest.end_date
+                    ? formatDate(selectedRequest.start_date)
+                    : `${formatDate(selectedRequest.start_date)} → ${formatDate(selectedRequest.end_date)}`}
+                </p>
+              </div>
+
+              {selectedRequest.half_day_type && (
+                <div>
+                  <p className="text-xs text-gray-500 uppercase">Half Day</p>
+                  <p className="text-gray-800 capitalize">{selectedRequest.half_day_type}</p>
+                </div>
+              )}
+
+              {selectedRequest.early_finish_time && (
+                <div>
+                  <p className="text-xs text-gray-500 uppercase">Finish Time</p>
+                  <p className="text-gray-800">{selectedRequest.early_finish_time}</p>
+                </div>
+              )}
+
+              {selectedRequest.request_type === 'holiday' && (
+                <div>
+                  <p className="text-xs text-gray-500 uppercase">Days</p>
+                  <p className="text-gray-800 font-medium">{selectedRequest.days_requested}</p>
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs text-gray-500 uppercase">Status</p>
+                <div className="mt-1">{getStatusBadge(selectedRequest.status)}</div>
+              </div>
+
+              {selectedRequest.reason && (
+                <div>
+                  <p className="text-xs text-gray-500 uppercase">Reason</p>
+                  <p className="text-gray-800">{selectedRequest.reason}</p>
+                </div>
+              )}
+
+              {selectedRequest.review_notes && (
+                <div>
+                  <p className="text-xs text-gray-500 uppercase">Reviewer Notes</p>
+                  <p className="text-gray-800 italic">{selectedRequest.review_notes}</p>
+                </div>
+              )}
+
+              {/* Cancel buttons */}
+              {selectedRequest.status === 'pending' && (
+                <button
+                  onClick={() => handleCancelRequest(selectedRequest)}
+                  className="w-full bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 py-3 rounded-xl font-medium transition"
+                >
+                  Cancel Request
+                </button>
+              )}
+
+              {selectedRequest.status === 'approved' && (
+                <button
+                  onClick={() => handleCancelRequest(selectedRequest)}
+                  className="w-full bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-700 py-3 rounded-xl font-medium transition"
+                >
+                  Request Cancellation
+                </button>
+              )}
+
+              {selectedRequest.status === 'cancel_pending' && (
+                <div className="bg-orange-50 border border-orange-200 text-orange-700 p-3 rounded-xl text-sm text-center">
+                  Cancellation pending approval
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Requests list */}
+        {!showRequestForm && !selectedRequest && (
+          <div>
+            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+              Your Requests
+            </h2>
+            {requests.length === 0 ? (
+              <div className="bg-white rounded-2xl shadow-sm p-8 border border-gray-100 text-center">
+                <p className="text-gray-400 text-sm">No requests yet. Tap &quot;New Request&quot; to get started.</p>
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {requests.map((req) => (
+                  <li
+                    key={req.id}
+                    onClick={() => setSelectedRequest(req)}
+                    className="bg-white rounded-2xl shadow-sm p-4 border border-gray-100 cursor-pointer hover:bg-gray-50 active:bg-gray-100 transition"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <div className="text-2xl">{getTypeIcon(req.request_type)}</div>
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-gray-800 truncate">
+                            {req.start_date === req.end_date
+                              ? formatDate(req.start_date)
+                              : `${formatDate(req.start_date)} → ${formatDate(req.end_date)}`}
+                          </p>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <p className="text-xs text-gray-500">{getTypeLabel(req.request_type)}</p>
+                            {req.request_type === 'holiday' && (
+                              <p className="text-xs text-gray-500">• {req.days_requested} days</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="ml-2">{getStatusBadge(req.status)}</div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+
+      </div>
+
+      {/* Bottom Navigation */}
+      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
+        <div className="flex justify-around items-center h-16 max-w-md mx-auto">
+          {visibleNavItems.map((item) => (
+            <button
+              key={item.path}
+              onClick={() => router.push(item.path)}
+              className={`flex flex-col items-center gap-0.5 ${
+                item.active ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'
+              }`}
+            >
+              <span className="text-xl">{item.icon}</span>
+              <span className="text-xs font-medium">{item.label}</span>
+            </button>
+          ))}
+        </div>
+      </nav>
+    </main>
+  )
+}
