@@ -7,6 +7,20 @@ import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
 
 const supabase = createClient()
 
+const DAYS_OF_WEEK = [
+  { key: 'mon', label: 'Mon' },
+  { key: 'tue', label: 'Tue' },
+  { key: 'wed', label: 'Wed' },
+  { key: 'thu', label: 'Thu' },
+  { key: 'fri', label: 'Fri' },
+  { key: 'sat', label: 'Sat' },
+  { key: 'sun', label: 'Sun' },
+]
+
+const DEFAULT_WORKING_DAYS = {
+  sun: false, mon: true, tue: true, wed: true, thu: true, fri: true, sat: false
+}
+
 const calculateProRata = (
   fullEntitlement: number,
   startDate: string,
@@ -48,7 +62,6 @@ export default function DashboardUsersPage() {
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error'>('success')
 
-  // New user form
   const [newName, setNewName] = useState('')
   const [newEmail, setNewEmail] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -60,8 +73,8 @@ export default function DashboardUsersPage() {
   const [newFullEntitlement, setNewFullEntitlement] = useState('')
   const [newCalculatedEntitlement, setNewCalculatedEntitlement] = useState('')
   const [newOverrideEntitlement, setNewOverrideEntitlement] = useState('')
+  const [newWorkingDays, setNewWorkingDays] = useState(DEFAULT_WORKING_DAYS)
 
-  // Edit form
   const [editName, setEditName] = useState('')
   const [editEmail, setEditEmail] = useState('')
   const [editRole, setEditRole] = useState('')
@@ -70,6 +83,7 @@ export default function DashboardUsersPage() {
   const [editManagerTitles, setEditManagerTitles] = useState<string[]>([])
   const [editEmploymentStart, setEditEmploymentStart] = useState('')
   const [editEntitlement, setEditEntitlement] = useState('')
+  const [editWorkingDays, setEditWorkingDays] = useState(DEFAULT_WORKING_DAYS)
 
   const router = useRouter()
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
@@ -153,7 +167,6 @@ export default function DashboardUsersPage() {
     fetchData()
   }, [fetchData])
 
-  // Auto-calculate pro-rata
   useEffect(() => {
     if (newFullEntitlement && newEmploymentStart && company?.holiday_year_start) {
       const calculated = calculateProRata(
@@ -231,6 +244,7 @@ export default function DashboardUsersPage() {
         company_id: currentUser?.company_id,
         employment_start_date: newEmploymentStart || null,
         holiday_entitlement: finalEntitlement,
+        working_days: newWorkingDays,
         user_features: newRole === 'admin'
           ? companyFeatures.map(id => ({ feature_id: id, is_enabled: true }))
           : companyFeatures.map(id => ({ feature_id: id, is_enabled: newUserFeatures[id] || false })),
@@ -259,6 +273,7 @@ export default function DashboardUsersPage() {
     setNewFullEntitlement('')
     setNewCalculatedEntitlement('')
     setNewOverrideEntitlement('')
+    setNewWorkingDays(DEFAULT_WORKING_DAYS)
     const defaults: Record<string, boolean> = {}
     companyFeatures.forEach(id => { defaults[id] = false })
     setNewUserFeatures(defaults)
@@ -274,6 +289,7 @@ export default function DashboardUsersPage() {
     setEditJobTitle(user.job_title || '')
     setEditEmploymentStart(user.employment_start_date || '')
     setEditEntitlement(user.holiday_entitlement?.toString() || '')
+    setEditWorkingDays(user.working_days || DEFAULT_WORKING_DAYS)
 
     const featureState: Record<string, boolean> = {}
     companyFeatures.forEach(id => { featureState[id] = false })
@@ -303,6 +319,7 @@ export default function DashboardUsersPage() {
         job_title: editJobTitle,
         employment_start_date: editEmploymentStart || null,
         holiday_entitlement: editEntitlement ? parseFloat(editEntitlement) : null,
+        working_days: editWorkingDays,
         user_features: editRole === 'admin'
           ? companyFeatures.map(id => ({ feature_id: id, is_enabled: true }))
           : companyFeatures.map(id => ({ feature_id: id, is_enabled: editUserFeatures[id] || false })),
@@ -483,6 +500,37 @@ export default function DashboardUsersPage() {
     </div>
   )
 
+  const renderWorkingDays = (
+    workingDays: any,
+    setWorkingDays: (d: any) => void
+  ) => (
+    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
+      <h4 className="font-semibold text-blue-800 text-sm">📅 Working Days</h4>
+      <p className="text-xs text-blue-700">
+        Tick the days this employee normally works. Holidays will only deduct on these days.
+      </p>
+      <div className="flex gap-2 flex-wrap">
+        {DAYS_OF_WEEK.map(day => (
+          <button
+            key={day.key}
+            type="button"
+            onClick={() => setWorkingDays({ ...workingDays, [day.key]: !workingDays[day.key] })}
+            className={`px-4 py-2 rounded-lg border-2 font-medium text-sm transition ${
+              workingDays[day.key]
+                ? 'bg-blue-500 border-blue-500 text-white'
+                : 'bg-white border-gray-300 text-gray-600'
+            }`}
+          >
+            {day.label}
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-blue-700">
+        Working {Object.values(workingDays).filter(Boolean).length} days per week
+      </p>
+    </div>
+  )
+
   if (loading) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -552,7 +600,6 @@ export default function DashboardUsersPage() {
           </div>
         )}
 
-        {/* Add User Form (Admin Only) */}
         {isAdmin && showAddForm && (
           <div className="bg-white rounded-xl shadow p-6">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">New User</h3>
@@ -649,6 +696,8 @@ export default function DashboardUsersPage() {
                 {renderFeatureSelector(newRole, newUserFeatures, setNewUserFeatures)}
               </div>
 
+              {renderWorkingDays(newWorkingDays, setNewWorkingDays)}
+
               {showHolidayFields && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 space-y-4">
                   <h4 className="font-semibold text-yellow-800">🏖️ Holiday Entitlement</h4>
@@ -718,7 +767,6 @@ export default function DashboardUsersPage() {
           </div>
         )}
 
-        {/* Edit User Form (Admin Only) */}
         {isAdmin && editingUser && (
           <div className="bg-white rounded-xl shadow p-6 border-l-4 border-blue-500">
             <h3 className="text-lg font-semibold text-gray-800 mb-4">Edit — {editingUser.full_name}</h3>
@@ -802,6 +850,8 @@ export default function DashboardUsersPage() {
                 {renderFeatureSelector(editRole, editUserFeatures, setEditUserFeatures)}
               </div>
 
+              {renderWorkingDays(editWorkingDays, setEditWorkingDays)}
+
               {showEditHolidayFields && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                   <h4 className="font-semibold text-yellow-800 mb-3">🏖️ Holiday Entitlement</h4>
@@ -841,7 +891,6 @@ export default function DashboardUsersPage() {
           </div>
         )}
 
-        {/* Users List */}
         <div className="bg-white rounded-xl shadow p-6">
           <h3 className="text-lg font-semibold text-gray-800 mb-4">
             {isAdmin ? `All Users (${visibleUsers.length})` : `Your Team (${visibleUsers.length})`}

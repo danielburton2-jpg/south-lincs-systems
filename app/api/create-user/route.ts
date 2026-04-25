@@ -13,6 +13,7 @@ export async function POST(request: Request) {
       job_title,
       employment_start_date,
       holiday_entitlement,
+      working_days,
       user_features,
       manager_titles,
       actor_id,
@@ -55,6 +56,7 @@ export async function POST(request: Request) {
         job_title: job_title || null,
         employment_start_date: employment_start_date || null,
         holiday_entitlement: holiday_entitlement ?? null,
+        working_days: working_days || null,
       })
 
     if (profileError) {
