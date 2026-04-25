@@ -3,14 +3,29 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { getUKBankHolidays } from '@/lib/bankHolidays'
 
 const supabase = createClient()
+
+const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+
+const DEFAULT_WORKING_DAYS = {
+  sun: false, mon: true, tue: true, wed: true, thu: true, fri: true, sat: false
+}
+
+const formatDateLocal = (date: Date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 
 export default function EmployeeHolidays() {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
   const [requests, setRequests] = useState<any[]>([])
   const [userFeatures, setUserFeatures] = useState<any[]>([])
+  const [bankHolidays, setBankHolidays] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [showRequestForm, setShowRequestForm] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -18,7 +33,6 @@ export default function EmployeeHolidays() {
   const [messageType, setMessageType] = useState<'success' | 'error'>('success')
   const [selectedRequest, setSelectedRequest] = useState<any>(null)
 
-  // Form state
   const [requestType, setRequestType] = useState<'holiday' | 'early_finish' | 'keep_day_off'>('holiday')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
@@ -86,20 +100,31 @@ export default function EmployeeHolidays() {
 
   useEffect(() => {
     fetchData()
+    getUKBankHolidays().then(setBankHolidays)
   }, [fetchData])
 
   const calculateDays = () => {
     if (requestType !== 'holiday') return 0
     if (!startDate || !endDate) return 0
 
+    const workingDays = currentUser?.working_days || DEFAULT_WORKING_DAYS
+
     const start = new Date(startDate)
     const end = new Date(endDate)
-    const diffTime = end.getTime() - start.getTime()
-    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1
+    if (end < start) return 0
 
-    if (diffDays < 0) return 0
-    if (isHalfDay && diffDays === 1) return 0.5
-    return diffDays
+    let count = 0
+    const current = new Date(start)
+    while (current <= end) {
+      const dayKey = DAY_KEYS[current.getDay()]
+      const dateStr = formatDateLocal(current)
+      const isHoliday = bankHolidays.has(dateStr)
+      if (workingDays[dayKey] && !isHoliday) count++
+      current.setDate(current.getDate() + 1)
+    }
+
+    if (isHalfDay && count === 1) return 0.5
+    return count
   }
 
   const daysRequested = calculateDays()
@@ -111,6 +136,11 @@ export default function EmployeeHolidays() {
 
     if (requestType === 'holiday' && daysRequested > balance) {
       showMessage(`You don't have enough holiday days remaining (${balance} days available)`, 'error')
+      return
+    }
+
+    if (requestType === 'holiday' && daysRequested === 0) {
+      showMessage('Selected dates contain no working days for you', 'error')
       return
     }
 
@@ -252,7 +282,6 @@ export default function EmployeeHolidays() {
     return type
   }
 
-  // Bottom nav
   const bottomNavItems: any[] = [
     { icon: '🏠', label: 'Home', path: '/employee', active: false },
   ]
@@ -282,11 +311,12 @@ export default function EmployeeHolidays() {
     )
   }
 
-  const today = new Date().toISOString().slice(0, 10)
+  const today = formatDateLocal(new Date())
+  const workingDays = currentUser?.working_days || DEFAULT_WORKING_DAYS
+  const workingDaysCount = Object.values(workingDays).filter(Boolean).length
 
   return (
     <main className="min-h-screen bg-gray-50 pb-24">
-      {/* Header */}
       <div className="bg-gradient-to-br from-yellow-400 to-orange-500 text-white px-6 pt-10 pb-8 rounded-b-3xl shadow-lg">
         <div className="flex items-center justify-between mb-2">
           <button onClick={() => router.push('/employee')} className="text-white text-sm">← Back</button>
@@ -313,7 +343,6 @@ export default function EmployeeHolidays() {
           </div>
         )}
 
-        {/* Request button */}
         {!showRequestForm && !selectedRequest && (
           <button
             onClick={() => setShowRequestForm(true)}
@@ -323,7 +352,6 @@ export default function EmployeeHolidays() {
           </button>
         )}
 
-        {/* Request form */}
         {showRequestForm && (
           <div className="bg-white rounded-2xl shadow-sm p-5 border border-gray-100">
             <div className="flex items-center justify-between mb-4">
@@ -332,7 +360,6 @@ export default function EmployeeHolidays() {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Request type */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Type</label>
                 <div className="grid grid-cols-1 gap-2">
@@ -379,7 +406,6 @@ export default function EmployeeHolidays() {
                 </div>
               </div>
 
-              {/* Dates */}
               {requestType === 'holiday' ? (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -419,8 +445,7 @@ export default function EmployeeHolidays() {
                 </div>
               )}
 
-              {/* Half day option for holidays */}
-              {requestType === 'holiday' && company?.allow_half_days && startDate === endDate && startDate && (
+              {requestType === 'holiday' && company?.allow_half_days && startDate === endDate && startDate && daysRequested > 0 && (
                 <div>
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input
@@ -456,7 +481,6 @@ export default function EmployeeHolidays() {
                 </div>
               )}
 
-              {/* Early finish time */}
               {requestType === 'early_finish' && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Finish Time</label>
@@ -470,7 +494,6 @@ export default function EmployeeHolidays() {
                 </div>
               )}
 
-              {/* Reason */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Reason <span className="text-gray-400">(optional)</span>
@@ -484,13 +507,14 @@ export default function EmployeeHolidays() {
                 />
               </div>
 
-              {/* Summary */}
-              {requestType === 'holiday' && daysRequested > 0 && (
+              {requestType === 'holiday' && startDate && endDate && (
                 <div className={`p-4 rounded-xl border ${
-                  balanceAfter < 0 ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'
+                  balanceAfter < 0 ? 'bg-red-50 border-red-200' :
+                  daysRequested === 0 ? 'bg-yellow-50 border-yellow-200' :
+                  'bg-blue-50 border-blue-200'
                 }`}>
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Days requested</span>
+                    <span className="text-gray-600">Working days requested</span>
                     <span className="font-bold">{daysRequested}</span>
                   </div>
                   <div className="flex justify-between text-sm mt-1">
@@ -503,15 +527,23 @@ export default function EmployeeHolidays() {
                       {balanceAfter}
                     </span>
                   </div>
+                  {daysRequested === 0 && (
+                    <p className="text-xs text-yellow-700 mt-2">
+                      ⚠️ The selected dates don&apos;t include any of your working days
+                    </p>
+                  )}
                   {balanceAfter < 0 && (
                     <p className="text-xs text-red-600 mt-2">⚠️ You don&apos;t have enough days available</p>
                   )}
+                  <p className="text-xs text-gray-500 mt-2">
+                    You work {workingDaysCount} days per week. Bank holidays are excluded automatically.
+                  </p>
                 </div>
               )}
 
               <button
                 type="submit"
-                disabled={submitting || (requestType === 'holiday' && balanceAfter < 0)}
+                disabled={submitting || (requestType === 'holiday' && (balanceAfter < 0 || daysRequested === 0))}
                 className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium hover:bg-blue-700 transition disabled:opacity-50"
               >
                 {submitting ? 'Submitting...' : 'Submit Request'}
@@ -520,7 +552,6 @@ export default function EmployeeHolidays() {
           </div>
         )}
 
-        {/* Request detail modal */}
         {selectedRequest && (
           <div className="bg-white rounded-2xl shadow-sm p-5 border border-gray-100">
             <div className="flex items-center justify-between mb-4">
@@ -585,7 +616,6 @@ export default function EmployeeHolidays() {
                 </div>
               )}
 
-              {/* Cancel buttons */}
               {selectedRequest.status === 'pending' && (
                 <button
                   onClick={() => handleCancelRequest(selectedRequest)}
@@ -613,7 +643,6 @@ export default function EmployeeHolidays() {
           </div>
         )}
 
-        {/* Requests list */}
         {!showRequestForm && !selectedRequest && (
           <div>
             <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
@@ -659,7 +688,6 @@ export default function EmployeeHolidays() {
 
       </div>
 
-      {/* Bottom Navigation */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
         <div className="flex justify-around items-center h-16 max-w-md mx-auto">
           {visibleNavItems.map((item) => (

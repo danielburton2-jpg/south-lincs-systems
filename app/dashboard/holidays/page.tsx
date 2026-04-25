@@ -7,10 +7,20 @@ import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
 
 const supabase = createClient()
 
+const formatDateLocal = (date: Date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 export default function DashboardHolidays() {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
   const [requests, setRequests] = useState<any[]>([])
+  const [users, setUsers] = useState<any[]>([])
+  const [bankHolidays, setBankHolidays] = useState<Set<string>>(new Set())
+  const [bankHolidayNames, setBankHolidayNames] = useState<Record<string, string>>({})
   const [managerTitles, setManagerTitles] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
@@ -27,6 +37,26 @@ export default function DashboardHolidays() {
     setMessage(msg)
     setMessageType(type)
     setTimeout(() => setMessage(''), 4000)
+  }
+
+  const fetchBankHolidaysWithNames = async () => {
+    try {
+      const res = await fetch('https://www.gov.uk/bank-holidays.json')
+      if (!res.ok) return
+
+      const data = await res.json()
+      const events = data['england-and-wales']?.events || []
+      const names: Record<string, string> = {}
+      const dates = new Set<string>()
+      events.forEach((event: any) => {
+        names[event.date] = event.title
+        dates.add(event.date)
+      })
+      setBankHolidays(dates)
+      setBankHolidayNames(names)
+    } catch (err) {
+      console.error('Failed to fetch bank holidays:', err)
+    }
   }
 
   const fetchData = useCallback(async () => {
@@ -68,6 +98,14 @@ export default function DashboardHolidays() {
       setManagerTitles(titles?.map((t: any) => t.job_title) || [])
     }
 
+    const usersRes = await fetch('/api/get-company-users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ company_id: profile.company_id }),
+    })
+    const usersResult = await usersRes.json()
+    if (usersResult.users) setUsers(usersResult.users)
+
     const res = await fetch('/api/get-holiday-requests', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -81,9 +119,9 @@ export default function DashboardHolidays() {
 
   useEffect(() => {
     fetchData()
+    fetchBankHolidaysWithNames()
   }, [fetchData])
 
-  // Filter requests based on role
   const getVisibleRequests = () => {
     if (!currentUser) return []
     if (currentUser.role === 'admin') return requests
@@ -93,7 +131,24 @@ export default function DashboardHolidays() {
     return []
   }
 
+  const getVisibleUsers = () => {
+    if (!currentUser) return []
+    if (currentUser.role === 'admin') {
+      return users.filter(u => !u.is_frozen && !u.is_deleted)
+    }
+    if (currentUser.role === 'manager') {
+      return users.filter(u =>
+        !u.is_frozen &&
+        !u.is_deleted &&
+        u.job_title &&
+        managerTitles.includes(u.job_title)
+      )
+    }
+    return []
+  }
+
   const visibleRequests = getVisibleRequests()
+  const visibleUsers = getVisibleUsers()
   const pendingRequests = visibleRequests.filter(r => r.status === 'pending' || r.status === 'cancel_pending')
   const allOtherRequests = visibleRequests.filter(r => r.status !== 'pending' && r.status !== 'cancel_pending')
 
@@ -209,49 +264,15 @@ export default function DashboardHolidays() {
     return type
   }
 
-  // Calendar helpers
-  const getDaysInMonth = (date: Date) => {
-    const year = date.getFullYear()
-    const month = date.getMonth()
-    const firstDay = new Date(year, month, 1)
-    const lastDay = new Date(year, month + 1, 0)
-    const daysInMonth = lastDay.getDate()
-
-    // Start from Monday (1) instead of Sunday (0)
-    let startDayOfWeek = firstDay.getDay() - 1
-    if (startDayOfWeek < 0) startDayOfWeek = 6
-
-    const days = []
-
-    // Previous month padding
-    for (let i = startDayOfWeek - 1; i >= 0; i--) {
-      const prevMonth = new Date(year, month, -i)
-      days.push({ date: prevMonth, currentMonth: false })
+  const getMonthDates = () => {
+    const year = calendarMonth.getFullYear()
+    const month = calendarMonth.getMonth()
+    const lastDay = new Date(year, month + 1, 0).getDate()
+    const dates: Date[] = []
+    for (let day = 1; day <= lastDay; day++) {
+      dates.push(new Date(year, month, day))
     }
-
-    // Current month days
-    for (let day = 1; day <= daysInMonth; day++) {
-      days.push({ date: new Date(year, month, day), currentMonth: true })
-    }
-
-    // Next month padding to reach 42 cells (6 rows)
-    let nextDayCounter = 1
-    while (days.length < 42) {
-      days.push({ date: new Date(year, month + 1, nextDayCounter), currentMonth: false })
-      nextDayCounter++
-    }
-
-    return days
-  }
-
-  const getRequestsForDay = (date: Date) => {
-    const dayStr = date.toISOString().slice(0, 10)
-    return visibleRequests.filter(r => {
-      if (r.status !== 'approved') return false
-      const start = r.start_date
-      const end = r.end_date
-      return dayStr >= start && dayStr <= end
-    })
+    return dates
   }
 
   const isWeekend = (date: Date) => {
@@ -264,6 +285,11 @@ export default function DashboardHolidays() {
     return date.toDateString() === today.toDateString()
   }
 
+  const isBankHoliday = (date: Date) => {
+    const dateStr = formatDateLocal(date)
+    return bankHolidays.has(dateStr)
+  }
+
   const goToPreviousMonth = () => {
     setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))
   }
@@ -274,6 +300,15 @@ export default function DashboardHolidays() {
 
   const goToToday = () => {
     setCalendarMonth(new Date())
+  }
+
+  const getRequestForUserDate = (userId: string, date: Date) => {
+    const dateStr = formatDateLocal(date)
+    return visibleRequests.find(r => {
+      if (r.user_id !== userId) return false
+      if (r.status !== 'approved' && r.status !== 'pending' && r.status !== 'cancel_pending') return false
+      return dateStr >= r.start_date && dateStr <= r.end_date
+    })
   }
 
   if (loading) {
@@ -295,7 +330,7 @@ export default function DashboardHolidays() {
     )
   }
 
-  const calendarDays = getDaysInMonth(calendarMonth)
+  const monthDates = getMonthDates()
   const monthName = calendarMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
 
   return (
@@ -315,7 +350,7 @@ export default function DashboardHolidays() {
         </button>
       </div>
 
-      <div className="max-w-6xl mx-auto p-6 space-y-6">
+      <div className="max-w-7xl mx-auto p-6 space-y-6">
 
         {message && (
           <div className={`p-4 rounded-lg text-sm font-medium ${
@@ -342,7 +377,6 @@ export default function DashboardHolidays() {
           </div>
         )}
 
-        {/* Tabs */}
         <div className="flex gap-2 border-b border-gray-200">
           <button
             onClick={() => setView('pending')}
@@ -381,7 +415,6 @@ export default function DashboardHolidays() {
           </button>
         </div>
 
-        {/* Pending tab */}
         {view === 'pending' && (
           <div className="space-y-3">
             {pendingRequests.length === 0 ? (
@@ -418,15 +451,11 @@ export default function DashboardHolidays() {
                       </p>
 
                       {req.half_day_type && (
-                        <p className="text-xs text-gray-500 mt-1 capitalize">
-                          Half day ({req.half_day_type})
-                        </p>
+                        <p className="text-xs text-gray-500 mt-1 capitalize">Half day ({req.half_day_type})</p>
                       )}
 
                       {req.early_finish_time && (
-                        <p className="text-xs text-gray-500 mt-1">
-                          Finish at {req.early_finish_time}
-                        </p>
+                        <p className="text-xs text-gray-500 mt-1">Finish at {req.early_finish_time}</p>
                       )}
 
                       {req.request_type === 'holiday' && (
@@ -450,17 +479,15 @@ export default function DashboardHolidays() {
                       {req.user_id === currentUser.id ? (
                         <p className="text-xs text-gray-400 italic">Your own request</p>
                       ) : (
-                        <>
-                          <button
-                            onClick={() => {
-                              setSelectedRequest(req)
-                              setReviewNotes('')
-                            }}
-                            className="text-sm bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-lg transition"
-                          >
-                            Review
-                          </button>
-                        </>
+                        <button
+                          onClick={() => {
+                            setSelectedRequest(req)
+                            setReviewNotes('')
+                          }}
+                          className="text-sm bg-blue-100 hover:bg-blue-200 text-blue-700 px-4 py-2 rounded-lg transition"
+                        >
+                          Review
+                        </button>
                       )}
                     </div>
                   </div>
@@ -470,10 +497,9 @@ export default function DashboardHolidays() {
           </div>
         )}
 
-        {/* Calendar tab */}
         {view === 'calendar' && (
-          <div className="bg-white rounded-xl shadow p-4">
-            <div className="flex items-center justify-between mb-4">
+          <div className="bg-white rounded-xl shadow overflow-hidden">
+            <div className="flex items-center justify-between p-4 border-b border-gray-200">
               <button onClick={goToPreviousMonth} className="text-2xl text-gray-600 hover:text-gray-800 px-3 py-1">‹</button>
               <div className="flex items-center gap-3">
                 <h3 className="text-lg font-bold text-gray-800">{monthName}</h3>
@@ -487,80 +513,123 @@ export default function DashboardHolidays() {
               <button onClick={goToNextMonth} className="text-2xl text-gray-600 hover:text-gray-800 px-3 py-1">›</button>
             </div>
 
-            <div className="grid grid-cols-7 gap-1 mb-2">
-              {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
-                <div key={day} className="text-center text-xs font-semibold text-gray-500 py-2">{day}</div>
-              ))}
+            <div className="overflow-x-auto">
+              {visibleUsers.length === 0 ? (
+                <div className="p-8 text-center text-gray-400">No users to display</div>
+              ) : (
+                <table className="border-collapse">
+                  <thead>
+                    <tr>
+                      <th className="sticky left-0 z-20 bg-white border-r border-b border-gray-300 px-3 py-2 text-left text-xs font-semibold text-gray-700 min-w-48">
+                        Employee
+                      </th>
+                      {monthDates.map((date) => {
+                        const weekend = isWeekend(date)
+                        const today = isToday(date)
+                        const holiday = isBankHoliday(date)
+                        return (
+                          <th
+                            key={date.toISOString()}
+                            className={`border-r border-b border-gray-300 px-1 py-2 text-xs font-medium text-center min-w-10 ${
+                              today ? 'bg-blue-100 text-blue-700' :
+                              holiday ? 'bg-red-100 text-red-700' :
+                              weekend ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-gray-50 text-gray-600'
+                            }`}
+                            title={holiday ? bankHolidayNames[formatDateLocal(date)] : ''}
+                          >
+                            <div>{date.getDate()}</div>
+                            <div className="text-[9px] opacity-70">
+                              {date.toLocaleDateString('en-GB', { weekday: 'short' }).slice(0, 1)}
+                            </div>
+                          </th>
+                        )
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleUsers.map((user) => (
+                      <tr key={user.id}>
+                        <td className="sticky left-0 z-10 bg-white border-r border-b border-gray-200 px-3 py-2 text-sm">
+                          <p className="font-medium text-gray-800 truncate">{user.full_name}</p>
+                          {user.job_title && (
+                            <p className="text-[10px] text-gray-500">{user.job_title}</p>
+                          )}
+                        </td>
+                        {monthDates.map((date) => {
+                          const weekend = isWeekend(date)
+                          const today = isToday(date)
+                          const holiday = isBankHoliday(date)
+                          const req = getRequestForUserDate(user.id, date)
+
+                          let cellBg = ''
+                          if (today) cellBg = 'bg-blue-50'
+                          else if (holiday) cellBg = 'bg-red-50'
+                          else if (weekend) cellBg = 'bg-yellow-50'
+
+                          return (
+                            <td
+                              key={date.toISOString()}
+                              className={`border-r border-b border-gray-200 p-0.5 text-center min-w-10 h-12 ${cellBg}`}
+                              title={holiday ? bankHolidayNames[formatDateLocal(date)] : ''}
+                            >
+                              {req && (
+                                <button
+                                  onClick={() => {
+                                    setSelectedRequest(req)
+                                    setReviewNotes('')
+                                  }}
+                                  className={`w-full h-full text-xs font-medium rounded ${
+                                    req.status === 'approved' ? 'bg-green-500 text-white hover:bg-green-600' :
+                                    req.status === 'pending' ? 'bg-yellow-300 text-yellow-900 hover:bg-yellow-400 ring-2 ring-yellow-500' :
+                                    req.status === 'cancel_pending' ? 'bg-orange-300 text-orange-900 hover:bg-orange-400 ring-2 ring-orange-500' :
+                                    'bg-gray-200 text-gray-700'
+                                  }`}
+                                  title={`${getTypeLabel(req.request_type)} - ${req.status}`}
+                                >
+                                  {req.request_type === 'holiday' ? '🏖️' :
+                                   req.request_type === 'early_finish' ? '🕓' : '🚫'}
+                                </button>
+                              )}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
 
-            <div className="grid grid-cols-7 gap-1">
-              {calendarDays.map((day, idx) => {
-                const dayRequests = getRequestsForDay(day.date)
-                const weekend = isWeekend(day.date)
-                const today = isToday(day.date)
-
-                return (
-                  <div
-                    key={idx}
-                    className={`min-h-24 p-2 rounded-lg border ${
-                      !day.currentMonth ? 'bg-gray-50 border-gray-100' :
-                      today ? 'bg-blue-50 border-blue-300' :
-                      weekend ? 'bg-gray-50 border-gray-200' :
-                      'bg-white border-gray-200'
-                    }`}
-                  >
-                    <p className={`text-sm font-medium ${
-                      !day.currentMonth ? 'text-gray-300' :
-                      today ? 'text-blue-700' :
-                      'text-gray-700'
-                    }`}>
-                      {day.date.getDate()}
-                    </p>
-                    <div className="space-y-1 mt-1">
-                      {dayRequests.slice(0, 3).map((req: any) => (
-                        <div
-                          key={req.id}
-                          onClick={() => {
-                            setSelectedRequest(req)
-                            setReviewNotes('')
-                          }}
-                          className={`text-xs px-1.5 py-0.5 rounded truncate cursor-pointer ${
-                            req.request_type === 'holiday' ? 'bg-yellow-100 text-yellow-800' :
-                            req.request_type === 'early_finish' ? 'bg-purple-100 text-purple-800' :
-                            'bg-gray-200 text-gray-700'
-                          }`}
-                          title={`${req.user?.full_name} — ${getTypeLabel(req.request_type)}`}
-                        >
-                          {getTypeIcon(req.request_type)} {req.user?.full_name?.split(' ')[0]}
-                        </div>
-                      ))}
-                      {dayRequests.length > 3 && (
-                        <p className="text-xs text-gray-400">+{dayRequests.length - 3} more</p>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-
-            <div className="mt-4 flex flex-wrap gap-3 text-xs text-gray-600">
+            <div className="p-4 border-t border-gray-200 flex flex-wrap gap-3 text-xs text-gray-600">
+              <div className="flex items-center gap-1">
+                <span className="w-3 h-3 bg-green-500 rounded"></span>
+                <span>Approved</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="w-3 h-3 bg-yellow-300 ring-2 ring-yellow-500 rounded"></span>
+                <span>Pending</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="w-3 h-3 bg-orange-300 ring-2 ring-orange-500 rounded"></span>
+                <span>Cancel Pending</span>
+              </div>
               <div className="flex items-center gap-1">
                 <span className="w-3 h-3 bg-yellow-100 rounded"></span>
-                <span>Holiday</span>
+                <span>Weekend</span>
               </div>
               <div className="flex items-center gap-1">
-                <span className="w-3 h-3 bg-purple-100 rounded"></span>
-                <span>Early Finish</span>
+                <span className="w-3 h-3 bg-red-100 rounded"></span>
+                <span>Bank Holiday</span>
               </div>
               <div className="flex items-center gap-1">
-                <span className="w-3 h-3 bg-gray-200 rounded"></span>
-                <span>Day Off</span>
+                <span className="w-3 h-3 bg-blue-100 rounded"></span>
+                <span>Today</span>
               </div>
             </div>
           </div>
         )}
 
-        {/* All requests tab */}
         {view === 'all' && (
           <div className="space-y-3">
             {allOtherRequests.length === 0 ? (
@@ -601,15 +670,12 @@ export default function DashboardHolidays() {
           </div>
         )}
 
-        {/* Review modal */}
         {selectedRequest && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
               <div className="p-6 space-y-4">
                 <div className="flex justify-between items-start">
-                  <h2 className="text-xl font-bold text-gray-800">
-                    Review Request
-                  </h2>
+                  <h2 className="text-xl font-bold text-gray-800">Review Request</h2>
                   <button onClick={() => setSelectedRequest(null)} className="text-gray-400 text-2xl leading-none">×</button>
                 </div>
 
