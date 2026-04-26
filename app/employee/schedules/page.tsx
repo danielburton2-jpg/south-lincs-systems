@@ -33,10 +33,6 @@ const formatDateShort = (d: Date) =>
 
 const formatTime = (t: string) => t?.slice(0, 5) || ''
 
-const DAY_LABELS: Record<string, string> = {
-  mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun'
-}
-
 const formatBytes = (b: number) => {
   if (!b) return ''
   if (b < 1024) return `${b} B`
@@ -67,7 +63,6 @@ export default function EmployeeSchedulePage() {
 
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeekMon(new Date()))
 
-  // Modal state
   const [openSchedule, setOpenSchedule] = useState<any | null>(null)
   const [openDocs, setOpenDocs] = useState<any[]>([])
   const [docsLoading, setDocsLoading] = useState(false)
@@ -280,7 +275,6 @@ export default function EmployeeSchedulePage() {
       return
     }
 
-    // location.href works reliably on mobile Safari/Chrome (no popup blocker)
     window.location.href = data.signedUrl
   }
 
@@ -295,10 +289,6 @@ export default function EmployeeSchedulePage() {
   }
 
   const todayIso = isoDate(new Date())
-
-  const recurringPills = openSchedule?.recurring_days
-    ? Object.entries(openSchedule.recurring_days).filter(([_, v]) => v).map(([k]) => DAY_LABELS[k])
-    : []
 
   return (
     <main className="min-h-screen bg-gray-50 pb-24">
@@ -411,13 +401,10 @@ export default function EmployeeSchedulePage() {
                         className="w-full text-left bg-blue-50 hover:bg-blue-100 active:bg-blue-200 border border-blue-200 rounded-lg p-3 transition"
                       >
                         <div className="flex items-start gap-2">
-                          <span className="text-lg flex-shrink-0">
-                            {sched.schedule_type === 'recurring' ? '🔁' : '📅'}
-                          </span>
                           <div className="flex-1 min-w-0">
                             <p className="font-semibold text-blue-900 text-sm">{sched.name}</p>
                             <p className="text-xs text-blue-700 mt-0.5">
-                              🕐 {formatTime(sched.start_time)}–{formatTime(sched.end_time)}
+                              {formatTime(sched.start_time)}–{formatTime(sched.end_time)}
                             </p>
                           </div>
                           <span className="text-blue-400 text-sm flex-shrink-0">›</span>
@@ -450,16 +437,8 @@ export default function EmployeeSchedulePage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="sticky top-0 bg-white border-b border-gray-100 px-5 py-4 flex justify-between items-start gap-3">
-              <div className="flex items-start gap-2 min-w-0 flex-1">
-                <span className="text-2xl flex-shrink-0">
-                  {openSchedule.schedule_type === 'recurring' ? '🔁' : '📅'}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <h2 className="text-lg font-bold text-gray-800 break-words">{openSchedule.name}</h2>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    {openSchedule.schedule_type === 'recurring' ? 'Recurring' : 'One-off'}
-                  </p>
-                </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-bold text-gray-800 break-words">{openSchedule.name}</h2>
               </div>
               <button
                 onClick={closeModal}
@@ -472,22 +451,15 @@ export default function EmployeeSchedulePage() {
             <div className="p-5 space-y-4">
 
               <div className="bg-gray-50 rounded-lg p-3">
-                <p className="text-xs text-gray-500 mb-1">🕐 Time</p>
+                <p className="text-xs text-gray-500 mb-1">Time</p>
                 <p className="font-medium text-gray-800">
                   {formatTime(openSchedule.start_time)} – {formatTime(openSchedule.end_time)}
                 </p>
               </div>
 
-              {openSchedule.schedule_type === 'recurring' && recurringPills.length > 0 && (
-                <div className="bg-gray-50 rounded-lg p-3">
-                  <p className="text-xs text-gray-500 mb-1">📋 Days</p>
-                  <p className="font-medium text-gray-800">{recurringPills.join(', ')}</p>
-                </div>
-              )}
-
               {openSchedule.schedule_type === 'one_off' && openSchedule.start_date && (
                 <div className="bg-gray-50 rounded-lg p-3">
-                  <p className="text-xs text-gray-500 mb-1">📆 Date</p>
+                  <p className="text-xs text-gray-500 mb-1">Date</p>
                   <p className="font-medium text-gray-800">
                     {openSchedule.start_date === openSchedule.end_date
                       ? formatDateLong(new Date(openSchedule.start_date + 'T00:00:00'))
@@ -504,7 +476,7 @@ export default function EmployeeSchedulePage() {
               )}
 
               <div className="pt-3 border-t border-gray-100">
-                <p className="text-sm font-semibold text-gray-800 mb-2">📎 Attachments</p>
+                <p className="text-sm font-semibold text-gray-800 mb-2">Attachments</p>
                 {docMessage && (
                   <p className="text-xs text-red-600 mb-2">{docMessage}</p>
                 )}
