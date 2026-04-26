@@ -296,7 +296,6 @@ export default function SchedulesCalendarPage() {
   const modalAsgs = modalUserId && modalDate ? cellAssignments(modalUserId, modalDate) : []
   const modalHol = modalUserId && modalDate ? holidayFor(modalUserId, modalDate) : null
   const modalBankHolName = modalDate ? bankHolName(modalDate) : null
-  const modalHasAnything = modalAsgs.length > 0 || !!modalHol || !!modalBankHolName
 
   const cellText = (userId: string, d: Date): string => {
     const lines: string[] = []
@@ -309,7 +308,8 @@ export default function SchedulesCalendarPage() {
         lines.push(`${s.name}\n${formatTime(s.start_time)}–${formatTime(s.end_time)}`)
       }
     })
-    return lines.join('\n\n') || ''
+    if (lines.length === 0) return 'Day Off'
+    return lines.join('\n\n')
   }
 
   const exportPDF = () => {
@@ -412,7 +412,26 @@ export default function SchedulesCalendarPage() {
           .no-print { display: none !important; }
           .print-only { display: block !important; }
           main { background: white !important; }
-          @page { size: A4 landscape; margin: 1cm; }
+          @page { size: A4 landscape; margin: 0.5cm; }
+
+          .print-table-wrap { overflow: visible !important; }
+          .print-table-wrap table { width: 100% !important; table-layout: fixed !important; font-size: 8pt !important; }
+          .print-table-wrap th, .print-table-wrap td {
+            min-width: 0 !important;
+            padding: 3px 4px !important;
+            word-break: break-word;
+          }
+          .print-table-wrap th:first-child, .print-table-wrap td:first-child {
+            width: 14% !important;
+          }
+          .print-table-wrap th:not(:first-child), .print-table-wrap td:not(:first-child) {
+            width: 12.28% !important;
+          }
+          .print-shrink * { font-size: 8pt !important; }
+          .print-shrink .text-xs, .print-shrink .text-\\[11px\\], .print-shrink .text-\\[10px\\] {
+            font-size: 7pt !important;
+          }
+          .print-table-wrap .sticky { position: static !important; }
         }
         .print-only { display: none; }
       `}</style>
@@ -515,8 +534,8 @@ export default function SchedulesCalendarPage() {
         </div>
 
         {view === 'week' && (
-          <div className="bg-white rounded-xl shadow overflow-hidden">
-            <div className="overflow-x-auto">
+          <div className="bg-white rounded-xl shadow overflow-hidden print-shrink">
+            <div className="overflow-x-auto print-table-wrap">
               <table className="w-full border-collapse">
                 <thead className="bg-gray-50">
                   <tr>
@@ -573,6 +592,7 @@ export default function SchedulesCalendarPage() {
                         const hasUnpublished = cellAsgs.some(a => a.is_changed || a.status === 'draft')
                         const wasReassigned = !hasUnpublished && isCellReassigned(cellAsgs)
                         const bh = isBankHol(d)
+                        const isEmpty = cellAsgs.length === 0 && !hol
 
                         return (
                           <td
@@ -592,7 +612,11 @@ export default function SchedulesCalendarPage() {
                               </div>
                             ) : null}
 
-                            {cellAsgs.length === 0 && !hol && (<span className="text-gray-300 text-xs">—</span>)}
+                            {isEmpty && (
+                              <div className="px-2 py-1 rounded text-[11px] leading-tight bg-gray-50 border border-gray-200 text-gray-500 italic text-center">
+                                Day Off
+                              </div>
+                            )}
 
                             <div className="space-y-1">
                               {cellAsgs.map(a => {
@@ -640,6 +664,7 @@ export default function SchedulesCalendarPage() {
                   const hol = holidayFor(u.id, dayDate)
                   const hasUnpublished = cellAsgs.some(a => a.is_changed || a.status === 'draft')
                   const wasReassigned = !hasUnpublished && isCellReassigned(cellAsgs)
+                  const isEmpty = cellAsgs.length === 0 && !hol
 
                   return (
                     <div
@@ -663,7 +688,11 @@ export default function SchedulesCalendarPage() {
                             {renderHolidayLabel(hol)}
                           </div>
                         )}
-                        {cellAsgs.length === 0 && !hol && (<span className="text-gray-300 text-sm">—</span>)}
+                        {isEmpty && (
+                          <div className="px-3 py-1.5 rounded text-xs bg-gray-50 border border-gray-200 text-gray-500 italic">
+                            Day Off
+                          </div>
+                        )}
                         {cellAsgs.map(a => {
                           const sched = getSchedule(a.schedule_id)
                           const reassigned = a.first_user_id && a.user_id && a.first_user_id !== a.user_id
@@ -718,7 +747,11 @@ export default function SchedulesCalendarPage() {
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded bg-purple-100 inline-block"></span>
-            <span className="text-gray-600">Day Off</span>
+            <span className="text-gray-600">Day Off (booked)</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded bg-gray-50 border border-gray-200 inline-block"></span>
+            <span className="text-gray-600">Day Off (unassigned)</span>
           </span>
           <span className="ml-auto text-gray-500 italic">Click any cell for details</span>
         </div>
@@ -744,8 +777,11 @@ export default function SchedulesCalendarPage() {
                 </div>
               )}
 
-              {!modalHasAnything && (
-                <div className="text-center py-8 text-gray-400 text-sm">Nothing assigned for this day.</div>
+              {modalAsgs.length === 0 && !modalHol && (
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-center">
+                  <p className="text-gray-700 font-medium">Day Off</p>
+                  <p className="text-xs text-gray-500 mt-1">No schedule assigned for this day.</p>
+                </div>
               )}
 
               {modalHol && (
