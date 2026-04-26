@@ -13,63 +13,95 @@ export function useIdleLogout(enabled: boolean = true) {
   const [showWarning, setShowWarning] = useState(false)
   const [secondsLeft, setSecondsLeft] = useState(60)
   const router = useRouter()
+
   const warningTimerRef = useRef<NodeJS.Timeout | null>(null)
   const logoutTimerRef = useRef<NodeJS.Timeout | null>(null)
   const countdownRef = useRef<NodeJS.Timeout | null>(null)
+  const showWarningRef = useRef(false)
+  const isLoggingOutRef = useRef(false)
 
   const performLogout = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('email, role')
-        .eq('id', user.id)
-        .single()
+    if (isLoggingOutRef.current) return
+    isLoggingOutRef.current = true
 
-      await fetch('/api/audit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: user.id,
-          user_email: profile?.email,
-          user_role: profile?.role,
-          action: 'LOGOUT_IDLE',
-          entity: 'auth',
-          details: { reason: 'inactive_5_minutes' },
-        }),
-      })
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('email, role')
+          .eq('id', user.id)
+          .single()
+
+        await fetch('/api/audit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: user.id,
+            user_email: profile?.email,
+            user_role: profile?.role,
+            action: 'LOGOUT_IDLE',
+            entity: 'auth',
+            details: { reason: 'inactive_5_minutes' },
+          }),
+        })
+      }
+    } catch (e) {
+      console.error('Idle logout audit failed:', e)
     }
+
     await supabase.auth.signOut()
     router.push('/login')
   }, [router])
 
-  const resetTimers = useCallback(() => {
-    if (warningTimerRef.current) clearTimeout(warningTimerRef.current)
-    if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current)
-    if (countdownRef.current) clearInterval(countdownRef.current)
+  const clearAllTimers = useCallback(() => {
+    if (warningTimerRef.current) {
+      clearTimeout(warningTimerRef.current)
+      warningTimerRef.current = null
+    }
+    if (logoutTimerRef.current) {
+      clearTimeout(logoutTimerRef.current)
+      logoutTimerRef.current = null
+    }
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current)
+      countdownRef.current = null
+    }
+  }, [])
 
+  const startWarningCountdown = useCallback(() => {
+    setShowWarning(true)
+    showWarningRef.current = true
+    setSecondsLeft(60)
+
+    countdownRef.current = setInterval(() => {
+      setSecondsLeft((prev) => {
+        if (prev <= 1) {
+          if (countdownRef.current) {
+            clearInterval(countdownRef.current)
+            countdownRef.current = null
+          }
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+
+    logoutTimerRef.current = setTimeout(() => {
+      performLogout()
+    }, WARNING_BEFORE_MS)
+  }, [performLogout])
+
+  const resetTimers = useCallback(() => {
+    clearAllTimers()
     setShowWarning(false)
+    showWarningRef.current = false
     setSecondsLeft(60)
 
     warningTimerRef.current = setTimeout(() => {
-      setShowWarning(true)
-      setSecondsLeft(60)
-
-      countdownRef.current = setInterval(() => {
-        setSecondsLeft((prev) => {
-          if (prev <= 1) {
-            if (countdownRef.current) clearInterval(countdownRef.current)
-            return 0
-          }
-          return prev - 1
-        })
-      }, 1000)
-
-      logoutTimerRef.current = setTimeout(() => {
-        performLogout()
-      }, WARNING_BEFORE_MS)
+      startWarningCountdown()
     }, INACTIVE_TIMEOUT_MS - WARNING_BEFORE_MS)
-  }, [performLogout])
+  }, [clearAllTimers, startWarningCountdown])
 
   const stayLoggedIn = useCallback(() => {
     resetTimers()
@@ -78,17 +110,40 @@ export function useIdleLogout(enabled: boolean = true) {
   useEffect(() => {
     if (!enabled) return
 
-    const events = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click']
+    const events = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click', 'mousemove']
 
     const handleActivity = () => {
-      if (!showWarning) {
-        resetTimers()
+      // Don't reset if warning is showing — user must click Stay Signed In
+      if (showWarningRef.current) return
+      resetTimers()
+    }
+
+    // Tab close / browser close → sign out
+    const handleBeforeUnload = () => {
+      // Use sendBeacon-style approach: fire-and-forget signOut
+      // signOut() removes the session from localStorage
+      try {
+        supabase.auth.signOut()
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // Tab hidden for an extended period → eligible for logout
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        // Don't actively log out, but don't suppress idle either
+      } else if (document.visibilityState === 'visible') {
+        // When user comes back, treat it as activity
+        if (!showWarningRef.current) resetTimers()
       }
     }
 
     events.forEach(event => {
-      window.addEventListener(event, handleActivity)
+      window.addEventListener(event, handleActivity, { passive: true })
     })
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
 
     resetTimers()
 
@@ -96,11 +151,13 @@ export function useIdleLogout(enabled: boolean = true) {
       events.forEach(event => {
         window.removeEventListener(event, handleActivity)
       })
-      if (warningTimerRef.current) clearTimeout(warningTimerRef.current)
-      if (logoutTimerRef.current) clearTimeout(logoutTimerRef.current)
-      if (countdownRef.current) clearInterval(countdownRef.current)
+      window.removeEventListener('beforeunload', handleBeforeUnload)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      clearAllTimers()
     }
-  }, [enabled, resetTimers, showWarning])
+    // IMPORTANT: do NOT include showWarning here — it caused the bug.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled])
 
   return { showWarning, secondsLeft, stayLoggedIn }
 }
