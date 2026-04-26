@@ -57,6 +57,47 @@ export default function EmployeeProfile() {
     fetchData()
   }, [fetchData])
 
+  // Realtime: profile + company updates
+  useEffect(() => {
+    if (!currentUser?.id) return
+
+    const profileChannel = supabase
+      .channel('employee-profile-self')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${currentUser.id}`,
+        },
+        () => fetchData()
+      )
+      .subscribe()
+
+    let companyChannel: any = null
+    if (currentUser.company_id) {
+      companyChannel = supabase
+        .channel('employee-profile-company')
+        .on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'companies',
+            filter: `id=eq.${currentUser.company_id}`,
+          },
+          () => fetchData()
+        )
+        .subscribe()
+    }
+
+    return () => {
+      supabase.removeChannel(profileChannel)
+      if (companyChannel) supabase.removeChannel(companyChannel)
+    }
+  }, [currentUser?.id, currentUser?.company_id, fetchData])
+
   const handleSignOut = async () => {
     await fetch('/api/audit', {
       method: 'POST',
@@ -166,6 +207,12 @@ export default function EmployeeProfile() {
             <p className="text-xs text-gray-500 uppercase tracking-wide">Email</p>
             <p className="text-gray-800 mt-1">{currentUser?.email}</p>
           </div>
+          {currentUser?.employee_number && (
+            <div className="border-t border-gray-100 pt-4">
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Employee Number</p>
+              <p className="text-gray-800 mt-1">{currentUser.employee_number}</p>
+            </div>
+          )}
           <div className="border-t border-gray-100 pt-4">
             <p className="text-xs text-gray-500 uppercase tracking-wide">Company</p>
             <p className="text-gray-800 mt-1">{company?.name || '—'}</p>
@@ -176,7 +223,6 @@ export default function EmployeeProfile() {
           </div>
         </div>
 
-        {/* Change Password section */}
         {!showPasswordForm ? (
           <button
             onClick={() => setShowPasswordForm(true)}
