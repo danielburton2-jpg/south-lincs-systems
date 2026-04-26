@@ -110,7 +110,7 @@ export default function ScheduleDetailPage() {
 
     const { data: scheduleData, error } = await supabase
       .from('schedules')
-      .select(`*, creator:created_by (full_name), publisher:published_by (full_name)`)
+      .select(`*, creator:created_by (full_name)`)
       .eq('id', scheduleId)
       .single()
 
@@ -119,6 +119,17 @@ export default function ScheduleDetailPage() {
       setTimeout(() => router.push('/dashboard/schedules'), 1500)
       return
     }
+
+    // Look up the publisher's name separately to avoid ambiguous FK errors
+    if (scheduleData.published_by) {
+      const { data: pub } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', scheduleData.published_by)
+        .single()
+      if (pub) (scheduleData as any).publisher = pub
+    }
+
     setSchedule(scheduleData)
 
     setName(scheduleData.name)
