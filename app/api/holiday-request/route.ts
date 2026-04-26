@@ -20,6 +20,11 @@ export async function POST(request: Request) {
       reviewer_email,
       reviewer_role,
       review_notes,
+      // For admin_create
+      target_user_id,
+      // For adjust_balance
+      adjustment_amount,
+      adjustment_reason,
     } = await request.json()
 
     const supabase = createClient(
@@ -27,7 +32,7 @@ export async function POST(request: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
 
-    // CREATE a new holiday request
+    // CREATE a new holiday request (employee self-service)
     if (action === 'create') {
       const { data, error } = await supabase
         .from('holiday_requests')
@@ -65,6 +70,121 @@ export async function POST(request: Request) {
       })
 
       return NextResponse.json({ success: true, request: data })
+    }
+
+    // ADMIN_CREATE — admin/manager creates holiday for an employee, auto-approved
+    if (action === 'admin_create') {
+      // Insert as approved
+      const { data, error } = await supabase
+        .from('holiday_requests')
+        .insert({
+          user_id: target_user_id,
+          company_id,
+          request_type,
+          start_date,
+          end_date,
+          half_day_type: half_day_type || null,
+          early_finish_time: early_finish_time || null,
+          reason: reason || null,
+          days_requested: days_requested || 0,
+          status: 'approved',
+          reviewed_by: reviewer_id,
+          reviewed_at: new Date().toISOString(),
+          review_notes: review_notes || `Created by ${reviewer_role}`,
+        })
+        .select()
+        .single()
+
+      if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+
+      // Deduct from balance for holiday type
+      if (request_type === 'holiday' && days_requested > 0) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('holiday_entitlement')
+          .eq('id', target_user_id)
+          .single()
+
+        const newBalance = (profile?.holiday_entitlement || 0) - days_requested
+        await supabase
+          .from('profiles')
+          .update({ holiday_entitlement: newBalance })
+          .eq('id', target_user_id)
+      }
+
+      const { data: targetProfile } = await supabase
+        .from('profiles')
+        .select('email, full_name')
+        .eq('id', target_user_id)
+        .single()
+
+      await logAudit({
+        user_id: reviewer_id,
+        user_email: reviewer_email,
+        user_role: reviewer_role,
+        action: 'ADMIN_CREATE_HOLIDAY',
+        entity: 'holiday_request',
+        entity_id: data.id,
+        details: {
+          target_user: targetProfile?.full_name,
+          target_email: targetProfile?.email,
+          request_type,
+          start_date,
+          end_date,
+          days_requested,
+        },
+      })
+
+      return NextResponse.json({ success: true, request: data })
+    }
+
+    // ADJUST_BALANCE — admin adjusts holiday entitlement
+    if (action === 'adjust_balance') {
+      // Only admins can do this
+      if (reviewer_role !== 'admin') {
+        return NextResponse.json({ error: 'Only admins can adjust balance' }, { status: 403 })
+      }
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('holiday_entitlement, full_name, email')
+        .eq('id', target_user_id)
+        .single()
+
+      if (!profile) {
+        return NextResponse.json({ error: 'User not found' }, { status: 404 })
+      }
+
+      const oldBalance = profile.holiday_entitlement || 0
+      const newBalance = oldBalance + Number(adjustment_amount)
+
+      if (newBalance < 0) {
+        return NextResponse.json({ error: 'Adjustment would result in negative balance' }, { status: 400 })
+      }
+
+      await supabase
+        .from('profiles')
+        .update({ holiday_entitlement: newBalance })
+        .eq('id', target_user_id)
+
+      await logAudit({
+        user_id: reviewer_id,
+        user_email: reviewer_email,
+        user_role: reviewer_role,
+        action: 'ADJUST_HOLIDAY_BALANCE',
+        entity: 'profile',
+        entity_id: target_user_id,
+        details: {
+          target_user: profile.full_name,
+          target_email: profile.email,
+          old_balance: oldBalance,
+          new_balance: newBalance,
+          adjustment: adjustment_amount,
+          reason: adjustment_reason,
+        },
+      })
+
+      return NextResponse.json({ success: true, old_balance: oldBalance, new_balance: newBalance })
     }
 
     // CANCEL a pending request (deletes it)
@@ -120,7 +240,6 @@ export async function POST(request: Request) {
 
       if (!req) return NextResponse.json({ error: 'Request not found' }, { status: 404 })
 
-      // Check reviewer is not the requester
       if (req.user_id === reviewer_id) {
         return NextResponse.json({ error: 'You cannot approve your own request' }, { status: 403 })
       }
@@ -137,7 +256,6 @@ export async function POST(request: Request) {
 
       if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
-      // Deduct from balance only for 'holiday' type
       if (req.request_type === 'holiday' && req.days_requested > 0) {
         const { data: profile } = await supabase
           .from('profiles')
@@ -226,7 +344,6 @@ export async function POST(request: Request) {
 
       if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
-      // Refund balance for 'holiday' type
       if (req.request_type === 'holiday' && req.days_requested > 0) {
         const { data: profile } = await supabase
           .from('profiles')

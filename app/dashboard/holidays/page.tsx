@@ -4,8 +4,15 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
+import { getUKBankHolidays } from '@/lib/bankHolidays'
 
 const supabase = createClient()
+
+const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+
+const DEFAULT_WORKING_DAYS = {
+  sun: false, mon: true, tue: true, wed: true, thu: true, fri: true, sat: false
+}
 
 const formatDateLocal = (date: Date) => {
   const year = date.getFullYear()
@@ -28,7 +35,21 @@ export default function DashboardHolidays() {
   const [selectedRequest, setSelectedRequest] = useState<any>(null)
   const [reviewNotes, setReviewNotes] = useState('')
   const [calendarMonth, setCalendarMonth] = useState(new Date())
-  const [view, setView] = useState<'pending' | 'all' | 'calendar'>('pending')
+  const [view, setView] = useState<'pending' | 'all' | 'calendar' | 'manage'>('pending')
+
+  // Manage Employee tab state
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState('')
+  const [manageRequestType, setManageRequestType] = useState<'holiday' | 'early_finish' | 'keep_day_off'>('holiday')
+  const [manageStartDate, setManageStartDate] = useState('')
+  const [manageEndDate, setManageEndDate] = useState('')
+  const [manageIsHalfDay, setManageIsHalfDay] = useState(false)
+  const [manageHalfDayType, setManageHalfDayType] = useState<'morning' | 'afternoon'>('morning')
+  const [manageEarlyFinishTime, setManageEarlyFinishTime] = useState('')
+  const [manageReason, setManageReason] = useState('')
+  const [adjustmentAmount, setAdjustmentAmount] = useState('')
+  const [adjustmentReason, setAdjustmentReason] = useState('')
+  const [submittingHoliday, setSubmittingHoliday] = useState(false)
+  const [submittingAdjustment, setSubmittingAdjustment] = useState(false)
 
   const router = useRouter()
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
@@ -120,7 +141,7 @@ export default function DashboardHolidays() {
     fetchBankHolidaysWithNames()
   }, [fetchData])
 
-  // Realtime subscriptions
+  // Realtime
   useEffect(() => {
     if (!currentUser?.company_id) return
 
@@ -134,9 +155,7 @@ export default function DashboardHolidays() {
           table: 'holiday_requests',
           filter: `company_id=eq.${currentUser.company_id}`,
         },
-        () => {
-          fetchData()
-        }
+        () => fetchData()
       )
       .subscribe()
 
@@ -150,9 +169,7 @@ export default function DashboardHolidays() {
           table: 'profiles',
           filter: `company_id=eq.${currentUser.company_id}`,
         },
-        () => {
-          fetchData()
-        }
+        () => fetchData()
       )
       .subscribe()
 
@@ -161,6 +178,9 @@ export default function DashboardHolidays() {
       supabase.removeChannel(profilesChannel)
     }
   }, [currentUser?.company_id, fetchData])
+
+  const isAdmin = currentUser?.role === 'admin'
+  const isManager = currentUser?.role === 'manager'
 
   const getVisibleRequests = () => {
     if (!currentUser) return []
@@ -187,10 +207,47 @@ export default function DashboardHolidays() {
     return []
   }
 
+  // For Manage tab - employees you can manage (NOT including yourself)
+  const getManageableEmployees = () => {
+    return getVisibleUsers().filter(u => u.id !== currentUser?.id)
+  }
+
   const visibleRequests = getVisibleRequests()
   const visibleUsers = getVisibleUsers()
+  const manageableEmployees = getManageableEmployees()
   const pendingRequests = visibleRequests.filter(r => r.status === 'pending' || r.status === 'cancel_pending')
   const allOtherRequests = visibleRequests.filter(r => r.status !== 'pending' && r.status !== 'cancel_pending')
+
+  const selectedEmployee = users.find(u => u.id === selectedEmployeeId)
+
+  const calculateManageDays = () => {
+    if (manageRequestType !== 'holiday') return 0
+    if (!manageStartDate || !manageEndDate) return 0
+    if (!selectedEmployee) return 0
+
+    const workingDays = selectedEmployee.working_days || DEFAULT_WORKING_DAYS
+
+    const start = new Date(manageStartDate)
+    const end = new Date(manageEndDate)
+    if (end < start) return 0
+
+    let count = 0
+    const current = new Date(start)
+    while (current <= end) {
+      const dayKey = DAY_KEYS[current.getDay()]
+      const dateStr = formatDateLocal(current)
+      const isHoliday = bankHolidays.has(dateStr)
+      if (workingDays[dayKey] && !isHoliday) count++
+      current.setDate(current.getDate() + 1)
+    }
+
+    if (manageIsHalfDay && count === 1) return 0.5
+    return count
+  }
+
+  const manageDaysRequested = calculateManageDays()
+  const employeeBalance = selectedEmployee?.holiday_entitlement || 0
+  const balanceAfterManage = employeeBalance - manageDaysRequested
 
   const handleApprove = async (req: any) => {
     if (req.user_id === currentUser.id) {
@@ -214,7 +271,6 @@ export default function DashboardHolidays() {
     })
 
     const result = await res.json()
-
     if (!res.ok) {
       showMessage('Error: ' + result.error, 'error')
       return
@@ -247,7 +303,6 @@ export default function DashboardHolidays() {
     })
 
     const result = await res.json()
-
     if (!res.ok) {
       showMessage('Error: ' + result.error, 'error')
       return
@@ -256,6 +311,110 @@ export default function DashboardHolidays() {
     showMessage(action === 'reject_cancel' ? 'Cancellation rejected' : 'Request rejected', 'success')
     setSelectedRequest(null)
     setReviewNotes('')
+  }
+
+  const handleAdminCreateHoliday = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (!selectedEmployeeId) {
+      showMessage('Please select an employee', 'error')
+      return
+    }
+
+    if (manageRequestType === 'holiday' && manageDaysRequested > employeeBalance) {
+      showMessage(`Employee doesn't have enough holiday days (${employeeBalance} available)`, 'error')
+      return
+    }
+
+    if (manageRequestType === 'holiday' && manageDaysRequested === 0) {
+      showMessage('Selected dates contain no working days for this employee', 'error')
+      return
+    }
+
+    setSubmittingHoliday(true)
+
+    const res = await fetch('/api/holiday-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'admin_create',
+        target_user_id: selectedEmployeeId,
+        company_id: currentUser.company_id,
+        request_type: manageRequestType,
+        start_date: manageStartDate,
+        end_date: manageRequestType === 'early_finish' || manageRequestType === 'keep_day_off' ? manageStartDate : manageEndDate,
+        half_day_type: manageIsHalfDay ? manageHalfDayType : null,
+        early_finish_time: manageRequestType === 'early_finish' ? manageEarlyFinishTime : null,
+        reason: manageReason || `Created by ${currentUser.role} ${currentUser.full_name}`,
+        days_requested: manageDaysRequested,
+        reviewer_id: currentUser.id,
+        reviewer_email: currentUser.email,
+        reviewer_role: currentUser.role,
+        review_notes: `Auto-approved by ${currentUser.role}`,
+      }),
+    })
+
+    const result = await res.json()
+    setSubmittingHoliday(false)
+
+    if (!res.ok) {
+      showMessage('Error: ' + result.error, 'error')
+      return
+    }
+
+    showMessage('Holiday added and auto-approved!', 'success')
+    setManageStartDate('')
+    setManageEndDate('')
+    setManageIsHalfDay(false)
+    setManageReason('')
+    setManageEarlyFinishTime('')
+  }
+
+  const handleAdjustBalance = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (!selectedEmployeeId) {
+      showMessage('Please select an employee', 'error')
+      return
+    }
+
+    if (!adjustmentAmount || isNaN(parseFloat(adjustmentAmount))) {
+      showMessage('Please enter a valid amount', 'error')
+      return
+    }
+
+    if (!adjustmentReason.trim()) {
+      showMessage('Please provide a reason for the adjustment', 'error')
+      return
+    }
+
+    setSubmittingAdjustment(true)
+
+    const res = await fetch('/api/holiday-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'adjust_balance',
+        target_user_id: selectedEmployeeId,
+        adjustment_amount: parseFloat(adjustmentAmount),
+        adjustment_reason: adjustmentReason,
+        reviewer_id: currentUser.id,
+        reviewer_email: currentUser.email,
+        reviewer_role: currentUser.role,
+      }),
+    })
+
+    const result = await res.json()
+    setSubmittingAdjustment(false)
+
+    if (!res.ok) {
+      showMessage('Error: ' + result.error, 'error')
+      return
+    }
+
+    showMessage(`Balance adjusted by ${adjustmentAmount > '' && parseFloat(adjustmentAmount) > 0 ? '+' : ''}${adjustmentAmount} days`, 'success')
+    setAdjustmentAmount('')
+    setAdjustmentReason('')
   }
 
   const formatDate = (date: string) => {
@@ -357,9 +516,6 @@ export default function DashboardHolidays() {
     )
   }
 
-  const isAdmin = currentUser?.role === 'admin'
-  const isManager = currentUser?.role === 'manager'
-
   if (!isAdmin && !isManager) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -370,6 +526,7 @@ export default function DashboardHolidays() {
 
   const monthDates = getMonthDates()
   const monthName = calendarMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+  const today = formatDateLocal(new Date())
 
   return (
     <main className="min-h-screen bg-gray-100">
@@ -415,13 +572,11 @@ export default function DashboardHolidays() {
           </div>
         )}
 
-        <div className="flex gap-2 border-b border-gray-200">
+        <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
           <button
             onClick={() => setView('pending')}
-            className={`px-4 py-2 font-medium text-sm border-b-2 transition ${
-              view === 'pending'
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+            className={`px-4 py-2 font-medium text-sm border-b-2 transition whitespace-nowrap ${
+              view === 'pending' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
             Pending Approval
@@ -433,26 +588,31 @@ export default function DashboardHolidays() {
           </button>
           <button
             onClick={() => setView('calendar')}
-            className={`px-4 py-2 font-medium text-sm border-b-2 transition ${
-              view === 'calendar'
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+            className={`px-4 py-2 font-medium text-sm border-b-2 transition whitespace-nowrap ${
+              view === 'calendar' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
             Calendar
           </button>
           <button
             onClick={() => setView('all')}
-            className={`px-4 py-2 font-medium text-sm border-b-2 transition ${
-              view === 'all'
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
+            className={`px-4 py-2 font-medium text-sm border-b-2 transition whitespace-nowrap ${
+              view === 'all' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
             }`}
           >
             All Requests
           </button>
+          <button
+            onClick={() => setView('manage')}
+            className={`px-4 py-2 font-medium text-sm border-b-2 transition whitespace-nowrap ${
+              view === 'manage' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Manage Employee
+          </button>
         </div>
 
+        {/* Pending tab */}
         {view === 'pending' && (
           <div className="space-y-3">
             {pendingRequests.length === 0 ? (
@@ -535,6 +695,7 @@ export default function DashboardHolidays() {
           </div>
         )}
 
+        {/* Calendar tab */}
         {view === 'calendar' && (
           <div className="bg-white rounded-xl shadow overflow-hidden">
             <div className="flex items-center justify-between p-4 border-b border-gray-200">
@@ -563,13 +724,13 @@ export default function DashboardHolidays() {
                       </th>
                       {monthDates.map((date) => {
                         const weekend = isWeekend(date)
-                        const today = isToday(date)
+                        const todayCell = isToday(date)
                         const holiday = isBankHoliday(date)
                         return (
                           <th
                             key={date.toISOString()}
                             className={`border-r border-b border-gray-300 px-1 py-2 text-xs font-medium text-center min-w-10 ${
-                              today ? 'bg-blue-100 text-blue-700' :
+                              todayCell ? 'bg-blue-100 text-blue-700' :
                               holiday ? 'bg-red-100 text-red-700' :
                               weekend ? 'bg-yellow-100 text-yellow-700' :
                               'bg-gray-50 text-gray-600'
@@ -596,12 +757,12 @@ export default function DashboardHolidays() {
                         </td>
                         {monthDates.map((date) => {
                           const weekend = isWeekend(date)
-                          const today = isToday(date)
+                          const todayCell = isToday(date)
                           const holiday = isBankHoliday(date)
                           const req = getRequestForUserDate(user.id, date)
 
                           let cellBg = ''
-                          if (today) cellBg = 'bg-blue-50'
+                          if (todayCell) cellBg = 'bg-blue-50'
                           else if (holiday) cellBg = 'bg-red-50'
                           else if (weekend) cellBg = 'bg-yellow-50'
 
@@ -668,6 +829,7 @@ export default function DashboardHolidays() {
           </div>
         )}
 
+        {/* All requests tab */}
         {view === 'all' && (
           <div className="space-y-3">
             {allOtherRequests.length === 0 ? (
@@ -708,6 +870,296 @@ export default function DashboardHolidays() {
           </div>
         )}
 
+        {/* MANAGE EMPLOYEE TAB */}
+        {view === 'manage' && (
+          <div className="space-y-4">
+            <div className="bg-white rounded-xl shadow p-6">
+              <h3 className="text-lg font-semibold text-gray-800 mb-4">Manage Employee Holidays</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                Add a holiday on behalf of an employee (auto-approved){isAdmin && ' or adjust their entitlement'}.
+              </p>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Select Employee</label>
+                <select
+                  value={selectedEmployeeId}
+                  onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-3 text-gray-900 bg-white"
+                >
+                  <option value="">— Select an employee —</option>
+                  {manageableEmployees.map(emp => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.full_name} {emp.job_title ? `(${emp.job_title})` : ''}
+                    </option>
+                  ))}
+                </select>
+                {manageableEmployees.length === 0 && (
+                  <p className="text-sm text-gray-500 mt-2 italic">
+                    No employees available to manage.
+                  </p>
+                )}
+              </div>
+
+              {selectedEmployee && (
+                <div className="mt-4 bg-blue-50 border border-blue-200 rounded-xl p-4">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-semibold text-gray-800">{selectedEmployee.full_name}</p>
+                      <p className="text-sm text-gray-600">{selectedEmployee.email}</p>
+                      {selectedEmployee.job_title && (
+                        <p className="text-xs text-gray-500 mt-1">{selectedEmployee.job_title}</p>
+                      )}
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-gray-500">Current Balance</p>
+                      <p className="text-2xl font-bold text-blue-700">
+                        {selectedEmployee.holiday_entitlement ?? '—'}
+                        {selectedEmployee.holiday_entitlement !== null && selectedEmployee.holiday_entitlement !== undefined && (
+                          <span className="text-sm font-normal"> days</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {selectedEmployee && (
+              <>
+                {/* Add Holiday Form */}
+                <div className="bg-white rounded-xl shadow p-6">
+                  <h4 className="text-md font-semibold text-gray-800 mb-4">Add Holiday for {selectedEmployee.full_name}</h4>
+
+                  <form onSubmit={handleAdminCreateHoliday} className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                      <select
+                        value={manageRequestType}
+                        onChange={(e) => setManageRequestType(e.target.value as any)}
+                        className="w-full border border-gray-300 rounded-xl px-3 py-3 text-gray-900 bg-white"
+                      >
+                        <option value="holiday">🏖️ Holiday — Take time off (deducts from balance)</option>
+                        {company?.allow_early_finish && (
+                          <option value="early_finish">🕓 Early Finish — Leave before normal end time</option>
+                        )}
+                        <option value="keep_day_off">🚫 Keep Day Off — Refuse a shift</option>
+                      </select>
+                    </div>
+
+                    {manageRequestType === 'holiday' ? (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                          <input
+                            type="date"
+                            value={manageStartDate}
+                            onChange={(e) => setManageStartDate(e.target.value)}
+                            className="w-full border border-gray-300 rounded-xl px-3 py-2 text-gray-900"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                          <input
+                            type="date"
+                            value={manageEndDate}
+                            min={manageStartDate}
+                            onChange={(e) => setManageEndDate(e.target.value)}
+                            className="w-full border border-gray-300 rounded-xl px-3 py-2 text-gray-900"
+                            required
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Date</label>
+                        <input
+                          type="date"
+                          value={manageStartDate}
+                          onChange={(e) => setManageStartDate(e.target.value)}
+                          className="w-full border border-gray-300 rounded-xl px-3 py-2 text-gray-900"
+                          required
+                        />
+                      </div>
+                    )}
+
+                    {manageRequestType === 'holiday' && company?.allow_half_days && manageStartDate === manageEndDate && manageStartDate && manageDaysRequested > 0 && (
+                      <div>
+                        <label className="flex items-center gap-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={manageIsHalfDay}
+                            onChange={(e) => setManageIsHalfDay(e.target.checked)}
+                            className="w-4 h-4"
+                          />
+                          <span className="text-sm font-medium text-gray-700">Half day only</span>
+                        </label>
+                        {manageIsHalfDay && (
+                          <div className="mt-2 grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setManageHalfDayType('morning')}
+                              className={`p-2 rounded-xl border-2 text-sm font-medium ${
+                                manageHalfDayType === 'morning' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
+                              }`}
+                            >
+                              🌅 Morning
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setManageHalfDayType('afternoon')}
+                              className={`p-2 rounded-xl border-2 text-sm font-medium ${
+                                manageHalfDayType === 'afternoon' ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
+                              }`}
+                            >
+                              🌇 Afternoon
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {manageRequestType === 'early_finish' && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Finish Time</label>
+                        <input
+                          type="time"
+                          value={manageEarlyFinishTime}
+                          onChange={(e) => setManageEarlyFinishTime(e.target.value)}
+                          className="w-full border border-gray-300 rounded-xl px-3 py-2 text-gray-900"
+                          required
+                        />
+                      </div>
+                    )}
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Reason / Notes <span className="text-gray-400">(optional)</span>
+                      </label>
+                      <textarea
+                        value={manageReason}
+                        onChange={(e) => setManageReason(e.target.value)}
+                        rows={2}
+                        className="w-full border border-gray-300 rounded-xl px-3 py-2 text-gray-900"
+                        placeholder="Why are you adding this holiday?"
+                      />
+                    </div>
+
+                    {manageRequestType === 'holiday' && manageStartDate && manageEndDate && (
+                      <div className={`p-4 rounded-xl border ${
+                        balanceAfterManage < 0 ? 'bg-red-50 border-red-200' :
+                        manageDaysRequested === 0 ? 'bg-yellow-50 border-yellow-200' :
+                        'bg-blue-50 border-blue-200'
+                      }`}>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-gray-700">Working days requested</span>
+                          <span className="font-bold text-gray-900">{manageDaysRequested}</span>
+                        </div>
+                        <div className="flex justify-between text-sm mt-1">
+                          <span className="text-gray-700">Current balance</span>
+                          <span className="font-bold text-gray-900">{employeeBalance}</span>
+                        </div>
+                        <div className="flex justify-between text-sm mt-1 pt-1 border-t border-blue-200">
+                          <span className="text-gray-700">Balance after</span>
+                          <span className={`font-bold ${balanceAfterManage < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            {balanceAfterManage}
+                          </span>
+                        </div>
+                        {balanceAfterManage < 0 && (
+                          <p className="text-xs text-red-600 mt-2">⚠️ Not enough balance</p>
+                        )}
+                      </div>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={submittingHoliday || (manageRequestType === 'holiday' && (balanceAfterManage < 0 || manageDaysRequested === 0))}
+                      className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium hover:bg-blue-700 transition disabled:opacity-50"
+                    >
+                      {submittingHoliday ? 'Adding...' : 'Add Holiday (Auto-Approved)'}
+                    </button>
+                  </form>
+                </div>
+
+                {/* Adjust Balance — admin only */}
+                {isAdmin && (
+                  <div className="bg-white rounded-xl shadow p-6">
+                    <h4 className="text-md font-semibold text-gray-800 mb-2">Adjust Balance</h4>
+                    <p className="text-sm text-gray-600 mb-4">
+                      Add or remove days from the employee&apos;s holiday balance. Use a negative number to deduct.
+                    </p>
+
+                    <form onSubmit={handleAdjustBalance} className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Adjustment <span className="text-gray-400">(e.g. 2 to add, -1 to deduct)</span>
+                        </label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          value={adjustmentAmount}
+                          onChange={(e) => setAdjustmentAmount(e.target.value)}
+                          className="w-full border border-gray-300 rounded-xl px-3 py-2 text-gray-900"
+                          placeholder="e.g. 2"
+                          required
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Reason</label>
+                        <textarea
+                          value={adjustmentReason}
+                          onChange={(e) => setAdjustmentReason(e.target.value)}
+                          rows={2}
+                          className="w-full border border-gray-300 rounded-xl px-3 py-2 text-gray-900"
+                          placeholder="e.g. Long service bonus, Manual correction"
+                          required
+                        />
+                      </div>
+
+                      {adjustmentAmount && !isNaN(parseFloat(adjustmentAmount)) && (
+                        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-sm">
+                          <div className="flex justify-between">
+                            <span className="text-gray-700">Current balance</span>
+                            <span className="font-bold">{employeeBalance}</span>
+                          </div>
+                          <div className="flex justify-between mt-1">
+                            <span className="text-gray-700">Adjustment</span>
+                            <span className="font-bold">
+                              {parseFloat(adjustmentAmount) > 0 ? '+' : ''}{adjustmentAmount}
+                            </span>
+                          </div>
+                          <div className="flex justify-between mt-1 pt-1 border-t border-blue-200">
+                            <span className="text-gray-700">New balance</span>
+                            <span className="font-bold text-blue-700">
+                              {(employeeBalance + parseFloat(adjustmentAmount)).toFixed(1)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      <button
+                        type="submit"
+                        disabled={submittingAdjustment}
+                        className="w-full bg-orange-600 text-white py-3 rounded-xl font-medium hover:bg-orange-700 transition disabled:opacity-50"
+                      >
+                        {submittingAdjustment ? 'Adjusting...' : 'Adjust Balance'}
+                      </button>
+                    </form>
+                  </div>
+                )}
+
+                {!isAdmin && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm text-gray-600">
+                    💡 Only admins can adjust employee balances
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Review modal */}
         {selectedRequest && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
