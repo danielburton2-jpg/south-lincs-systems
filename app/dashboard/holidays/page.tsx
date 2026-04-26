@@ -50,6 +50,7 @@ export default function DashboardHolidays() {
   const [adjustmentReason, setAdjustmentReason] = useState('')
   const [submittingHoliday, setSubmittingHoliday] = useState(false)
   const [submittingAdjustment, setSubmittingAdjustment] = useState(false)
+  const [actionInProgress, setActionInProgress] = useState(false)
 
   const router = useRouter()
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
@@ -254,8 +255,31 @@ export default function DashboardHolidays() {
       showMessage('You cannot approve your own request', 'error')
       return
     }
+    if (actionInProgress) return
 
     const action = req.status === 'cancel_pending' ? 'approve_cancel' : 'approve'
+    const wasCancelPending = req.status === 'cancel_pending'
+
+    // Snapshot for rollback if the API call fails
+    const previousRequests = requests
+
+    // ---- OPTIMISTIC UPDATE: update UI instantly ----
+    setActionInProgress(true)
+    setRequests(prev =>
+      prev.map(r =>
+        r.id === req.id
+          ? {
+              ...r,
+              status: wasCancelPending ? 'cancelled' : 'approved',
+              review_notes: reviewNotes || r.review_notes,
+              reviewed_by: currentUser.id,
+              reviewed_at: new Date().toISOString(),
+            }
+          : r
+      )
+    )
+    setSelectedRequest(null)
+    setReviewNotes('')
 
     const res = await fetch('/api/holiday-request', {
       method: 'POST',
@@ -271,14 +295,19 @@ export default function DashboardHolidays() {
     })
 
     const result = await res.json()
+    setActionInProgress(false)
+
     if (!res.ok) {
+      // Roll back the optimistic change
+      setRequests(previousRequests)
       showMessage('Error: ' + result.error, 'error')
       return
     }
 
     showMessage(action === 'approve_cancel' ? 'Cancellation approved' : 'Request approved', 'success')
-    setSelectedRequest(null)
-    setReviewNotes('')
+
+    // Refresh from server to pick up balance changes etc.
+    fetchData()
   }
 
   const handleReject = async (req: any) => {
@@ -286,8 +315,32 @@ export default function DashboardHolidays() {
       showMessage('You cannot reject your own request', 'error')
       return
     }
+    if (actionInProgress) return
 
     const action = req.status === 'cancel_pending' ? 'reject_cancel' : 'reject'
+    const wasCancelPending = req.status === 'cancel_pending'
+
+    const previousRequests = requests
+
+    // ---- OPTIMISTIC UPDATE ----
+    setActionInProgress(true)
+    setRequests(prev =>
+      prev.map(r =>
+        r.id === req.id
+          ? {
+              ...r,
+              // If rejecting a cancel request, the holiday goes back to approved.
+              // If rejecting a normal pending request, it becomes rejected.
+              status: wasCancelPending ? 'approved' : 'rejected',
+              review_notes: reviewNotes || r.review_notes,
+              reviewed_by: currentUser.id,
+              reviewed_at: new Date().toISOString(),
+            }
+          : r
+      )
+    )
+    setSelectedRequest(null)
+    setReviewNotes('')
 
     const res = await fetch('/api/holiday-request', {
       method: 'POST',
@@ -303,14 +356,17 @@ export default function DashboardHolidays() {
     })
 
     const result = await res.json()
+    setActionInProgress(false)
+
     if (!res.ok) {
+      setRequests(previousRequests)
       showMessage('Error: ' + result.error, 'error')
       return
     }
 
     showMessage(action === 'reject_cancel' ? 'Cancellation rejected' : 'Request rejected', 'success')
-    setSelectedRequest(null)
-    setReviewNotes('')
+
+    fetchData()
   }
 
   const handleAdminCreateHoliday = async (e: React.FormEvent) => {
@@ -368,6 +424,9 @@ export default function DashboardHolidays() {
     setManageIsHalfDay(false)
     setManageReason('')
     setManageEarlyFinishTime('')
+
+    // Refresh so the new holiday + balance show immediately
+    fetchData()
   }
 
   const handleAdjustBalance = async (e: React.FormEvent) => {
@@ -415,6 +474,8 @@ export default function DashboardHolidays() {
     showMessage(`Balance adjusted by ${adjustmentAmount > '' && parseFloat(adjustmentAmount) > 0 ? '+' : ''}${adjustmentAmount} days`, 'success')
     setAdjustmentAmount('')
     setAdjustmentReason('')
+
+    fetchData()
   }
 
   const formatDate = (date: string) => {
@@ -1260,15 +1321,17 @@ export default function DashboardHolidays() {
                     <div className="grid grid-cols-2 gap-3">
                       <button
                         onClick={() => handleReject(selectedRequest)}
-                        className="bg-red-100 hover:bg-red-200 text-red-700 py-3 rounded-xl font-medium transition"
+                        disabled={actionInProgress}
+                        className="bg-red-100 hover:bg-red-200 text-red-700 py-3 rounded-xl font-medium transition disabled:opacity-50"
                       >
                         {selectedRequest.status === 'cancel_pending' ? 'Reject Cancel' : 'Reject'}
                       </button>
                       <button
                         onClick={() => handleApprove(selectedRequest)}
-                        className="bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-medium transition"
+                        disabled={actionInProgress}
+                        className="bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-medium transition disabled:opacity-50"
                       >
-                        {selectedRequest.status === 'cancel_pending' ? 'Approve Cancel' : 'Approve'}
+                        {actionInProgress ? 'Saving...' : (selectedRequest.status === 'cancel_pending' ? 'Approve Cancel' : 'Approve')}
                       </button>
                     </div>
                   </>

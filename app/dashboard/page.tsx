@@ -111,11 +111,12 @@ export default function Dashboard() {
     fetchData()
   }, [fetchData])
 
+  // Realtime updates
   useEffect(() => {
     if (!currentUser?.company_id) return
 
     const channel = supabase
-      .channel('dashboard-holidays-count')
+      .channel('dashboard-realtime')
       .on(
         'postgres_changes',
         {
@@ -129,10 +130,10 @@ export default function Dashboard() {
       .on(
         'postgres_changes',
         {
-          event: 'UPDATE',
+          event: '*',
           schema: 'public',
           table: 'profiles',
-          filter: `id=eq.${currentUser.id}`,
+          filter: `company_id=eq.${currentUser.company_id}`,
         },
         () => fetchData()
       )
@@ -141,7 +142,7 @@ export default function Dashboard() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [currentUser?.company_id, currentUser?.id, fetchData])
+  }, [currentUser?.company_id, fetchData])
 
   const visibleUsers = currentUser?.role === 'admin'
     ? users
@@ -164,15 +165,6 @@ export default function Dashboard() {
     })
     await supabase.auth.signOut()
     router.push('/login')
-  }
-
-  const getRoleBadgeColor = (role: string) => {
-    switch (role) {
-      case 'admin': return 'bg-purple-100 text-purple-700'
-      case 'manager': return 'bg-blue-100 text-blue-700'
-      case 'user': return 'bg-gray-100 text-gray-700'
-      default: return 'bg-gray-100 text-gray-700'
-    }
   }
 
   const hasFeature = (name: string) => {
@@ -246,61 +238,73 @@ export default function Dashboard() {
           </div>
         )}
 
-        <div className="grid grid-cols-3 gap-4">
-          <div className="bg-white rounded-xl shadow p-5 text-center">
-            <p className="text-3xl font-bold text-blue-600">{visibleUsers.length}</p>
-            <p className="text-gray-500 text-sm mt-1">
+        {/* Stats - 3 across */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="bg-white rounded-xl shadow p-4 text-center">
+            <p className="text-2xl font-bold text-blue-600">{visibleUsers.length}</p>
+            <p className="text-gray-500 text-xs mt-1">
               {currentUser?.role === 'admin' ? 'Total Users' : 'Your Team'}
             </p>
           </div>
-          <div className="bg-white rounded-xl shadow p-5 text-center">
-            <p className="text-3xl font-bold text-purple-600">{userFeatures.length}</p>
-            <p className="text-gray-500 text-sm mt-1">Your Features</p>
-          </div>
-          <div className="bg-white rounded-xl shadow p-5 text-center">
-            <p className="text-3xl font-bold text-green-600">
+          <div className="bg-white rounded-xl shadow p-4 text-center">
+            <p className="text-2xl font-bold text-green-600">
               {visibleUsers.filter(u => !u.is_frozen).length}
             </p>
-            <p className="text-gray-500 text-sm mt-1">Active Users</p>
+            <p className="text-gray-500 text-xs mt-1">Active Users</p>
           </div>
+          <button
+            onClick={() => showHolidayApprovals && router.push('/dashboard/holidays')}
+            className={`rounded-xl shadow p-4 text-center transition ${
+              pendingHolidayCount > 0
+                ? 'bg-yellow-50 border-2 border-yellow-400 hover:bg-yellow-100 animate-pulse'
+                : 'bg-white hover:bg-gray-50'
+            } ${showHolidayApprovals ? 'cursor-pointer' : 'cursor-default'}`}
+            disabled={!showHolidayApprovals}
+          >
+            <p className={`text-2xl font-bold ${pendingHolidayCount > 0 ? 'text-yellow-700' : 'text-gray-400'}`}>
+              {pendingHolidayCount}
+            </p>
+            <p className="text-gray-600 text-xs mt-1 font-medium">Pending Requests</p>
+          </button>
         </div>
 
-        <div className="bg-white rounded-xl shadow p-6">
-          <h2 className="text-xl font-semibold text-gray-800 mb-4">Quick Actions</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {/* Quick Actions - smaller compact tiles */}
+        <div className="bg-white rounded-xl shadow p-5">
+          <h2 className="text-lg font-semibold text-gray-800 mb-3">Quick Actions</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
 
             {isAdmin && (
               <button
                 onClick={() => router.push('/dashboard/users')}
-                className="bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-xl p-4 text-left transition"
+                className="bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg p-3 text-left transition"
               >
-                <div className="text-3xl mb-2">👥</div>
-                <p className="font-semibold text-purple-700">Manage Users</p>
-                <p className="text-xs text-purple-600 mt-1">Add, edit and freeze users</p>
+                <div className="text-2xl mb-1">👥</div>
+                <p className="font-semibold text-purple-700 text-sm">Manage Users</p>
+                <p className="text-[11px] text-purple-600 mt-0.5">Add, edit users</p>
               </button>
             )}
 
             {isManager && (
               <button
                 onClick={() => router.push('/dashboard/users')}
-                className="bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-xl p-4 text-left transition"
+                className="bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-lg p-3 text-left transition"
               >
-                <div className="text-3xl mb-2">👥</div>
-                <p className="font-semibold text-purple-700">Your Team</p>
-                <p className="text-xs text-purple-600 mt-1">View team members</p>
+                <div className="text-2xl mb-1">👥</div>
+                <p className="font-semibold text-purple-700 text-sm">Your Team</p>
+                <p className="text-[11px] text-purple-600 mt-0.5">View team</p>
               </button>
             )}
 
             {showHolidayApprovals && (
               <button
                 onClick={() => router.push('/dashboard/holidays')}
-                className="bg-yellow-50 hover:bg-yellow-100 border border-yellow-200 rounded-xl p-4 text-left transition relative"
+                className="bg-yellow-50 hover:bg-yellow-100 border border-yellow-200 rounded-lg p-3 text-left transition relative"
               >
-                <div className="text-3xl mb-2">🏖️</div>
-                <p className="font-semibold text-yellow-700">Holiday Approvals</p>
-                <p className="text-xs text-yellow-600 mt-1">Review and approve requests</p>
+                <div className="text-2xl mb-1">🏖️</div>
+                <p className="font-semibold text-yellow-700 text-sm">Holiday Approvals</p>
+                <p className="text-[11px] text-yellow-600 mt-0.5">Approve requests</p>
                 {pendingHolidayCount > 0 && (
-                  <span className="absolute top-2 right-2 bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full">
+                  <span className="absolute top-1.5 right-1.5 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
                     {pendingHolidayCount}
                   </span>
                 )}
@@ -310,93 +314,26 @@ export default function Dashboard() {
             {showMyHolidays && (
               <button
                 onClick={() => router.push('/dashboard/my-holidays')}
-                className="bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-xl p-4 text-left transition"
+                className="bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-lg p-3 text-left transition"
               >
-                <div className="text-3xl mb-2">🏝️</div>
-                <p className="font-semibold text-orange-700">My Holidays</p>
-                <p className="text-xs text-orange-600 mt-1">
-                  {balance !== null && balance !== undefined ? `${balance} days remaining` : 'Request time off'}
+                <div className="text-2xl mb-1">🏝️</div>
+                <p className="font-semibold text-orange-700 text-sm">My Holidays</p>
+                <p className="text-[11px] text-orange-600 mt-0.5">
+                  {balance !== null && balance !== undefined ? `${balance} days left` : 'Request time off'}
                 </p>
               </button>
             )}
 
             <button
               onClick={() => router.push('/dashboard/profile')}
-              className="bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl p-4 text-left transition"
+              className="bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg p-3 text-left transition"
             >
-              <div className="text-3xl mb-2">👤</div>
-              <p className="font-semibold text-gray-700">My Profile</p>
-              <p className="text-xs text-gray-600 mt-1">Change password and settings</p>
+              <div className="text-2xl mb-1">👤</div>
+              <p className="font-semibold text-gray-700 text-sm">My Profile</p>
+              <p className="text-[11px] text-gray-600 mt-0.5">Settings, password</p>
             </button>
 
           </div>
-        </div>
-
-        <div className="bg-white rounded-xl shadow p-6">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-semibold text-gray-800">
-              {currentUser?.role === 'admin' ? 'All Users' : 'Your Team'}
-            </h2>
-            {visibleUsers.length > 0 && (
-              <button
-                onClick={() => router.push('/dashboard/users')}
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm"
-              >
-                {currentUser?.role === 'admin' ? 'Manage Users →' : 'View Team →'}
-              </button>
-            )}
-          </div>
-
-          {currentUser?.role === 'manager' && managerTitles.length === 0 && (
-            <p className="text-gray-400 text-sm italic">
-              No job titles have been assigned to you yet. Ask your admin to assign you some.
-            </p>
-          )}
-
-          {currentUser?.role === 'manager' && managerTitles.length > 0 && (
-            <p className="text-gray-500 text-sm mb-3">
-              You manage staff with these job titles:{' '}
-              <span className="font-medium">{managerTitles.join(', ')}</span>
-            </p>
-          )}
-
-          {visibleUsers.length === 0 ? (
-            <p className="text-gray-400 text-sm">No users to display.</p>
-          ) : (
-            <ul className="space-y-2">
-              {visibleUsers.slice(0, 5).map((user) => (
-                <li
-                  key={user.id}
-                  className={`flex justify-between items-center border rounded-lg px-4 py-2 ${
-                    user.is_frozen ? 'border-orange-300 bg-orange-50' : 'border-gray-200'
-                  }`}
-                >
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-medium text-gray-800 text-sm">{user.full_name}</p>
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${getRoleBadgeColor(user.role)}`}>
-                        {user.role}
-                      </span>
-                      {user.job_title && (
-                        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
-                          {user.job_title}
-                        </span>
-                      )}
-                      {user.is_frozen && (
-                        <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full">Frozen</span>
-                      )}
-                    </div>
-                    <p className="text-xs text-gray-500 mt-0.5">{user.email}</p>
-                  </div>
-                </li>
-              ))}
-              {visibleUsers.length > 5 && (
-                <p className="text-center text-sm text-gray-400 pt-2">
-                  + {visibleUsers.length - 5} more users
-                </p>
-              )}
-            </ul>
-          )}
         </div>
 
       </div>
