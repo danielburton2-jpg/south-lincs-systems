@@ -11,12 +11,39 @@ const DAY_LABELS: Record<string, string> = {
   mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun',
 }
 
+const todayISO = () => {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+const isCompleted = (s: any) => {
+  if (s.completed_at) return true
+  if (s.schedule_type === 'one_off' && s.end_date) {
+    const today = todayISO()
+    // Past date — fully done
+    if (s.end_date < today) return true
+    // Same date — check if end time has passed
+    if (s.end_date === today && s.end_time) {
+      const now = new Date()
+      const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+      if (s.end_time < currentTime) return true
+    }
+  }
+  return false
+}
+
 export default function SchedulesPage() {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
   const [schedules, setSchedules] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [showInactive, setShowInactive] = useState(false)
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<'all' | 'one_off' | 'recurring'>('all')
+  const [tick, setTick] = useState(0) // forces re-render so time-based filtering keeps up
   const router = useRouter()
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
@@ -40,17 +67,10 @@ export default function SchedulesPage() {
       return
     }
 
-    // ---- Feature gate: company must have Schedules + user must have Schedules ----
+    // Feature gate
     const { data: companyData } = await supabase
       .from('companies')
-      .select(`
-        *,
-        company_features (
-          is_enabled,
-          feature_id,
-          features (id, name)
-        )
-      `)
+      .select(`*, company_features (is_enabled, feature_id, features (id, name))`)
       .eq('id', profile.company_id)
       .single()
     setCompany(companyData)
@@ -58,20 +78,17 @@ export default function SchedulesPage() {
     const companyHasSchedules = companyData?.company_features?.some(
       (cf: any) => cf.is_enabled && cf.features?.name === 'Schedules'
     )
-
     if (!companyHasSchedules) {
       router.push('/dashboard')
       return
     }
 
-    // Admins automatically get all features; for others check user_features
     if (profile.role !== 'admin') {
       const { data: userFeats } = await supabase
         .from('user_features')
         .select('is_enabled, features (name)')
         .eq('user_id', user.id)
         .eq('is_enabled', true)
-
       const userHasSchedules = (userFeats as any[])?.some(
         (uf: any) => uf.features?.name === 'Schedules'
       )
@@ -81,14 +98,9 @@ export default function SchedulesPage() {
       }
     }
 
-    // ---- Feature OK, load schedules ----
     const { data: schedulesData } = await supabase
       .from('schedules')
-      .select(`
-        *,
-        schedule_documents (id),
-        creator:created_by (full_name)
-      `)
+      .select(`*, schedule_documents (id), creator:created_by (full_name)`)
       .eq('company_id', profile.company_id)
       .order('created_at', { ascending: false })
 
@@ -123,11 +135,31 @@ export default function SchedulesPage() {
     }
   }, [currentUser?.company_id, fetchData])
 
+  // Tick every minute so time-based completion filtering stays in sync with the clock
+  useEffect(() => {
+    const interval = setInterval(() => setTick(t => t + 1), 60_000)
+    return () => clearInterval(interval)
+  }, [])
+
   const isAdmin = currentUser?.role === 'admin'
   const isManager = currentUser?.role === 'manager'
   const canManage = isAdmin || isManager
 
-  const visibleSchedules = schedules.filter(s => showInactive ? true : s.active)
+  // Hide completed schedules from this page (they live on /reports instead)
+  // tick is referenced so this re-evaluates each minute
+  const visibleSchedules = (() => {
+    void tick
+    return schedules
+      .filter(s => !isCompleted(s))
+      .filter(s => showInactive ? true : s.active)
+      .filter(s => filter === 'all' ? true : s.schedule_type === filter)
+      .filter(s => {
+        if (!search.trim()) return true
+        const q = search.toLowerCase()
+        return s.name.toLowerCase().includes(q) ||
+          (s.description || '').toLowerCase().includes(q)
+      })
+  })()
 
   const formatTime = (t: string) => t?.slice(0, 5) || ''
   const formatDate = (d: string) =>
@@ -163,25 +195,20 @@ export default function SchedulesPage() {
         </button>
       </div>
 
-      <div className="max-w-6xl mx-auto p-6 space-y-6">
+      <div className="max-w-6xl mx-auto p-6 space-y-4">
 
+        {/* HEADER */}
         <div className="flex justify-between items-center flex-wrap gap-3">
           <div>
-            <h2 className="text-xl font-semibold text-gray-800">All Schedules</h2>
-            <p className="text-sm text-gray-500">
-              {visibleSchedules.length} {visibleSchedules.length === 1 ? 'schedule' : 'schedules'}
-            </p>
+            <h2 className="text-xl font-semibold text-gray-800">Active Schedules</h2>
           </div>
-          <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2 text-sm text-gray-600">
-              <input
-                type="checkbox"
-                checked={showInactive}
-                onChange={(e) => setShowInactive(e.target.checked)}
-                className="w-4 h-4"
-              />
-              Show inactive
-            </label>
+          <div className="flex gap-2">
+            <button
+              onClick={() => router.push('/dashboard/schedules/reports')}
+              className="bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium"
+            >
+              📊 Reports
+            </button>
             {canManage && (
               <button
                 onClick={() => router.push('/dashboard/schedules/create')}
@@ -193,11 +220,53 @@ export default function SchedulesPage() {
           </div>
         </div>
 
+        {/* FILTERS */}
+        <div className="bg-white rounded-xl shadow p-4 flex flex-wrap gap-3 items-center">
+          <input
+            type="text"
+            placeholder="Search by name or description..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="flex-1 min-w-[200px] border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
+          />
+
+          <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+            {(['all', 'one_off', 'recurring'] as const).map(f => (
+              <button
+                key={f}
+                onClick={() => setFilter(f)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                  filter === f
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                {f === 'all' ? 'All' : f === 'one_off' ? 'One-off' : 'Recurring'}
+              </button>
+            ))}
+          </div>
+
+          <label className="flex items-center gap-2 text-sm text-gray-600">
+            <input
+              type="checkbox"
+              checked={showInactive}
+              onChange={(e) => setShowInactive(e.target.checked)}
+              className="w-4 h-4"
+            />
+            Show inactive
+          </label>
+        </div>
+
+        {/* LIST */}
         {visibleSchedules.length === 0 ? (
           <div className="bg-white rounded-xl shadow p-12 text-center">
             <div className="text-5xl mb-3">📅</div>
-            <p className="text-gray-500 mb-1">No schedules yet</p>
-            {canManage && (
+            <p className="text-gray-500 mb-1">
+              {schedules.length === 0
+                ? 'No schedules yet'
+                : 'No schedules match your filters'}
+            </p>
+            {canManage && schedules.length === 0 && (
               <button
                 onClick={() => router.push('/dashboard/schedules/create')}
                 className="mt-4 text-blue-600 hover:underline text-sm font-medium"
@@ -207,86 +276,146 @@ export default function SchedulesPage() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {visibleSchedules.map(s => (
-              <div
-                key={s.id}
-                onClick={() => router.push(`/dashboard/schedules/${s.id}`)}
-                className={`bg-white rounded-xl shadow p-5 hover:shadow-md transition cursor-pointer border-l-4 ${
-                  !s.active ? 'border-gray-300 opacity-60' :
-                  s.schedule_type === 'recurring' ? 'border-blue-500' : 'border-purple-500'
-                }`}
-              >
-                <div className="flex justify-between items-start gap-3 mb-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-lg">
+          <div className="bg-white rounded-xl shadow overflow-hidden">
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b border-gray-200">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Name</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Type</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Times</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">When</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Docs</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleSchedules.map(s => (
+                    <tr
+                      key={s.id}
+                      onClick={() => router.push(`/dashboard/schedules/${s.id}`)}
+                      className={`border-b border-gray-100 last:border-b-0 cursor-pointer hover:bg-gray-50 transition ${!s.active ? 'opacity-60' : ''}`}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-start gap-2 min-w-0">
+                          <span className="text-lg flex-shrink-0">
+                            {s.schedule_type === 'recurring' ? '🔁' : '📅'}
+                          </span>
+                          <div className="min-w-0">
+                            <p className="font-semibold text-gray-800 truncate">{s.name}</p>
+                            {s.description && (
+                              <p className="text-xs text-gray-500 truncate max-w-xs">{s.description}</p>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${
+                          s.schedule_type === 'recurring'
+                            ? 'bg-blue-100 text-blue-700'
+                            : 'bg-purple-100 text-purple-700'
+                        }`}>
+                          {s.schedule_type === 'recurring' ? 'Recurring' : 'One-off'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-700 whitespace-nowrap">
+                        {formatTime(s.start_time)} – {formatTime(s.end_time)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-700">
+                        {s.schedule_type === 'one_off' && s.start_date && (
+                          <span className="whitespace-nowrap">
+                            {s.start_date === s.end_date
+                              ? formatDate(s.start_date)
+                              : `${formatDate(s.start_date)} → ${formatDate(s.end_date)}`}
+                          </span>
+                        )}
+                        {s.schedule_type === 'recurring' && (
+                          <div className="flex gap-1 flex-wrap">
+                            {getRecurringDayPills(s.recurring_days).map(d => (
+                              <span key={d} className="text-xs bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded">
+                                {d}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-600">
+                        {s.schedule_documents?.length > 0 ? (
+                          <span className="flex items-center gap-1">
+                            📎 {s.schedule_documents.length}
+                          </span>
+                        ) : (
+                          <span className="text-gray-300">—</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {s.active ? (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Active</span>
+                        ) : (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">Inactive</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile list */}
+            <div className="md:hidden divide-y divide-gray-100">
+              {visibleSchedules.map(s => (
+                <div
+                  key={s.id}
+                  onClick={() => router.push(`/dashboard/schedules/${s.id}`)}
+                  className={`p-4 cursor-pointer hover:bg-gray-50 transition ${!s.active ? 'opacity-60' : ''}`}
+                >
+                  <div className="flex justify-between items-start gap-2 mb-2">
+                    <div className="flex items-start gap-2 min-w-0 flex-1">
+                      <span className="text-xl flex-shrink-0">
                         {s.schedule_type === 'recurring' ? '🔁' : '📅'}
                       </span>
-                      <h3 className="font-semibold text-gray-800 truncate">{s.name}</h3>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-gray-800 truncate">{s.name}</p>
+                        {s.description && (
+                          <p className="text-xs text-gray-500 line-clamp-1">{s.description}</p>
+                        )}
+                      </div>
                     </div>
-                    {s.description && (
-                      <p className="text-sm text-gray-500 mt-1 line-clamp-2">{s.description}</p>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium whitespace-nowrap flex-shrink-0 ${
+                      s.schedule_type === 'recurring'
+                        ? 'bg-blue-100 text-blue-700'
+                        : 'bg-purple-100 text-purple-700'
+                    }`}>
+                      {s.schedule_type === 'recurring' ? 'Recurring' : 'One-off'}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600 ml-7">
+                    <span>🕐 {formatTime(s.start_time)} – {formatTime(s.end_time)}</span>
+                    {s.schedule_type === 'one_off' && s.start_date && (
+                      <span>📆 {s.start_date === s.end_date ? formatDate(s.start_date) : `${formatDate(s.start_date)} → ${formatDate(s.end_date)}`}</span>
+                    )}
+                    {s.schedule_documents?.length > 0 && (
+                      <span>📎 {s.schedule_documents.length}</span>
+                    )}
+                    {!s.active && (
+                      <span className="text-gray-400">Inactive</span>
                     )}
                   </div>
-                  <span className={`text-xs px-2 py-1 rounded-full font-medium whitespace-nowrap ${
-                    s.schedule_type === 'recurring' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'
-                  }`}>
-                    {s.schedule_type === 'recurring' ? 'Recurring' : 'One-off'}
-                  </span>
-                </div>
-
-                <div className="space-y-1.5 text-sm text-gray-600">
-                  <div className="flex items-center gap-2">
-                    <span className="text-gray-400">🕐</span>
-                    <span>{formatTime(s.start_time)} – {formatTime(s.end_time)}</span>
-                  </div>
-
-                  {s.schedule_type === 'one_off' && s.start_date && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-gray-400">📆</span>
-                      <span>
-                        {s.start_date === s.end_date
-                          ? formatDate(s.start_date)
-                          : `${formatDate(s.start_date)} → ${formatDate(s.end_date)}`}
-                      </span>
-                    </div>
-                  )}
 
                   {s.schedule_type === 'recurring' && (
-                    <>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-gray-400">📋</span>
-                        {getRecurringDayPills(s.recurring_days).map(d => (
-                          <span key={d} className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
-                            {d}
-                          </span>
-                        ))}
-                      </div>
-                      {(s.start_date || s.end_date) && (
-                        <div className="flex items-center gap-2 text-xs text-gray-500">
-                          <span>📆</span>
-                          <span>
-                            {s.start_date ? formatDate(s.start_date) : 'Any time'}
-                            {' → '}
-                            {s.end_date ? formatDate(s.end_date) : 'Ongoing'}
-                          </span>
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {s.schedule_documents && s.schedule_documents.length > 0 && (
-                    <div className="flex items-center gap-2 pt-2 border-t border-gray-100 mt-2">
-                      <span className="text-gray-400">📎</span>
-                      <span className="text-xs">
-                        {s.schedule_documents.length} {s.schedule_documents.length === 1 ? 'document' : 'documents'}
-                      </span>
+                    <div className="flex gap-1 flex-wrap mt-2 ml-7">
+                      {getRecurringDayPills(s.recurring_days).map(d => (
+                        <span key={d} className="text-[10px] bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded">
+                          {d}
+                        </span>
+                      ))}
                     </div>
                   )}
                 </div>
-              </div>
-            ))}
+              ))}
+            </div>
           </div>
         )}
       </div>

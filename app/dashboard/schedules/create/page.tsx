@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
+import { logAuditClient } from '@/lib/auditClient'
 
 const supabase = createClient()
 
@@ -72,17 +73,10 @@ export default function CreateSchedulePage() {
       return
     }
 
-    // Feature gate — same as the list page
+    // Feature gate
     const { data: companyData } = await supabase
       .from('companies')
-      .select(`
-        *,
-        company_features (
-          is_enabled,
-          feature_id,
-          features (id, name)
-        )
-      `)
+      .select(`*, company_features (is_enabled, feature_id, features (id, name))`)
       .eq('id', profile.company_id)
       .single()
 
@@ -203,6 +197,24 @@ export default function CreateSchedulePage() {
       return
     }
 
+    // Audit: schedule created
+    await logAuditClient({
+      user: currentUser,
+      action: 'SCHEDULE_CREATED',
+      entity: 'schedule',
+      entity_id: schedule.id,
+      details: {
+        name: schedule.name,
+        schedule_type: schedule.schedule_type,
+        start_date: schedule.start_date,
+        end_date: schedule.end_date,
+        start_time: schedule.start_time,
+        end_time: schedule.end_time,
+        recurring_days: schedule.recurring_days,
+        company_id: currentUser.company_id,
+      },
+    })
+
     // 2. Upload files
     if (files.length > 0) {
       const uploadResults = await Promise.all(
@@ -220,7 +232,7 @@ export default function CreateSchedulePage() {
 
           if (upErr) return { ok: false, name: file.name, error: upErr.message }
 
-          const { error: docErr } = await supabase
+          const { data: docRow, error: docErr } = await supabase
             .from('schedule_documents')
             .insert({
               schedule_id: schedule.id,
@@ -231,8 +243,26 @@ export default function CreateSchedulePage() {
               mime_type: file.type || null,
               uploaded_by: currentUser.id,
             })
+            .select()
+            .single()
 
           if (docErr) return { ok: false, name: file.name, error: docErr.message }
+
+          // Audit: document uploaded
+          await logAuditClient({
+            user: currentUser,
+            action: 'SCHEDULE_DOC_UPLOADED',
+            entity: 'schedule_document',
+            entity_id: docRow?.id,
+            details: {
+              schedule_id: schedule.id,
+              schedule_name: schedule.name,
+              file_name: file.name,
+              file_size: file.size,
+              mime_type: file.type,
+            },
+          })
+
           return { ok: true, name: file.name }
         })
       )
