@@ -12,6 +12,7 @@ export async function POST(request: Request) {
       holiday_year_start,
       allow_half_days,
       allow_early_finish,
+      vehicle_types,
       features,
       actor_id,
       actor_email,
@@ -23,17 +24,25 @@ export async function POST(request: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
 
+    const insertPayload: any = {
+      name,
+      start_date,
+      end_date,
+      notes: notes || null,
+      holiday_year_start: holiday_year_start || null,
+      allow_half_days: allow_half_days || false,
+      allow_early_finish: allow_early_finish || false,
+    }
+
+    // Only set vehicle_types when caller provided an array (otherwise the DB
+    // default of all 5 types kicks in)
+    if (Array.isArray(vehicle_types)) {
+      insertPayload.vehicle_types = vehicle_types
+    }
+
     const { data: company, error } = await supabase
       .from('companies')
-      .insert({
-        name,
-        start_date,
-        end_date,
-        notes: notes || null,
-        holiday_year_start: holiday_year_start || null,
-        allow_half_days: allow_half_days || false,
-        allow_early_finish: allow_early_finish || false,
-      })
+      .insert(insertPayload)
       .select()
       .single()
 
@@ -58,7 +67,7 @@ export async function POST(request: Request) {
       action: 'CREATE_COMPANY',
       entity: 'company',
       entity_id: company.id,
-      details: { name, end_date, holiday_year_start, allow_half_days, allow_early_finish },
+      details: { name, end_date, holiday_year_start, allow_half_days, allow_early_finish, vehicle_types },
       ip_address: request.headers.get('x-forwarded-for') || undefined,
     })
 

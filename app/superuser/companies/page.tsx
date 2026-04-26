@@ -7,6 +7,14 @@ import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
 
 const supabase = createClient()
 
+const ALL_VEHICLE_TYPES = [
+  { value: 'class_1', label: 'Class 1 (HGV Articulated)', icon: '🚛' },
+  { value: 'class_2', label: 'Class 2 (HGV Rigid)', icon: '🚚' },
+  { value: 'bus', label: 'Bus', icon: '🚌' },
+  { value: 'coach', label: 'Coach', icon: '🚍' },
+  { value: 'minibus', label: 'Minibus', icon: '🚐' },
+] as const
+
 const parseSubscriptionInput = (input: string): Date | null => {
   const cleaned = input.trim().toLowerCase()
   const today = new Date()
@@ -46,6 +54,7 @@ export default function CompaniesPage() {
   const [newHolidayYearStart, setNewHolidayYearStart] = useState('')
   const [newAllowHalfDays, setNewAllowHalfDays] = useState(false)
   const [newAllowEarlyFinish, setNewAllowEarlyFinish] = useState(false)
+  const [newVehicleTypes, setNewVehicleTypes] = useState<string[]>(['class_1', 'class_2', 'bus', 'coach', 'minibus'])
 
   const [editName, setEditName] = useState('')
   const [editSubInput, setEditSubInput] = useState('')
@@ -58,6 +67,7 @@ export default function CompaniesPage() {
   const [editHolidayYearStart, setEditHolidayYearStart] = useState('')
   const [editAllowHalfDays, setEditAllowHalfDays] = useState(false)
   const [editAllowEarlyFinish, setEditAllowEarlyFinish] = useState(false)
+  const [editVehicleTypes, setEditVehicleTypes] = useState<string[]>([])
 
   const router = useRouter()
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
@@ -194,6 +204,24 @@ export default function CompaniesPage() {
     return companyFeatures?.some((cf: any) => cf.is_enabled && cf.features?.name === 'Holidays')
   }
 
+  const hasVehicleChecksFeatureSelected = (featureState: Record<string, boolean>) => {
+    const vcFeature = features.find(f => f.name === 'Vehicle Checks')
+    if (!vcFeature) return false
+    return featureState[vcFeature.id] === true
+  }
+
+  const toggleNewVehicleType = (type: string) => {
+    setNewVehicleTypes(prev =>
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+    )
+  }
+
+  const toggleEditVehicleType = (type: string) => {
+    setEditVehicleTypes(prev =>
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
+    )
+  }
+
   const handleCreateCompany = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -214,6 +242,7 @@ export default function CompaniesPage() {
         holiday_year_start: newHolidayYearStart || null,
         allow_half_days: newAllowHalfDays,
         allow_early_finish: newAllowEarlyFinish,
+        vehicle_types: hasVehicleChecksFeatureSelected(newFeatures) ? newVehicleTypes : null,
         features: features.map((f: any) => ({
           feature_id: f.id,
           is_enabled: newFeatures[f.id] || false,
@@ -238,6 +267,7 @@ export default function CompaniesPage() {
     setNewHolidayYearStart('')
     setNewAllowHalfDays(false)
     setNewAllowEarlyFinish(false)
+    setNewVehicleTypes(['class_1', 'class_2', 'bus', 'coach', 'minibus'])
     const defaults: Record<string, boolean> = {}
     features.forEach((f: any) => { defaults[f.id] = false })
     setNewFeatures(defaults)
@@ -264,6 +294,7 @@ export default function CompaniesPage() {
     setEditHolidayYearStart(company.holiday_year_start || '')
     setEditAllowHalfDays(company.allow_half_days || false)
     setEditAllowEarlyFinish(company.allow_early_finish || false)
+    setEditVehicleTypes(company.vehicle_types || ['class_1', 'class_2', 'bus', 'coach', 'minibus'])
     const featureState: Record<string, boolean> = {}
     company.company_features?.forEach((cf: any) => {
       featureState[cf.feature_id] = cf.is_enabled
@@ -306,6 +337,7 @@ export default function CompaniesPage() {
         holiday_year_start: editHolidayYearStart || null,
         allow_half_days: editAllowHalfDays,
         allow_early_finish: editAllowEarlyFinish,
+        vehicle_types: hasVehicleChecksFeatureSelected(editFeatures) ? editVehicleTypes : null,
         features: features.map((f: any) => ({
           feature_id: f.id,
           is_enabled: editFeatures[f.id] || false,
@@ -350,6 +382,9 @@ export default function CompaniesPage() {
     showMessage(company.is_active ? 'Company deactivated' : 'Company activated', 'success')
     fetchCompanies()
   }
+
+  const showNewVehicleTypes = hasVehicleChecksFeatureSelected(newFeatures)
+  const showEditVehicleTypes = hasVehicleChecksFeatureSelected(editFeatures)
 
   return (
     <main className="min-h-screen bg-gray-100">
@@ -529,6 +564,40 @@ export default function CompaniesPage() {
                 </div>
               </div>
 
+              {showNewVehicleTypes && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 space-y-3">
+                  <div>
+                    <h4 className="font-semibold text-red-800 text-sm">🚛 Vehicle Types</h4>
+                    <p className="text-xs text-red-700 mt-0.5">
+                      Tick the vehicle types this company actually uses. Only their checklists will appear in the admin panel.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {ALL_VEHICLE_TYPES.map(t => (
+                      <label
+                        key={t.value}
+                        className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition ${
+                          newVehicleTypes.includes(t.value)
+                            ? 'border-red-400 bg-white'
+                            : 'border-gray-200 bg-white hover:border-gray-300'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={newVehicleTypes.includes(t.value)}
+                          onChange={() => toggleNewVehicleType(t.value)}
+                          className="w-4 h-4 text-red-600"
+                        />
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">{t.icon}</span>
+                          <span className="text-sm font-medium text-gray-800">{t.label}</span>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <button
                 type="submit"
                 className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition font-medium"
@@ -674,6 +743,40 @@ export default function CompaniesPage() {
                 </div>
               </div>
 
+              {showEditVehicleTypes && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 space-y-3">
+                  <div>
+                    <h4 className="font-semibold text-red-800 text-sm">🚛 Vehicle Types</h4>
+                    <p className="text-xs text-red-700 mt-0.5">
+                      Tick the vehicle types this company actually uses. Only their checklists will appear in the admin panel.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {ALL_VEHICLE_TYPES.map(t => (
+                      <label
+                        key={t.value}
+                        className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition ${
+                          editVehicleTypes.includes(t.value)
+                            ? 'border-red-400 bg-white'
+                            : 'border-gray-200 bg-white hover:border-gray-300'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={editVehicleTypes.includes(t.value)}
+                          onChange={() => toggleEditVehicleType(t.value)}
+                          className="w-4 h-4 text-red-600"
+                        />
+                        <div className="flex items-center gap-2">
+                          <span className="text-xl">{t.icon}</span>
+                          <span className="text-sm font-medium text-gray-800">{t.label}</span>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className="flex gap-3">
                 <button
                   type="submit"
@@ -771,6 +874,19 @@ export default function CompaniesPage() {
                                 Early finish allowed
                               </span>
                             )}
+                          </div>
+                        )}
+
+                        {company.company_features?.some((cf: any) => cf.is_enabled && cf.features?.name === 'Vehicle Checks') && company.vehicle_types?.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {company.vehicle_types.map((vt: string) => {
+                              const t = ALL_VEHICLE_TYPES.find(x => x.value === vt)
+                              return (
+                                <span key={vt} className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">
+                                  {t?.icon} {t?.label.split(' ')[0]}
+                                </span>
+                              )
+                            })}
                           </div>
                         )}
 

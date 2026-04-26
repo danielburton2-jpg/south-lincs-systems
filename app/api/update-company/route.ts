@@ -13,6 +13,7 @@ export async function POST(request: Request) {
       holiday_year_start,
       allow_half_days,
       allow_early_finish,
+      vehicle_types,
       features,
       is_active,
       toggle_only,
@@ -47,17 +48,29 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true })
     }
 
+    // Build update payload — include vehicle_types only when provided (so it's
+    // not wiped out when called from a context that doesn't send it)
+    const updatePayload: any = {
+      name,
+      end_date,
+      override_end_date,
+      notes,
+      holiday_year_start: holiday_year_start || null,
+      allow_half_days: allow_half_days || false,
+      allow_early_finish: allow_early_finish || false,
+    }
+
+    if (vehicle_types !== undefined) {
+      // Pass null to keep using DB default. Pass [] to clear all.
+      // Pass string[] to set specific ones.
+      updatePayload.vehicle_types = Array.isArray(vehicle_types)
+        ? vehicle_types
+        : null
+    }
+
     const { error } = await supabase
       .from('companies')
-      .update({
-        name,
-        end_date,
-        override_end_date,
-        notes,
-        holiday_year_start: holiday_year_start || null,
-        allow_half_days: allow_half_days || false,
-        allow_early_finish: allow_early_finish || false,
-      })
+      .update(updatePayload)
       .eq('id', company_id)
 
     if (error) return NextResponse.json({ error: error.message }, { status: 400 })
@@ -102,7 +115,7 @@ export async function POST(request: Request) {
       action: 'EDIT_COMPANY',
       entity: 'company',
       entity_id: company_id,
-      details: { name, end_date, override_end_date, holiday_year_start, allow_half_days, allow_early_finish },
+      details: { name, end_date, override_end_date, holiday_year_start, allow_half_days, allow_early_finish, vehicle_types },
       ip_address: request.headers.get('x-forwarded-for') || undefined,
     })
 

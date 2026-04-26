@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
@@ -8,7 +8,7 @@ import { logAuditClient } from '@/lib/auditClient'
 
 const supabase = createClient()
 
-const VEHICLE_TYPES = [
+const ALL_VEHICLE_TYPES = [
   { value: 'class_1', label: 'Class 1 (HGV Articulated)', icon: '🚛' },
   { value: 'class_2', label: 'Class 2 (HGV Rigid)', icon: '🚚' },
   { value: 'bus', label: 'Bus', icon: '🚌' },
@@ -19,20 +19,25 @@ const VEHICLE_TYPES = [
 export default function ChecklistTemplatesPage() {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
+  const [enabledVehicleTypes, setEnabledVehicleTypes] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error'>('success')
 
-  const [activeType, setActiveType] = useState<string>('class_1')
+  const [activeType, setActiveType] = useState<string>('')
   const [templateId, setTemplateId] = useState<string | null>(null)
   const [items, setItems] = useState<any[]>([])
 
-  // Add/edit form state
-  const [showAdd, setShowAdd] = useState(false)
-  const [editingItem, setEditingItem] = useState<any>(null)
-  const [formCategory, setFormCategory] = useState('')
-  const [formItemText, setFormItemText] = useState('')
-  const [submitting, setSubmitting] = useState(false)
+  // Inline editing state
+  const [editingItemId, setEditingItemId] = useState<string | null>(null)
+  const [inlineCategory, setInlineCategory] = useState('')
+  const [inlineText, setInlineText] = useState('')
+  const [savingId, setSavingId] = useState<string | null>(null)
+
+  // Add new item state
+  const [addingNew, setAddingNew] = useState(false)
+  const [newCategory, setNewCategory] = useState('')
+  const [newText, setNewText] = useState('')
 
   const router = useRouter()
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
@@ -44,7 +49,6 @@ export default function ChecklistTemplatesPage() {
   }
 
   const loadTemplate = useCallback(async (companyId: string, type: string) => {
-    // Get template (may not exist yet for newly added vehicle type)
     let { data: template } = await supabase
       .from('vehicle_check_templates')
       .select('*')
@@ -53,7 +57,6 @@ export default function ChecklistTemplatesPage() {
       .maybeSingle()
 
     if (!template) {
-      // Auto-create empty template
       const { data: newTemplate, error } = await supabase
         .from('vehicle_check_templates')
         .insert({ company_id: companyId, vehicle_type: type })
@@ -112,16 +115,29 @@ export default function ChecklistTemplatesPage() {
       return
     }
 
-    await loadTemplate(profile.company_id, activeType)
+    // Filter to types the company actually uses
+    const types: string[] = companyData?.vehicle_types && companyData.vehicle_types.length > 0
+      ? companyData.vehicle_types
+      : ['class_1', 'class_2', 'bus', 'coach', 'minibus']
+    setEnabledVehicleTypes(types)
+
+    // Pick first enabled type as active
+    const initialType = types[0] || 'class_1'
+    setActiveType(initialType)
+
+    await loadTemplate(profile.company_id, initialType)
     setLoading(false)
-  }, [router, activeType, loadTemplate])
+  }, [router, loadTemplate])
 
   useEffect(() => { init() }, [init])
 
-  // Reload when switching vehicle type
+  // Reload on type change
   useEffect(() => {
-    if (!currentUser?.company_id) return
+    if (!currentUser?.company_id || !activeType) return
     loadTemplate(currentUser.company_id, activeType)
+    // Cancel any in-progress edits when switching
+    setEditingItemId(null)
+    setAddingNew(false)
   }, [activeType, currentUser?.company_id, loadTemplate])
 
   // Realtime
@@ -130,102 +146,112 @@ export default function ChecklistTemplatesPage() {
     const channel = supabase
       .channel(`template-items-${templateId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'vehicle_check_template_items', filter: `template_id=eq.${templateId}` }, () => {
-        loadTemplate(currentUser.company_id, activeType)
+        if (currentUser?.company_id && activeType) {
+          loadTemplate(currentUser.company_id, activeType)
+        }
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [templateId, currentUser?.company_id, activeType, loadTemplate])
 
-  const handleStartAdd = () => {
-    setEditingItem(null)
-    setFormCategory('')
-    setFormItemText('')
-    setShowAdd(true)
+  const handleStartInlineEdit = (item: any) => {
+    setEditingItemId(item.id)
+    setInlineCategory(item.category)
+    setInlineText(item.item_text)
+    setAddingNew(false)
   }
 
-  const handleStartEdit = (item: any) => {
-    setEditingItem(item)
-    setFormCategory(item.category)
-    setFormItemText(item.item_text)
-    setShowAdd(true)
+  const handleCancelInlineEdit = () => {
+    setEditingItemId(null)
+    setInlineCategory('')
+    setInlineText('')
   }
 
-  const handleCancelForm = () => {
-    setShowAdd(false)
-    setEditingItem(null)
-    setFormCategory('')
-    setFormItemText('')
-  }
-
-  const handleSubmitItem = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!templateId) return
-
-    if (!formCategory.trim() || !formItemText.trim()) {
+  const handleSaveInlineEdit = async (item: any) => {
+    if (!inlineCategory.trim() || !inlineText.trim()) {
       showMessage('Both category and item text are required', 'error')
       return
     }
 
-    setSubmitting(true)
+    setSavingId(item.id)
 
-    if (editingItem) {
-      const { error } = await supabase
-        .from('vehicle_check_template_items')
-        .update({
-          category: formCategory.trim(),
-          item_text: formItemText.trim(),
-        })
-        .eq('id', editingItem.id)
-
-      setSubmitting(false)
-
-      if (error) {
-        showMessage('Error: ' + error.message, 'error')
-        return
-      }
-
-      await logAuditClient({
-        user: currentUser,
-        action: 'CHECK_ITEM_UPDATED',
-        entity: 'vehicle_check_template_item',
-        entity_id: editingItem.id,
-        details: { vehicle_type: activeType, category: formCategory, item_text: formItemText },
+    const { error } = await supabase
+      .from('vehicle_check_template_items')
+      .update({
+        category: inlineCategory.trim(),
+        item_text: inlineText.trim(),
       })
+      .eq('id', item.id)
 
-      showMessage('Item updated', 'success')
-    } else {
-      // Append at end with display_order = max + 10
-      const maxOrder = items.length > 0 ? Math.max(...items.map(i => i.display_order || 0)) : 0
-      const { data, error } = await supabase
-        .from('vehicle_check_template_items')
-        .insert({
-          template_id: templateId,
-          category: formCategory.trim(),
-          item_text: formItemText.trim(),
-          display_order: maxOrder + 10,
-        })
-        .select()
-        .single()
+    setSavingId(null)
 
-      setSubmitting(false)
-
-      if (error) {
-        showMessage('Error: ' + error.message, 'error')
-        return
-      }
-
-      await logAuditClient({
-        user: currentUser,
-        action: 'CHECK_ITEM_CREATED',
-        entity: 'vehicle_check_template_item',
-        entity_id: data?.id,
-        details: { vehicle_type: activeType, category: formCategory, item_text: formItemText },
-      })
-
-      showMessage('Item added', 'success')
+    if (error) {
+      showMessage('Error: ' + error.message, 'error')
+      return
     }
 
-    handleCancelForm()
+    await logAuditClient({
+      user: currentUser,
+      action: 'CHECK_ITEM_UPDATED',
+      entity: 'vehicle_check_template_item',
+      entity_id: item.id,
+      details: { vehicle_type: activeType, category: inlineCategory, item_text: inlineText },
+    })
+
+    setEditingItemId(null)
+    setInlineCategory('')
+    setInlineText('')
+  }
+
+  const handleStartAddNew = () => {
+    setAddingNew(true)
+    setNewCategory('')
+    setNewText('')
+    setEditingItemId(null)
+  }
+
+  const handleCancelAddNew = () => {
+    setAddingNew(false)
+    setNewCategory('')
+    setNewText('')
+  }
+
+  const handleSaveNew = async () => {
+    if (!templateId) return
+    if (!newCategory.trim() || !newText.trim()) {
+      showMessage('Both category and item text are required', 'error')
+      return
+    }
+
+    const maxOrder = items.length > 0 ? Math.max(...items.map(i => i.display_order || 0)) : 0
+    const { data, error } = await supabase
+      .from('vehicle_check_template_items')
+      .insert({
+        template_id: templateId,
+        category: newCategory.trim(),
+        item_text: newText.trim(),
+        display_order: maxOrder + 10,
+      })
+      .select()
+      .single()
+
+    if (error) {
+      showMessage('Error: ' + error.message, 'error')
+      return
+    }
+
+    await logAuditClient({
+      user: currentUser,
+      action: 'CHECK_ITEM_CREATED',
+      entity: 'vehicle_check_template_item',
+      entity_id: data?.id,
+      details: { vehicle_type: activeType, category: newCategory, item_text: newText },
+    })
+
+    setAddingNew(false)
+    setNewCategory('')
+    setNewText('')
+    showMessage('Item added', 'success')
   }
 
   const handleDelete = async (item: any) => {
@@ -253,7 +279,6 @@ export default function ChecklistTemplatesPage() {
   }
 
   const handleMove = async (item: any, direction: 'up' | 'down') => {
-    // Find item in same category
     const sameCategoryItems = items
       .filter(i => i.category === item.category)
       .sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
@@ -265,7 +290,6 @@ export default function ChecklistTemplatesPage() {
 
     const otherItem = sameCategoryItems[swapIndex]
 
-    // Swap display_order values
     await supabase
       .from('vehicle_check_template_items')
       .update({ display_order: otherItem.display_order })
@@ -283,7 +307,6 @@ export default function ChecklistTemplatesPage() {
 
     if (!templateId) return
 
-    // Delete all current items
     const { error: delError } = await supabase
       .from('vehicle_check_template_items')
       .delete()
@@ -294,7 +317,6 @@ export default function ChecklistTemplatesPage() {
       return
     }
 
-    // Re-seed defaults via SQL function would be cleaner, but we'll do it client-side
     const defaults = DEFAULT_ITEMS[activeType] || []
     if (defaults.length > 0) {
       const { error: insError } = await supabase
@@ -323,10 +345,10 @@ export default function ChecklistTemplatesPage() {
     showMessage('Reset to DVSA defaults', 'success')
   }
 
-  const getTypeLabel = (type: string) => VEHICLE_TYPES.find(t => t.value === type)?.label || type
-  const getTypeIcon = (type: string) => VEHICLE_TYPES.find(t => t.value === type)?.icon || '🚗'
+  const getTypeLabel = (type: string) => ALL_VEHICLE_TYPES.find(t => t.value === type)?.label || type
+  const getTypeIcon = (type: string) => ALL_VEHICLE_TYPES.find(t => t.value === type)?.icon || '🚗'
 
-  // Group items by category
+  // Group items by category, maintaining display_order
   const grouped: Record<string, any[]> = {}
   items.forEach(item => {
     if (!grouped[item.category]) grouped[item.category] = []
@@ -336,7 +358,6 @@ export default function ChecklistTemplatesPage() {
     grouped[cat].sort((a, b) => (a.display_order || 0) - (b.display_order || 0))
   })
 
-  // Get distinct categories (sorted by first item's order)
   const categoryOrder = Object.entries(grouped)
     .map(([cat, list]) => ({ cat, firstOrder: list[0]?.display_order || 0 }))
     .sort((a, b) => a.firstOrder - b.firstOrder)
@@ -344,10 +365,32 @@ export default function ChecklistTemplatesPage() {
 
   const distinctCategories = Array.from(new Set(items.map(i => i.category))).sort()
 
+  const visibleVehicleTypes = ALL_VEHICLE_TYPES.filter(t => enabledVehicleTypes.includes(t.value))
+
   if (loading) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-100">
         <p className="text-gray-500">Loading templates...</p>
+      </main>
+    )
+  }
+
+  if (visibleVehicleTypes.length === 0) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="bg-white rounded-xl shadow p-8 max-w-md text-center">
+          <p className="text-5xl mb-3">🚛</p>
+          <p className="text-gray-700 font-medium mb-2">No vehicle types enabled</p>
+          <p className="text-sm text-gray-500 mb-4">
+            Ask your superuser to enable at least one vehicle type for this company in the company settings.
+          </p>
+          <button
+            onClick={() => router.push('/dashboard/vehicles')}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm"
+          >
+            ← Back to Vehicles
+          </button>
+        </div>
       </main>
     )
   }
@@ -382,14 +425,14 @@ export default function ChecklistTemplatesPage() {
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
           <p className="font-medium">📋 What is this?</p>
           <p className="mt-1 text-blue-700">
-            These are the items drivers will tick off when doing a walk-round check. Each vehicle type has its own checklist. You can add, edit or remove items, and reset back to DVSA defaults at any time.
+            These are the items drivers will tick off during a walk-round check. Each vehicle type has its own checklist. Click any item to edit it inline. Use the arrows to reorder.
           </p>
         </div>
 
-        {/* Vehicle type tabs */}
+        {/* Vehicle type tabs - only show enabled types */}
         <div className="bg-white rounded-xl shadow p-2">
           <div className="flex gap-1 flex-wrap">
-            {VEHICLE_TYPES.map(t => (
+            {visibleVehicleTypes.map(t => (
               <button
                 key={t.value}
                 onClick={() => setActiveType(t.value)}
@@ -422,7 +465,7 @@ export default function ChecklistTemplatesPage() {
               ↻ Reset to DVSA Defaults
             </button>
             <button
-              onClick={handleStartAdd}
+              onClick={handleStartAddNew}
               className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
             >
               + Add Item
@@ -430,69 +473,7 @@ export default function ChecklistTemplatesPage() {
           </div>
         </div>
 
-        {showAdd && (
-          <div className="bg-white rounded-xl shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">
-              {editingItem ? 'Edit Item' : 'New Checklist Item'}
-            </h3>
-            <form onSubmit={handleSubmitItem} className="space-y-4">
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Category *
-                </label>
-                <input
-                  type="text"
-                  value={formCategory}
-                  onChange={(e) => setFormCategory(e.target.value)}
-                  list="existing-categories"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
-                  placeholder="e.g. Lights, Tyres, Cab"
-                  required
-                />
-                {distinctCategories.length > 0 && (
-                  <datalist id="existing-categories">
-                    {distinctCategories.map(c => <option key={c} value={c} />)}
-                  </datalist>
-                )}
-                <p className="text-xs text-gray-500 mt-1">Pick from existing categories or type a new one</p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Item Text *
-                </label>
-                <textarea
-                  value={formItemText}
-                  onChange={(e) => setFormItemText(e.target.value)}
-                  rows={2}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
-                  placeholder="e.g. Headlights working — main beam and dipped"
-                  required
-                />
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-lg font-medium disabled:opacity-50"
-                >
-                  {submitting ? 'Saving...' : (editingItem ? 'Save Changes' : 'Add Item')}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCancelForm}
-                  className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-6 py-2.5 rounded-lg font-medium"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {items.length === 0 ? (
+        {items.length === 0 && !addingNew ? (
           <div className="bg-white rounded-xl shadow p-12 text-center">
             <div className="text-5xl mb-3">📋</div>
             <p className="text-gray-500 mb-1">No items yet</p>
@@ -505,6 +486,58 @@ export default function ChecklistTemplatesPage() {
           </div>
         ) : (
           <div className="space-y-3">
+            {/* Add new row at the top when "Add Item" is clicked */}
+            {addingNew && (
+              <div className="bg-white rounded-xl shadow overflow-hidden border-2 border-blue-400">
+                <div className="bg-blue-50 px-4 py-2 border-b border-blue-200">
+                  <p className="text-sm font-semibold text-blue-800">+ New item</p>
+                </div>
+                <div className="p-3 space-y-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Category</label>
+                    <input
+                      type="text"
+                      value={newCategory}
+                      onChange={(e) => setNewCategory(e.target.value)}
+                      list="cats-add"
+                      placeholder="e.g. Lights, Tyres"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
+                      autoFocus
+                    />
+                    {distinctCategories.length > 0 && (
+                      <datalist id="cats-add">
+                        {distinctCategories.map(c => <option key={c} value={c} />)}
+                      </datalist>
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Item text</label>
+                    <textarea
+                      value={newText}
+                      onChange={(e) => setNewText(e.target.value)}
+                      rows={2}
+                      placeholder="e.g. Headlights working — main beam and dipped"
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
+                    />
+                  </div>
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      onClick={handleCancelAddNew}
+                      className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveNew}
+                      className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {categoryOrder.map(category => {
               const list = grouped[category] || []
               return (
@@ -514,43 +547,102 @@ export default function ChecklistTemplatesPage() {
                     <p className="text-xs text-gray-500">{list.length} items</p>
                   </div>
                   <ul className="divide-y divide-gray-100">
-                    {list.map((item, idx) => (
-                      <li key={item.id} className="p-3 flex items-center gap-3 hover:bg-gray-50">
-                        <div className="flex flex-col gap-0.5 flex-shrink-0">
+                    {list.map((item, idx) => {
+                      const isEditing = editingItemId === item.id
+                      const isSaving = savingId === item.id
+
+                      if (isEditing) {
+                        return (
+                          <li key={item.id} className="p-3 bg-blue-50 border-l-4 border-blue-500 space-y-2">
+                            <div>
+                              <label className="block text-xs font-medium text-gray-600 mb-1">Category</label>
+                              <input
+                                type="text"
+                                value={inlineCategory}
+                                onChange={(e) => setInlineCategory(e.target.value)}
+                                list="cats-edit"
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 bg-white"
+                                autoFocus
+                              />
+                              {distinctCategories.length > 0 && (
+                                <datalist id="cats-edit">
+                                  {distinctCategories.map(c => <option key={c} value={c} />)}
+                                </datalist>
+                              )}
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-gray-600 mb-1">Item text</label>
+                              <textarea
+                                value={inlineText}
+                                onChange={(e) => setInlineText(e.target.value)}
+                                rows={2}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 bg-white"
+                              />
+                            </div>
+                            <div className="flex gap-2 justify-end">
+                              <button
+                                onClick={handleCancelInlineEdit}
+                                disabled={isSaving}
+                                className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded disabled:opacity-50"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={() => handleSaveInlineEdit(item)}
+                                disabled={isSaving}
+                                className="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded disabled:opacity-50"
+                              >
+                                {isSaving ? 'Saving...' : 'Save'}
+                              </button>
+                            </div>
+                          </li>
+                        )
+                      }
+
+                      return (
+                        <li key={item.id} className="p-3 flex items-center gap-3 hover:bg-gray-50 group">
+                          <div className="flex flex-col gap-0.5 flex-shrink-0">
+                            <button
+                              onClick={() => handleMove(item, 'up')}
+                              disabled={idx === 0}
+                              className="text-gray-400 hover:text-gray-700 disabled:opacity-20 text-xs leading-none"
+                              title="Move up"
+                            >
+                              ▲
+                            </button>
+                            <button
+                              onClick={() => handleMove(item, 'down')}
+                              disabled={idx === list.length - 1}
+                              className="text-gray-400 hover:text-gray-700 disabled:opacity-20 text-xs leading-none"
+                              title="Move down"
+                            >
+                              ▼
+                            </button>
+                          </div>
                           <button
-                            onClick={() => handleMove(item, 'up')}
-                            disabled={idx === 0}
-                            className="text-gray-400 hover:text-gray-700 disabled:opacity-20 text-xs leading-none"
-                            title="Move up"
+                            onClick={() => handleStartInlineEdit(item)}
+                            className="flex-1 text-left text-sm text-gray-800 hover:text-blue-600 cursor-pointer min-w-0"
+                            title="Click to edit"
                           >
-                            ▲
+                            {item.item_text}
                           </button>
-                          <button
-                            onClick={() => handleMove(item, 'down')}
-                            disabled={idx === list.length - 1}
-                            className="text-gray-400 hover:text-gray-700 disabled:opacity-20 text-xs leading-none"
-                            title="Move down"
-                          >
-                            ▼
-                          </button>
-                        </div>
-                        <p className="flex-1 text-sm text-gray-800">{item.item_text}</p>
-                        <div className="flex gap-2 flex-shrink-0">
-                          <button
-                            onClick={() => handleStartEdit(item)}
-                            className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-2 py-1 rounded"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => handleDelete(item)}
-                            className="text-xs bg-red-100 hover:bg-red-200 text-red-700 px-2 py-1 rounded"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </li>
-                    ))}
+                          <div className="flex gap-2 flex-shrink-0 opacity-60 group-hover:opacity-100 transition">
+                            <button
+                              onClick={() => handleStartInlineEdit(item)}
+                              className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-2 py-1 rounded"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleDelete(item)}
+                              className="text-xs bg-red-100 hover:bg-red-200 text-red-700 px-2 py-1 rounded"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </li>
+                      )
+                    })}
                   </ul>
                 </div>
               )
@@ -565,7 +657,6 @@ export default function ChecklistTemplatesPage() {
 
 // ─────────────────────────────────────────────────────────
 // Default DVSA items used by "Reset to defaults" button
-// (mirrors the seed SQL from Step 2)
 // ─────────────────────────────────────────────────────────
 const DEFAULT_ITEMS: Record<string, { category: string; item_text: string }[]> = {
   class_1: [
