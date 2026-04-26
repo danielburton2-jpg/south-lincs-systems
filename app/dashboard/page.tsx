@@ -85,7 +85,6 @@ export default function Dashboard() {
     const result = await res.json()
     if (result.users) setUsers(result.users)
 
-    // Get pending holiday count for the user's scope
     const holRes = await fetch('/api/get-holiday-requests', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -101,7 +100,6 @@ export default function Dashboard() {
           r.user?.job_title && titles.includes(r.user.job_title)
         )
       }
-      // Don't count own requests
       pending = pending.filter((r: any) => r.user_id !== user.id)
       setPendingHolidayCount(pending.length)
     }
@@ -113,7 +111,6 @@ export default function Dashboard() {
     fetchData()
   }, [fetchData])
 
-  // Realtime: listen for holiday request changes
   useEffect(() => {
     if (!currentUser?.company_id) return
 
@@ -127,9 +124,7 @@ export default function Dashboard() {
           table: 'holiday_requests',
           filter: `company_id=eq.${currentUser.company_id}`,
         },
-        () => {
-          fetchData()
-        }
+        () => fetchData()
       )
       .on(
         'postgres_changes',
@@ -139,9 +134,7 @@ export default function Dashboard() {
           table: 'profiles',
           filter: `id=eq.${currentUser.id}`,
         },
-        () => {
-          fetchData()
-        }
+        () => fetchData()
       )
       .subscribe()
 
@@ -221,11 +214,19 @@ export default function Dashboard() {
           <h1 className="text-2xl font-bold">{company?.name || 'Dashboard'}</h1>
           <p className="text-blue-200 text-sm">South Lincs Systems</p>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="text-right">
-            <p className="text-sm font-medium">{currentUser?.full_name}</p>
-            <p className="text-blue-200 text-xs capitalize">{currentUser?.role}</p>
-          </div>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => router.push('/dashboard/profile')}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 px-3 py-2 rounded-lg transition"
+          >
+            <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center font-semibold text-sm">
+              {currentUser?.full_name?.charAt(0)}
+            </div>
+            <div className="text-left hidden sm:block">
+              <p className="text-sm font-medium">{currentUser?.full_name}</p>
+              <p className="text-blue-200 text-xs capitalize">{currentUser?.role}</p>
+            </div>
+          </button>
           <button
             onClick={handleSignOut}
             className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm"
@@ -245,7 +246,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Stats grid */}
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-white rounded-xl shadow p-5 text-center">
             <p className="text-3xl font-bold text-blue-600">{visibleUsers.length}</p>
@@ -265,12 +265,10 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Action Tiles */}
         <div className="bg-white rounded-xl shadow p-6">
           <h2 className="text-xl font-semibold text-gray-800 mb-4">Quick Actions</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
 
-            {/* Manage Users */}
             {isAdmin && (
               <button
                 onClick={() => router.push('/dashboard/users')}
@@ -293,7 +291,6 @@ export default function Dashboard() {
               </button>
             )}
 
-            {/* Holiday Approvals */}
             {showHolidayApprovals && (
               <button
                 onClick={() => router.push('/dashboard/holidays')}
@@ -310,7 +307,6 @@ export default function Dashboard() {
               </button>
             )}
 
-            {/* My Holidays */}
             {showMyHolidays && (
               <button
                 onClick={() => router.push('/dashboard/my-holidays')}
@@ -324,10 +320,18 @@ export default function Dashboard() {
               </button>
             )}
 
+            <button
+              onClick={() => router.push('/dashboard/profile')}
+              className="bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl p-4 text-left transition"
+            >
+              <div className="text-3xl mb-2">👤</div>
+              <p className="font-semibold text-gray-700">My Profile</p>
+              <p className="text-xs text-gray-600 mt-1">Change password and settings</p>
+            </button>
+
           </div>
         </div>
 
-        {/* Team list preview */}
         <div className="bg-white rounded-xl shadow p-6">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold text-gray-800">
