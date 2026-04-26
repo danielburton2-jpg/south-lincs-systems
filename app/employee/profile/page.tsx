@@ -9,7 +9,6 @@ const supabase = createClient()
 export default function EmployeeProfile() {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
-  const [userFeatures, setUserFeatures] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const router = useRouter()
 
@@ -38,17 +37,6 @@ export default function EmployeeProfile() {
       }
     }
 
-    const { data: featuresData } = await supabase
-      .from('user_features')
-      .select(`
-        is_enabled,
-        feature_id,
-        features (id, name)
-      `)
-      .eq('user_id', user.id)
-      .eq('is_enabled', true)
-
-    setUserFeatures(featuresData || [])
     setLoading(false)
   }, [router])
 
@@ -73,10 +61,6 @@ export default function EmployeeProfile() {
     router.push('/login')
   }
 
-  const hasFeature = (name: string) => {
-    return userFeatures.some((uf: any) => uf.features?.name === name)
-  }
-
   if (loading) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -84,31 +68,6 @@ export default function EmployeeProfile() {
       </main>
     )
   }
-
-  // Build dynamic bottom nav
-  const bottomNavItems = [
-    { icon: '🏠', label: 'Home', path: '/employee', active: false },
-  ]
-
-  if (hasFeature('Holidays')) {
-    bottomNavItems.push({ icon: '🏖️', label: 'Holidays', path: '/employee/holidays', active: false })
-  }
-  if (hasFeature('Schedules')) {
-    bottomNavItems.push({ icon: '📅', label: 'Schedule', path: '/employee/schedules', active: false })
-  }
-  if (hasFeature('Timesheets')) {
-    bottomNavItems.push({ icon: '⏱️', label: 'Hours', path: '/employee/timesheets', active: false })
-  }
-  if (hasFeature('Tasks')) {
-    bottomNavItems.push({ icon: '✅', label: 'Tasks', path: '/employee/tasks', active: false })
-  }
-  if (hasFeature('Messaging')) {
-    bottomNavItems.push({ icon: '💬', label: 'Messages', path: '/employee/messaging', active: false })
-  }
-
-  bottomNavItems.push({ icon: '👤', label: 'Profile', path: '/employee/profile', active: true })
-
-  const visibleNavItems = bottomNavItems.slice(0, 5)
 
   return (
     <main className="min-h-screen bg-gray-50 pb-24">
@@ -155,21 +114,23 @@ export default function EmployeeProfile() {
         </button>
       </div>
 
-      {/* Bottom Navigation */}
+      {/* Bottom Navigation - Just Home + Profile */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
         <div className="flex justify-around items-center h-16 max-w-md mx-auto">
-          {visibleNavItems.map((item) => (
-            <button
-              key={item.path}
-              onClick={() => router.push(item.path)}
-              className={`flex flex-col items-center gap-0.5 ${
-                item.active ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              <span className="text-xl">{item.icon}</span>
-              <span className="text-xs font-medium">{item.label}</span>
-            </button>
-          ))}
+          <button
+            onClick={() => router.push('/employee')}
+            className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-600"
+          >
+            <span className="text-xl">🏠</span>
+            <span className="text-xs font-medium">Home</span>
+          </button>
+          <button
+            onClick={() => router.push('/employee/profile')}
+            className="flex flex-col items-center gap-0.5 text-blue-600"
+          >
+            <span className="text-xl">👤</span>
+            <span className="text-xs font-medium">Profile</span>
+          </button>
         </div>
       </nav>
     </main>

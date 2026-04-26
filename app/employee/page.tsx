@@ -104,61 +104,8 @@ export default function EmployeeHome() {
     )
   }
 
-  // Format holiday entitlement
   const holidayBalance = currentUser?.holiday_entitlement
   const showHolidayBalance = hasFeature('Holidays') && holidayBalance !== null && holidayBalance !== undefined
-
-  const overviewCards: { icon: string; value: string; label: string }[] = []
-
-  if (hasFeature('Holidays')) {
-    overviewCards.push({
-      icon: '🏖️',
-      value: holidayBalance !== null && holidayBalance !== undefined ? holidayBalance.toString() : '—',
-      label: 'Days holiday left'
-    })
-  }
-  if (hasFeature('Schedules')) {
-    overviewCards.push({ icon: '📅', value: '—', label: 'Shifts this week' })
-  }
-  if (hasFeature('Timesheets')) {
-    overviewCards.push({ icon: '⏱️', value: '—', label: 'Hours this week' })
-  }
-  if (hasFeature('Tasks')) {
-    overviewCards.push({ icon: '✅', value: '—', label: 'Open tasks' })
-  }
-  if (hasFeature('Messaging')) {
-    overviewCards.push({ icon: '💬', value: '—', label: 'New messages' })
-  }
-  if (hasFeature('Documents')) {
-    overviewCards.push({ icon: '📄', value: '—', label: 'New documents' })
-  }
-  if (hasFeature('Reports')) {
-    overviewCards.push({ icon: '📊', value: '—', label: 'Available reports' })
-  }
-
-  const bottomNavItems: any[] = [
-    { icon: '🏠', label: 'Home', path: '/employee', active: true },
-  ]
-
-  if (hasFeature('Holidays')) {
-    bottomNavItems.push({ icon: '🏖️', label: 'Holidays', path: '/employee/holidays', active: false })
-  }
-  if (hasFeature('Schedules')) {
-    bottomNavItems.push({ icon: '📅', label: 'Schedule', path: '/employee/schedules', active: false })
-  }
-  if (hasFeature('Timesheets')) {
-    bottomNavItems.push({ icon: '⏱️', label: 'Hours', path: '/employee/timesheets', active: false })
-  }
-  if (hasFeature('Tasks')) {
-    bottomNavItems.push({ icon: '✅', label: 'Tasks', path: '/employee/tasks', active: false })
-  }
-  if (hasFeature('Messaging')) {
-    bottomNavItems.push({ icon: '💬', label: 'Messages', path: '/employee/messaging', active: false })
-  }
-
-  bottomNavItems.push({ icon: '👤', label: 'Profile', path: '/employee/profile', active: false })
-
-  const visibleNavItems = bottomNavItems.slice(0, 5)
 
   return (
     <main className="min-h-screen bg-gray-50 pb-24">
@@ -181,7 +128,7 @@ export default function EmployeeHome() {
 
       <div className="px-6 pt-6 space-y-6">
 
-        {/* Holiday Balance Highlight Card (if user has Holidays) */}
+        {/* Holiday Balance Highlight Card */}
         {showHolidayBalance && (
           <div className="bg-gradient-to-br from-yellow-400 to-orange-500 rounded-2xl shadow-lg p-5 text-white">
             <div className="flex items-center justify-between">
@@ -197,23 +144,6 @@ export default function EmployeeHome() {
                 )}
               </div>
               <div className="text-6xl opacity-80">🏖️</div>
-            </div>
-          </div>
-        )}
-
-        {overviewCards.length > 0 && (
-          <div>
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-              Quick Overview
-            </h2>
-            <div className="grid grid-cols-2 gap-3">
-              {overviewCards.map((card, i) => (
-                <div key={i} className="bg-white rounded-2xl shadow-sm p-4 border border-gray-100">
-                  <div className="text-3xl mb-1">{card.icon}</div>
-                  <p className="text-2xl font-bold text-gray-800">{card.value}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">{card.label}</p>
-                </div>
-              ))}
             </div>
           </div>
         )}
@@ -249,21 +179,23 @@ export default function EmployeeHome() {
 
       </div>
 
-      {/* Bottom Navigation */}
+      {/* Bottom Navigation - Just Home + Profile */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
         <div className="flex justify-around items-center h-16 max-w-md mx-auto">
-          {visibleNavItems.map((item) => (
-            <button
-              key={item.path}
-              onClick={() => router.push(item.path)}
-              className={`flex flex-col items-center gap-0.5 ${
-                item.active ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              <span className="text-xl">{item.icon}</span>
-              <span className="text-xs font-medium">{item.label}</span>
-            </button>
-          ))}
+          <button
+            onClick={() => router.push('/employee')}
+            className="flex flex-col items-center gap-0.5 text-blue-600"
+          >
+            <span className="text-xl">🏠</span>
+            <span className="text-xs font-medium">Home</span>
+          </button>
+          <button
+            onClick={() => router.push('/employee/profile')}
+            className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-600"
+          >
+            <span className="text-xl">👤</span>
+            <span className="text-xs font-medium">Profile</span>
+          </button>
         </div>
       </nav>
     </main>

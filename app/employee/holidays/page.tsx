@@ -24,7 +24,6 @@ export default function EmployeeHolidays() {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
   const [requests, setRequests] = useState<any[]>([])
-  const [userFeatures, setUserFeatures] = useState<any[]>([])
   const [bankHolidays, setBankHolidays] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [showRequestForm, setShowRequestForm] = useState(false)
@@ -78,14 +77,6 @@ export default function EmployeeHolidays() {
         .single()
       setCompany(companyData)
     }
-
-    const { data: featuresData } = await supabase
-      .from('user_features')
-      .select(`is_enabled, feature_id, features (id, name)`)
-      .eq('user_id', user.id)
-      .eq('is_enabled', true)
-
-    setUserFeatures(featuresData || [])
 
     const res = await fetch('/api/get-holiday-requests', {
       method: 'POST',
@@ -232,10 +223,6 @@ export default function EmployeeHolidays() {
     }
   }
 
-  const hasFeature = (name: string) => {
-    return userFeatures.some((uf: any) => uf.features?.name === name)
-  }
-
   const formatDate = (date: string) => {
     return new Date(date).toLocaleDateString('en-GB', {
       day: '2-digit',
@@ -281,27 +268,6 @@ export default function EmployeeHolidays() {
     if (type === 'keep_day_off') return 'Keep Day Off'
     return type
   }
-
-  const bottomNavItems: any[] = [
-    { icon: '🏠', label: 'Home', path: '/employee', active: false },
-  ]
-  if (hasFeature('Holidays')) {
-    bottomNavItems.push({ icon: '🏖️', label: 'Holidays', path: '/employee/holidays', active: true })
-  }
-  if (hasFeature('Schedules')) {
-    bottomNavItems.push({ icon: '📅', label: 'Schedule', path: '/employee/schedules', active: false })
-  }
-  if (hasFeature('Timesheets')) {
-    bottomNavItems.push({ icon: '⏱️', label: 'Hours', path: '/employee/timesheets', active: false })
-  }
-  if (hasFeature('Tasks')) {
-    bottomNavItems.push({ icon: '✅', label: 'Tasks', path: '/employee/tasks', active: false })
-  }
-  if (hasFeature('Messaging')) {
-    bottomNavItems.push({ icon: '💬', label: 'Messages', path: '/employee/messaging', active: false })
-  }
-  bottomNavItems.push({ icon: '👤', label: 'Profile', path: '/employee/profile', active: false })
-  const visibleNavItems = bottomNavItems.slice(0, 5)
 
   if (loading) {
     return (
@@ -361,49 +327,18 @@ export default function EmployeeHolidays() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Type</label>
-                <div className="grid grid-cols-1 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setRequestType('holiday')}
-                    className={`p-3 rounded-xl border-2 text-left transition ${
-                      requestType === 'holiday'
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-gray-200'
-                    }`}
-                  >
-                    <p className="font-medium text-gray-800">🏖️ Holiday</p>
-                    <p className="text-xs text-gray-500">Take time off (deducts from balance)</p>
-                  </button>
-
+                <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                <select
+                  value={requestType}
+                  onChange={(e) => setRequestType(e.target.value as any)}
+                  className="w-full border border-gray-300 rounded-xl px-3 py-3 text-gray-900 bg-white"
+                >
+                  <option value="holiday">🏖️ Holiday — Take time off (deducts from balance)</option>
                   {company?.allow_early_finish && (
-                    <button
-                      type="button"
-                      onClick={() => setRequestType('early_finish')}
-                      className={`p-3 rounded-xl border-2 text-left transition ${
-                        requestType === 'early_finish'
-                          ? 'border-blue-500 bg-blue-50'
-                          : 'border-gray-200'
-                      }`}
-                    >
-                      <p className="font-medium text-gray-800">🕓 Early Finish</p>
-                      <p className="text-xs text-gray-500">Leave before normal end time</p>
-                    </button>
+                    <option value="early_finish">🕓 Early Finish — Leave before normal end time</option>
                   )}
-
-                  <button
-                    type="button"
-                    onClick={() => setRequestType('keep_day_off')}
-                    className={`p-3 rounded-xl border-2 text-left transition ${
-                      requestType === 'keep_day_off'
-                        ? 'border-blue-500 bg-blue-50'
-                        : 'border-gray-200'
-                    }`}
-                  >
-                    <p className="font-medium text-gray-800">🚫 Keep Day Off</p>
-                    <p className="text-xs text-gray-500">Refuse a shift on your normal day off</p>
-                  </button>
-                </div>
+                  <option value="keep_day_off">🚫 Keep Day Off — Refuse a shift on your normal day off</option>
+                </select>
               </div>
 
               {requestType === 'holiday' ? (
@@ -514,15 +449,15 @@ export default function EmployeeHolidays() {
                   'bg-blue-50 border-blue-200'
                 }`}>
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-600">Working days requested</span>
-                    <span className="font-bold">{daysRequested}</span>
+                    <span className="text-gray-700">Working days requested</span>
+                    <span className="font-bold text-gray-900">{daysRequested}</span>
                   </div>
                   <div className="flex justify-between text-sm mt-1">
-                    <span className="text-gray-600">Current balance</span>
-                    <span className="font-bold">{balance}</span>
+                    <span className="text-gray-700">Current balance</span>
+                    <span className="font-bold text-gray-900">{balance}</span>
                   </div>
                   <div className="flex justify-between text-sm mt-1 pt-1 border-t border-blue-200">
-                    <span className="text-gray-600">Balance after approval</span>
+                    <span className="text-gray-700">Balance after approval</span>
                     <span className={`font-bold ${balanceAfter < 0 ? 'text-red-600' : 'text-green-600'}`}>
                       {balanceAfter}
                     </span>
@@ -688,20 +623,23 @@ export default function EmployeeHolidays() {
 
       </div>
 
+      {/* Bottom Navigation - Just Home + Profile */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
         <div className="flex justify-around items-center h-16 max-w-md mx-auto">
-          {visibleNavItems.map((item) => (
-            <button
-              key={item.path}
-              onClick={() => router.push(item.path)}
-              className={`flex flex-col items-center gap-0.5 ${
-                item.active ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'
-              }`}
-            >
-              <span className="text-xl">{item.icon}</span>
-              <span className="text-xs font-medium">{item.label}</span>
-            </button>
-          ))}
+          <button
+            onClick={() => router.push('/employee')}
+            className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-600"
+          >
+            <span className="text-xl">🏠</span>
+            <span className="text-xs font-medium">Home</span>
+          </button>
+          <button
+            onClick={() => router.push('/employee/profile')}
+            className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-600"
+          >
+            <span className="text-xl">👤</span>
+            <span className="text-xs font-medium">Profile</span>
+          </button>
         </div>
       </nav>
     </main>
