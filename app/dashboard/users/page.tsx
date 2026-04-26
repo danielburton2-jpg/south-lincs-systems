@@ -774,7 +774,7 @@ export default function DashboardUsers() {
                         </span>
                         {user.employee_number && (
                           <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
-                            #{user.employee_number}
+                            {user.employee_number}
                           </span>
                         )}
                         {user.job_title && (
