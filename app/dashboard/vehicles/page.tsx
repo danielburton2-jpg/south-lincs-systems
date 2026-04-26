@@ -8,7 +8,7 @@ import { logAuditClient } from '@/lib/auditClient'
 
 const supabase = createClient()
 
-const VEHICLE_TYPES = [
+const ALL_VEHICLE_TYPES = [
   { value: 'class_1', label: 'Class 1 (HGV Articulated)', icon: '🚛' },
   { value: 'class_2', label: 'Class 2 (HGV Rigid)', icon: '🚚' },
   { value: 'bus', label: 'Bus', icon: '🚌' },
@@ -19,6 +19,7 @@ const VEHICLE_TYPES = [
 export default function VehiclesPage() {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
+  const [enabledTypes, setEnabledTypes] = useState<string[]>([])
   const [vehicles, setVehicles] = useState<any[]>([])
   const [openDefectsByVehicle, setOpenDefectsByVehicle] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
@@ -35,7 +36,7 @@ export default function VehiclesPage() {
   // Form state
   const [registration, setRegistration] = useState('')
   const [fleetNumber, setFleetNumber] = useState('')
-  const [vehicleType, setVehicleType] = useState<string>('class_2')
+  const [vehicleType, setVehicleType] = useState<string>('')
   const [name, setName] = useState('')
   const [active, setActive] = useState(true)
   const [notes, setNotes] = useState('')
@@ -111,6 +112,15 @@ export default function VehiclesPage() {
       return
     }
 
+    // Filter to types the company actually uses
+    const types: string[] = companyData?.vehicle_types && companyData.vehicle_types.length > 0
+      ? companyData.vehicle_types
+      : ['class_1', 'class_2', 'bus', 'coach', 'minibus']
+    setEnabledTypes(types)
+
+    // Set default form vehicle type to first enabled
+    setVehicleType(types[0] || 'class_2')
+
     await loadAll(profile.company_id)
     setLoading(false)
   }, [router, loadAll])
@@ -132,10 +142,12 @@ export default function VehiclesPage() {
     return () => { supabase.removeChannel(channel) }
   }, [currentUser?.company_id, loadAll])
 
+  const visibleVehicleTypes = ALL_VEHICLE_TYPES.filter(t => enabledTypes.includes(t.value))
+
   const resetForm = () => {
     setRegistration('')
     setFleetNumber('')
-    setVehicleType('class_2')
+    setVehicleType(enabledTypes[0] || 'class_2')
     setName('')
     setActive(true)
     setNotes('')
@@ -158,6 +170,11 @@ export default function VehiclesPage() {
 
     if (!registration.trim()) {
       showMessage('Registration is required', 'error')
+      return
+    }
+
+    if (!enabledTypes.includes(vehicleType)) {
+      showMessage('That vehicle type is not enabled for your company', 'error')
       return
     }
 
@@ -252,8 +269,8 @@ export default function VehiclesPage() {
     showMessage('Vehicle deleted', 'success')
   }
 
-  const getTypeIcon = (type: string) => VEHICLE_TYPES.find(t => t.value === type)?.icon || '🚗'
-  const getTypeLabel = (type: string) => VEHICLE_TYPES.find(t => t.value === type)?.label || type
+  const getTypeIcon = (type: string) => ALL_VEHICLE_TYPES.find(t => t.value === type)?.icon || '🚗'
+  const getTypeLabel = (type: string) => ALL_VEHICLE_TYPES.find(t => t.value === type)?.label || type
 
   const filteredVehicles = vehicles
     .filter(v => showInactive ? true : v.active)
@@ -270,6 +287,26 @@ export default function VehiclesPage() {
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-100">
         <p className="text-gray-500">Loading vehicles...</p>
+      </main>
+    )
+  }
+
+  if (visibleVehicleTypes.length === 0) {
+    return (
+      <main className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="bg-white rounded-xl shadow p-8 max-w-md text-center">
+          <p className="text-5xl mb-3">🚛</p>
+          <p className="text-gray-700 font-medium mb-2">No vehicle types enabled</p>
+          <p className="text-sm text-gray-500 mb-4">
+            Ask your superuser to enable at least one vehicle type for this company in the company settings.
+          </p>
+          <button
+            onClick={() => router.push('/dashboard')}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm"
+          >
+            ← Back to Dashboard
+          </button>
+        </div>
       </main>
     )
   }
@@ -366,7 +403,7 @@ export default function VehiclesPage() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Vehicle Type *</label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                  {VEHICLE_TYPES.map(t => (
+                  {visibleVehicleTypes.map(t => (
                     <button
                       key={t.value}
                       type="button"
@@ -458,7 +495,7 @@ export default function VehiclesPage() {
             className="border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 bg-white"
           >
             <option value="all">All types</option>
-            {VEHICLE_TYPES.map(t => (
+            {visibleVehicleTypes.map(t => (
               <option key={t.value} value={t.value}>{t.label}</option>
             ))}
           </select>
