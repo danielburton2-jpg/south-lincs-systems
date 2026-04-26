@@ -4,38 +4,63 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
-import { logAuditClient } from '@/lib/auditClient'
 
 const supabase = createClient()
 
-const ROLE_BADGE: Record<string, { label: string; class: string }> = {
-  admin: { label: 'Admin', class: 'bg-purple-100 text-purple-700' },
-  manager: { label: 'Manager', class: 'bg-blue-100 text-blue-700' },
-  user: { label: 'User', class: 'bg-gray-100 text-gray-700' },
-  superuser: { label: 'Superuser', class: 'bg-red-100 text-red-700' },
+const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+const DAY_LABELS: Record<string, string> = {
+  sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat'
 }
 
-export default function UserOrderPage() {
-  const router = useRouter()
+const DEFAULT_WORKING_DAYS = {
+  sun: false, mon: true, tue: true, wed: true, thu: true, fri: true, sat: false
+}
+
+export default function DashboardUsers() {
   const [currentUser, setCurrentUser] = useState<any>(null)
-  const [company, setCompany] = useState<any>(null)
   const [users, setUsers] = useState<any[]>([])
+  const [features, setFeatures] = useState<any[]>([])
+  const [companyFeatures, setCompanyFeatures] = useState<any[]>([])
+  const [company, setCompany] = useState<any>(null)
+  const [managerTitles, setManagerTitles] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [hasChanges, setHasChanges] = useState(false)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error'>('success')
-  const [draggedIdx, setDraggedIdx] = useState<number | null>(null)
 
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [editingUser, setEditingUser] = useState<any>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  // Form state
+  const [fullName, setFullName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [role, setRole] = useState('user')
+  const [jobTitle, setJobTitle] = useState('')
+  const [employmentStartDate, setEmploymentStartDate] = useState('')
+  const [holidayEntitlement, setHolidayEntitlement] = useState('')
+  const [workingDays, setWorkingDays] = useState<any>(DEFAULT_WORKING_DAYS)
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>([])
+  const [selectedManagerTitles, setSelectedManagerTitles] = useState<string[]>([])
+
+  // Change password modal state
+  const [changePasswordUser, setChangePasswordUser] = useState<any>(null)
+  const [newAdminPassword, setNewAdminPassword] = useState('')
+  const [confirmAdminPassword, setConfirmAdminPassword] = useState('')
+  const [submittingPassword, setSubmittingPassword] = useState(false)
+
+  const router = useRouter()
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
   const showMessage = (msg: string, type: 'success' | 'error') => {
     setMessage(msg)
     setMessageType(type)
-    if (type === 'success') setTimeout(() => setMessage(''), 4000)
+    setTimeout(() => setMessage(''), 4000)
   }
 
-  const loadData = useCallback(async () => {
+  const fetchData = useCallback(async () => {
+    setLoading(true)
+
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       router.push('/login')
@@ -43,132 +68,303 @@ export default function UserOrderPage() {
     }
 
     const { data: profile } = await supabase
-      .from('profiles').select('*').eq('id', user.id).single()
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single()
+
     if (!profile) {
       router.push('/login')
       return
     }
+
     setCurrentUser(profile)
 
-    if (profile.role !== 'admin') {
-      router.push('/dashboard')
-      return
+    if (profile.company_id) {
+      const { data: companyData } = await supabase
+        .from('companies')
+        .select(`*, company_features(is_enabled, feature_id, features(id, name))`)
+        .eq('id', profile.company_id)
+        .single()
+      setCompany(companyData)
+
+      const enabled = companyData?.company_features?.filter((cf: any) => cf.is_enabled) || []
+      setCompanyFeatures(enabled)
     }
 
-    const { data: companyData } = await supabase
-      .from('companies').select('*').eq('id', profile.company_id).single()
-    setCompany(companyData)
+    if (profile.role === 'manager') {
+      const { data: titles } = await supabase
+        .from('manager_job_titles')
+        .select('job_title')
+        .eq('manager_id', user.id)
+      setManagerTitles(titles?.map((t: any) => t.job_title) || [])
+    }
 
-    const { data: userList } = await supabase
-      .from('profiles')
-      .select('id, full_name, email, role, job_title, display_order, is_frozen, is_deleted')
-      .eq('company_id', profile.company_id)
-      .eq('is_deleted', false)
-      .order('display_order', { ascending: true, nullsFirst: false })
-      .order('full_name', { ascending: true })
+    const featuresRes = await fetch('/api/get-features')
+    const featuresResult = await featuresRes.json()
+    if (featuresResult.features) setFeatures(featuresResult.features)
 
-    setUsers(userList || [])
+    const usersRes = await fetch('/api/get-company-users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ company_id: profile.company_id }),
+    })
+    const usersResult = await usersRes.json()
+    if (usersResult.users) setUsers(usersResult.users)
+
     setLoading(false)
   }, [router])
 
   useEffect(() => {
-    loadData()
-  }, [loadData])
+    fetchData()
+  }, [fetchData])
 
-  // Drag handlers
-  const onDragStart = (idx: number) => () => {
-    setDraggedIdx(idx)
+  // Realtime
+  useEffect(() => {
+    if (!currentUser?.company_id) return
+
+    const channel = supabase
+      .channel('dashboard-users-page')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'profiles',
+          filter: `company_id=eq.${currentUser.company_id}`,
+        },
+        () => fetchData()
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [currentUser?.company_id, fetchData])
+
+  const isAdmin = currentUser?.role === 'admin'
+  const isManager = currentUser?.role === 'manager'
+
+  const visibleUsers = isAdmin
+    ? users.filter(u => !u.is_deleted)
+    : isManager
+    ? users.filter(u => !u.is_deleted && u.job_title && managerTitles.includes(u.job_title))
+    : []
+
+  const allJobTitles = Array.from(new Set(
+    users.filter(u => u.job_title && !u.is_deleted).map(u => u.job_title)
+  )).sort()
+
+  const resetForm = () => {
+    setFullName('')
+    setEmail('')
+    setPassword('')
+    setRole('user')
+    setJobTitle('')
+    setEmploymentStartDate('')
+    setHolidayEntitlement('')
+    setWorkingDays(DEFAULT_WORKING_DAYS)
+    setSelectedFeatures([])
+    setSelectedManagerTitles([])
   }
 
-  const onDragOver = (idx: number) => (e: React.DragEvent) => {
-    e.preventDefault()
-    if (draggedIdx === null || draggedIdx === idx) return
-    setUsers(prev => {
-      const next = [...prev]
-      const [moved] = next.splice(draggedIdx, 1)
-      next.splice(idx, 0, moved)
-      setDraggedIdx(idx)
-      setHasChanges(true)
-      return next
-    })
-  }
-
-  const onDragEnd = () => {
-    setDraggedIdx(null)
-  }
-
-  // Mobile: up/down buttons (drag is fiddly on touch)
-  const moveUp = (idx: number) => {
-    if (idx === 0) return
-    setUsers(prev => {
-      const next = [...prev]
-      ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
-      return next
-    })
-    setHasChanges(true)
-  }
-
-  const moveDown = (idx: number) => {
-    if (idx === users.length - 1) return
-    setUsers(prev => {
-      const next = [...prev]
-      ;[next[idx], next[idx + 1]] = [next[idx + 1], next[idx]]
-      return next
-    })
-    setHasChanges(true)
-  }
-
-  const sortAlphabetically = () => {
-    setUsers(prev => [...prev].sort((a, b) =>
-      (a.full_name || '').localeCompare(b.full_name || '')
-    ))
-    setHasChanges(true)
-  }
-
-  const sortByRole = () => {
-    const roleRank: Record<string, number> = { admin: 0, manager: 1, user: 2, superuser: -1 }
-    setUsers(prev => [...prev].sort((a, b) => {
-      const ra = roleRank[a.role] ?? 99
-      const rb = roleRank[b.role] ?? 99
-      if (ra !== rb) return ra - rb
-      return (a.full_name || '').localeCompare(b.full_name || '')
-    }))
-    setHasChanges(true)
-  }
-
-  const handleSave = async () => {
-    setSaving(true)
-
-    // Update each user's display_order to match the current array order
-    const updates = users.map((u, idx) =>
-      supabase
-        .from('profiles')
-        .update({ display_order: idx + 1 })
-        .eq('id', u.id)
+  const handleStartEdit = (user: any) => {
+    setEditingUser(user)
+    setFullName(user.full_name || '')
+    setEmail(user.email || '')
+    setRole(user.role || 'user')
+    setJobTitle(user.job_title || '')
+    setEmploymentStartDate(user.employment_start_date || '')
+    setHolidayEntitlement(user.holiday_entitlement?.toString() || '')
+    setWorkingDays(user.working_days || DEFAULT_WORKING_DAYS)
+    setSelectedFeatures(
+      user.user_features?.filter((uf: any) => uf.is_enabled).map((uf: any) => uf.feature_id) || []
     )
+    setShowAddForm(true)
+  }
 
-    const results = await Promise.all(updates)
-    const errors = results.filter(r => r.error)
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSubmitting(true)
 
-    setSaving(false)
+    const res = await fetch('/api/create-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        full_name: fullName,
+        email,
+        password,
+        role,
+        company_id: currentUser.company_id,
+        job_title: jobTitle,
+        employment_start_date: employmentStartDate || null,
+        holiday_entitlement: holidayEntitlement ? parseFloat(holidayEntitlement) : null,
+        working_days: workingDays,
+        feature_ids: selectedFeatures,
+        manager_job_titles: role === 'manager' ? selectedManagerTitles : [],
+        actor_id: currentUser.id,
+        actor_email: currentUser.email,
+        actor_role: currentUser.role,
+      }),
+    })
 
-    if (errors.length > 0) {
-      showMessage(`${errors.length} update(s) failed: ${errors[0].error?.message}`, 'error')
+    const result = await res.json()
+    setSubmitting(false)
+
+    if (!res.ok) {
+      showMessage('Error: ' + result.error, 'error')
       return
     }
 
-    await logAuditClient({
-      user: currentUser,
-      action: 'USER_ORDER_UPDATED',
-      entity: 'profiles',
-      details: {
-        company_id: currentUser.company_id,
-        new_order: users.map((u, i) => ({ position: i + 1, full_name: u.full_name, id: u.id })),
-      },
+    showMessage('User created!', 'success')
+    setShowAddForm(false)
+    resetForm()
+  }
+
+  const handleUpdate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSubmitting(true)
+
+    const res = await fetch('/api/update-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: editingUser.id,
+        full_name: fullName,
+        role,
+        job_title: jobTitle,
+        employment_start_date: employmentStartDate || null,
+        holiday_entitlement: holidayEntitlement ? parseFloat(holidayEntitlement) : null,
+        working_days: workingDays,
+        feature_ids: selectedFeatures,
+        manager_job_titles: role === 'manager' ? selectedManagerTitles : [],
+        actor_id: currentUser.id,
+        actor_email: currentUser.email,
+        actor_role: currentUser.role,
+      }),
     })
 
-    setHasChanges(false)
-    showMessage('Order saved', 'success')
+    const result = await res.json()
+    setSubmitting(false)
+
+    if (!res.ok) {
+      showMessage('Error: ' + result.error, 'error')
+      return
+    }
+
+    showMessage('User updated!', 'success')
+    setEditingUser(null)
+    setShowAddForm(false)
+    resetForm()
+  }
+
+  const handleToggleFreeze = async (user: any) => {
+    const res = await fetch('/api/update-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: user.id,
+        toggle_freeze: !user.is_frozen,
+        actor_id: currentUser.id,
+        actor_email: currentUser.email,
+        actor_role: currentUser.role,
+      }),
+    })
+
+    if (!res.ok) {
+      showMessage('Error toggling freeze', 'error')
+      return
+    }
+    showMessage(user.is_frozen ? 'User unfrozen' : 'User frozen', 'success')
+  }
+
+  const handleDelete = async (user: any) => {
+    if (!confirm(`Are you sure you want to delete ${user.full_name}? This cannot be undone.`)) return
+
+    const res = await fetch('/api/update-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: user.id,
+        delete: true,
+        actor_id: currentUser.id,
+        actor_email: currentUser.email,
+        actor_role: currentUser.role,
+      }),
+    })
+
+    if (!res.ok) {
+      showMessage('Error deleting user', 'error')
+      return
+    }
+    showMessage('User deleted', 'success')
+  }
+
+  const handleChangeUserPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (newAdminPassword.length < 6) {
+      showMessage('Password must be at least 6 characters', 'error')
+      return
+    }
+
+    if (newAdminPassword !== confirmAdminPassword) {
+      showMessage('Passwords do not match', 'error')
+      return
+    }
+
+    setSubmittingPassword(true)
+
+    const res = await fetch('/api/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'admin_change',
+        target_user_id: changePasswordUser.id,
+        new_password: newAdminPassword,
+        actor_id: currentUser.id,
+        actor_email: currentUser.email,
+        actor_role: currentUser.role,
+      }),
+    })
+
+    const result = await res.json()
+    setSubmittingPassword(false)
+
+    if (!res.ok) {
+      showMessage('Error: ' + (result.error || 'Failed to change password'), 'error')
+      return
+    }
+
+    showMessage(`Password changed for ${changePasswordUser.full_name}`, 'success')
+    setChangePasswordUser(null)
+    setNewAdminPassword('')
+    setConfirmAdminPassword('')
+  }
+
+  const toggleWorkingDay = (day: string) => {
+    setWorkingDays({ ...workingDays, [day]: !workingDays[day] })
+  }
+
+  const toggleFeature = (featureId: string) => {
+    setSelectedFeatures(prev =>
+      prev.includes(featureId) ? prev.filter(f => f !== featureId) : [...prev, featureId]
+    )
+  }
+
+  const toggleManagerTitle = (title: string) => {
+    setSelectedManagerTitles(prev =>
+      prev.includes(title) ? prev.filter(t => t !== title) : [...prev, title]
+    )
+  }
+
+  const getRoleBadgeColor = (r: string) => {
+    switch (r) {
+      case 'admin': return 'bg-purple-100 text-purple-700'
+      case 'manager': return 'bg-blue-100 text-blue-700'
+      case 'user': return 'bg-gray-100 text-gray-700'
+      default: return 'bg-gray-100 text-gray-700'
+    }
   }
 
   if (loading) {
@@ -179,6 +375,9 @@ export default function UserOrderPage() {
     )
   }
 
+  const showHolidayFields = companyFeatures.some((cf: any) => cf.features?.name === 'Holidays')
+    && selectedFeatures.includes(features.find(f => f.name === 'Holidays')?.id)
+
   return (
     <main className="min-h-screen bg-gray-100">
       <IdleWarningModal show={showWarning} secondsLeft={secondsLeft} onStay={stayLoggedIn} />
@@ -186,17 +385,17 @@ export default function UserOrderPage() {
       <div className="bg-blue-700 text-white px-6 py-4 flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold">{company?.name}</h1>
-          <p className="text-blue-200 text-sm">User Order</p>
+          <p className="text-blue-200 text-sm">{isAdmin ? 'Manage Users' : 'Your Team'}</p>
         </div>
         <button
-          onClick={() => router.push('/dashboard/users')}
+          onClick={() => router.push('/dashboard')}
           className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm"
         >
-          ← Back to Users
+          ← Back
         </button>
       </div>
 
-      <div className="max-w-3xl mx-auto p-6 space-y-4">
+      <div className="max-w-6xl mx-auto p-6 space-y-6">
 
         {message && (
           <div className={`p-4 rounded-lg text-sm font-medium ${
@@ -206,118 +405,373 @@ export default function UserOrderPage() {
           </div>
         )}
 
-        <div className="bg-white rounded-xl shadow p-6 space-y-1">
-          <h2 className="text-xl font-semibold text-gray-800">Set User Display Order</h2>
-          <p className="text-sm text-gray-500">
-            This is the order users will appear on the schedule calendar. Drag to reorder, or use the arrow buttons.
-          </p>
-        </div>
-
-        <div className="bg-white rounded-xl shadow p-4 flex flex-wrap gap-2 items-center">
-          <button
-            onClick={sortAlphabetically}
-            className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-medium"
-          >
-            Sort A–Z
-          </button>
-          <button
-            onClick={sortByRole}
-            className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-medium"
-          >
-            Sort by Role
-          </button>
-          <div className="flex-1" />
-          <button
-            onClick={handleSave}
-            disabled={!hasChanges || saving}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium"
-          >
-            {saving ? 'Saving...' : hasChanges ? 'Save Order' : 'Saved'}
-          </button>
-        </div>
-
-        <div className="bg-white rounded-xl shadow overflow-hidden">
-          <ul className="divide-y divide-gray-100">
-            {users.map((u, idx) => {
-              const badge = ROLE_BADGE[u.role] || ROLE_BADGE.user
-              const isDragging = draggedIdx === idx
-              return (
-                <li
-                  key={u.id}
-                  draggable
-                  onDragStart={onDragStart(idx)}
-                  onDragOver={onDragOver(idx)}
-                  onDragEnd={onDragEnd}
-                  className={`flex items-center gap-3 px-4 py-3 transition cursor-move ${
-                    isDragging ? 'bg-blue-50 opacity-50' : 'hover:bg-gray-50'
-                  } ${u.is_frozen ? 'opacity-60' : ''}`}
-                >
-                  <div className="text-gray-400 select-none flex flex-col items-center">
-                    <span className="text-xs">⋮⋮</span>
-                    <span className="text-xs font-bold text-gray-600 mt-1">{idx + 1}</span>
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-medium text-gray-800 truncate">
-                        {u.full_name || u.email}
-                      </p>
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${badge.class}`}>
-                        {badge.label}
-                      </span>
-                      {u.is_frozen && (
-                        <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">
-                          Frozen
-                        </span>
-                      )}
-                    </div>
-                    {u.job_title && (
-                      <p className="text-xs text-gray-500 truncate">{u.job_title}</p>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <button
-                      onClick={() => moveUp(idx)}
-                      disabled={idx === 0}
-                      className="bg-gray-100 hover:bg-gray-200 disabled:bg-gray-50 disabled:text-gray-300 text-gray-700 w-8 h-7 rounded-md text-xs"
-                      title="Move up"
-                    >
-                      ▲
-                    </button>
-                    <button
-                      onClick={() => moveDown(idx)}
-                      disabled={idx === users.length - 1}
-                      className="bg-gray-100 hover:bg-gray-200 disabled:bg-gray-50 disabled:text-gray-300 text-gray-700 w-8 h-7 rounded-md text-xs"
-                      title="Move down"
-                    >
-                      ▼
-                    </button>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-
-          {users.length === 0 && (
-            <div className="p-8 text-center text-gray-400 text-sm">
-              No users to order
-            </div>
-          )}
-        </div>
-
-        {hasChanges && (
-          <div className="sticky bottom-4 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center justify-between gap-3 shadow-lg">
-            <p className="text-sm text-amber-800">You have unsaved changes</p>
+        {isAdmin && !showAddForm && (
+          <div className="flex gap-3 flex-wrap">
             <button
-              onClick={handleSave}
-              disabled={saving}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium"
+              onClick={() => {
+                setShowAddForm(true)
+                setEditingUser(null)
+                resetForm()
+              }}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition"
             >
-              {saving ? 'Saving...' : 'Save Now'}
+              + Add User
+            </button>
+            <button
+              onClick={() => router.push('/dashboard/users/order')}
+              className="bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 px-6 py-3 rounded-lg font-medium transition"
+            >
+              ↕ Set Order
             </button>
           </div>
         )}
+
+        {/* Add/Edit form */}
+        {showAddForm && isAdmin && (
+          <div className="bg-white rounded-xl shadow p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold">{editingUser ? 'Edit User' : 'Add New User'}</h2>
+              <button
+                onClick={() => {
+                  setShowAddForm(false)
+                  setEditingUser(null)
+                  resetForm()
+                }}
+                className="text-gray-400 text-xl"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={editingUser ? handleUpdate : handleAdd} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                    required
+                    disabled={!!editingUser}
+                  />
+                </div>
+              </div>
+
+              {!editingUser && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                  <input
+                    type="text"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                    required
+                    minLength={6}
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 bg-white"
+                  >
+                    <option value="user">User</option>
+                    <option value="manager">Manager</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Job Title</label>
+                  <input
+                    type="text"
+                    value={jobTitle}
+                    onChange={(e) => setJobTitle(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                  />
+                </div>
+              </div>
+
+              {role === 'manager' && allJobTitles.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Job Titles This Manager Oversees</label>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    {allJobTitles.map(title => (
+                      <label key={title} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedManagerTitles.includes(title)}
+                          onChange={() => toggleManagerTitle(title)}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-sm text-gray-700">{title}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Features */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Features</label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  {features
+                    .filter(f => companyFeatures.some((cf: any) => cf.feature_id === f.id))
+                    .map(feature => (
+                    <label key={feature.id} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedFeatures.includes(feature.id)}
+                        onChange={() => toggleFeature(feature.id)}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-sm text-gray-700">{feature.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Holiday-specific fields */}
+              {showHolidayFields && (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-gray-200">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Employment Start Date</label>
+                      <input
+                        type="date"
+                        value={employmentStartDate}
+                        onChange={(e) => setEmploymentStartDate(e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Holiday Entitlement (days)</label>
+                      <input
+                        type="number"
+                        step="0.5"
+                        value={holidayEntitlement}
+                        onChange={(e) => setHolidayEntitlement(e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                        placeholder="e.g. 28"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Working Days</label>
+                    <div className="grid grid-cols-7 gap-2">
+                      {DAY_KEYS.map(day => (
+                        <label key={day} className="flex flex-col items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={workingDays[day]}
+                            onChange={() => toggleWorkingDay(day)}
+                            className="w-4 h-4 mb-1"
+                          />
+                          <span className="text-xs text-gray-600">{DAY_LABELS[day]}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition disabled:opacity-50"
+                >
+                  {submitting ? 'Saving...' : (editingUser ? 'Update User' : 'Create User')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddForm(false)
+                    setEditingUser(null)
+                    resetForm()
+                  }}
+                  className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-6 py-3 rounded-lg font-medium transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* User list */}
+        <div className="bg-white rounded-xl shadow p-6">
+          <h2 className="text-xl font-semibold text-gray-800 mb-4">
+            {isAdmin ? 'All Users' : 'Your Team'} ({visibleUsers.length})
+          </h2>
+
+          {visibleUsers.length === 0 ? (
+            <p className="text-gray-400 text-sm">No users to display.</p>
+          ) : (
+            <ul className="space-y-2">
+              {visibleUsers.map((user) => (
+                <li
+                  key={user.id}
+                  className={`border rounded-lg p-4 ${
+                    user.is_frozen ? 'border-orange-300 bg-orange-50' : 'border-gray-200'
+                  }`}
+                >
+                  <div className="flex justify-between items-start gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-medium text-gray-800">{user.full_name}</p>
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${getRoleBadgeColor(user.role)}`}>
+                          {user.role}
+                        </span>
+                        {user.job_title && (
+                          <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
+                            {user.job_title}
+                          </span>
+                        )}
+                        {user.is_frozen && (
+                          <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full">Frozen</span>
+                        )}
+                      </div>
+                      <p className="text-sm text-gray-500 mt-1">{user.email}</p>
+                      {user.holiday_entitlement !== null && user.holiday_entitlement !== undefined && (
+                        <p className="text-xs text-gray-500 mt-1">🏖️ {user.holiday_entitlement} days</p>
+                      )}
+                    </div>
+
+                    {isAdmin && user.id !== currentUser.id && (
+                      <div className="flex flex-wrap gap-2 flex-shrink-0">
+                        <button
+                          onClick={() => handleStartEdit(user)}
+                          className="text-sm bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1 rounded transition"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => {
+                            setChangePasswordUser(user)
+                            setNewAdminPassword('')
+                            setConfirmAdminPassword('')
+                          }}
+                          className="text-sm bg-yellow-100 hover:bg-yellow-200 text-yellow-700 px-3 py-1 rounded transition"
+                        >
+                          🔒 Password
+                        </button>
+                        <button
+                          onClick={() => handleToggleFreeze(user)}
+                          className="text-sm bg-orange-100 hover:bg-orange-200 text-orange-700 px-3 py-1 rounded transition"
+                        >
+                          {user.is_frozen ? 'Unfreeze' : 'Freeze'}
+                        </button>
+                        <button
+                          onClick={() => handleDelete(user)}
+                          className="text-sm bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1 rounded transition"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Change password modal */}
+        {changePasswordUser && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+              <div className="p-6 space-y-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h2 className="text-xl font-bold text-gray-800">Change Password</h2>
+                    <p className="text-sm text-gray-500 mt-1">For {changePasswordUser.full_name}</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setChangePasswordUser(null)
+                      setNewAdminPassword('')
+                      setConfirmAdminPassword('')
+                    }}
+                    className="text-gray-400 text-2xl leading-none"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
+                  ⚠️ This will immediately change their password. Make sure to communicate it securely to the user.
+                </div>
+
+                <form onSubmit={handleChangeUserPassword} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+                    <input
+                      type="text"
+                      value={newAdminPassword}
+                      onChange={(e) => setNewAdminPassword(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                      required
+                      minLength={6}
+                      autoComplete="new-password"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">At least 6 characters</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+                    <input
+                      type="text"
+                      value={confirmAdminPassword}
+                      onChange={(e) => setConfirmAdminPassword(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                      required
+                      minLength={6}
+                      autoComplete="new-password"
+                    />
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setChangePasswordUser(null)
+                        setNewAdminPassword('')
+                        setConfirmAdminPassword('')
+                      }}
+                      className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-lg font-medium transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submittingPassword}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-medium transition disabled:opacity-50"
+                    >
+                      {submittingPassword ? 'Changing...' : 'Change Password'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </main>
   )

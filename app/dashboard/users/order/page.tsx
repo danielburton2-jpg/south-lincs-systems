@@ -75,7 +75,6 @@ export default function UserOrderPage() {
     loadData()
   }, [loadData])
 
-  // Drag handlers
   const onDragStart = (idx: number) => () => {
     setDraggedIdx(idx)
   }
@@ -97,7 +96,6 @@ export default function UserOrderPage() {
     setDraggedIdx(null)
   }
 
-  // Mobile: up/down buttons (drag is fiddly on touch)
   const moveUp = (idx: number) => {
     if (idx === 0) return
     setUsers(prev => {
@@ -139,7 +137,6 @@ export default function UserOrderPage() {
   const handleSave = async () => {
     setSaving(true)
 
-    // Update each user's display_order to match the current array order
     const updates = users.map((u, idx) =>
       supabase
         .from('profiles')
