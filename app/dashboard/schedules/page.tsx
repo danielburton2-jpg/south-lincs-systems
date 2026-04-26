@@ -137,6 +137,7 @@ export default function SchedulesPage() {
   }, [])
 
   const isAdmin = currentUser?.role === 'admin'
+  const isManager = currentUser?.role === 'manager'
   const canManage = isAdmin
 
   const visibleSchedules = (() => {
@@ -200,6 +201,14 @@ export default function SchedulesPage() {
             >
               📆 Calendar
             </button>
+            {(isAdmin || isManager) && (
+              <button
+                onClick={() => router.push('/dashboard/schedules/assign')}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
+              >
+                ✏️ Assign
+              </button>
+            )}
             <button
               onClick={() => router.push('/dashboard/schedules/reports')}
               className="bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium"
