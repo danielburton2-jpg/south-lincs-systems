@@ -41,11 +41,12 @@ const dowOf = (d: Date): string => {
   return map[j]
 }
 
-// scheduleId|YYYY-MM-DD => { user_id, status, is_changed, original_user_id }
+// scheduleId|YYYY-MM-DD => state
 type CellMap = Record<string, {
   user_id: string | null
   status: 'draft' | 'published'
-  is_changed: boolean
+  is_changed: boolean         // only true if changed AFTER a publish
+  has_been_published: boolean // true once a published_at exists in db
   assignment_id?: string
   original_user_id?: string | null
 }>
@@ -63,6 +64,7 @@ export default function SchedulesAssignPage() {
   const [cells, setCells] = useState<CellMap>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [publishing, setPublishing] = useState(false)
   const [hasUnsaved, setHasUnsaved] = useState(false)
 
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeekMon(new Date()))
@@ -108,15 +110,12 @@ export default function SchedulesAssignPage() {
         .or(`and(start_date.lte.${weekToISO},end_date.gte.${weekFromISO})`),
     ])
 
-    // Anyone in the company who isn't a superuser can be assigned to a schedule.
-    // The Schedules feature gate is for *viewing* the calendar — not for being assignable.
     const filteredUsers = (usersRes.data || []).filter((p: any) => p.role !== 'superuser')
 
     setUsers(filteredUsers)
     setSchedules(schedsRes.data || [])
     setHolidays(holsRes.data || [])
 
-    // Build cells map from existing assignments
     const cmap: CellMap = {}
     ;(asgsRes.data || []).forEach((a: any) => {
       const key = `${a.schedule_id}|${a.assignment_date}`
@@ -124,6 +123,7 @@ export default function SchedulesAssignPage() {
         user_id: a.user_id,
         status: a.status,
         is_changed: a.is_changed,
+        has_been_published: !!a.published_at,
         assignment_id: a.id,
         original_user_id: a.user_id,
       }
@@ -189,7 +189,6 @@ export default function SchedulesAssignPage() {
     loadAll(currentUser.company_id, from, to)
   }, [weekStart, currentUser?.company_id, loadAll])
 
-  // Warn before leaving with unsaved changes
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
       if (hasUnsaved) {
@@ -201,13 +200,11 @@ export default function SchedulesAssignPage() {
     return () => window.removeEventListener('beforeunload', handler)
   }, [hasUnsaved])
 
-  // === Derived ===
   const weekDates: Date[] = useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
     [weekStart]
   )
 
-  // Does this schedule run on this date?
   const scheduleRunsOnDate = (s: any, d: Date): boolean => {
     const iso = isoDate(d)
     if (s.schedule_type === 'one_off') {
@@ -220,19 +217,16 @@ export default function SchedulesAssignPage() {
     return !!s.recurring_days?.[dow]
   }
 
-  // Does this schedule run at any point in the visible week?
   const scheduleRunsThisWeek = (s: any): boolean => {
     return weekDates.some(d => scheduleRunsOnDate(s, d))
   }
 
-  // Schedules to display: only those running this week
   const visibleSchedules = useMemo(
     () => schedules.filter(scheduleRunsThisWeek),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [schedules, weekStart]
   )
 
-  // Find approved holiday/keep-day-off/early-finish for a user on a date
   const userUnavailable = (userId: string, d: Date, scheduleStartTime: string): { reason: string } | null => {
     const iso = isoDate(d)
     const h = holidays.find(x =>
@@ -256,7 +250,6 @@ export default function SchedulesAssignPage() {
     return null
   }
 
-  // Returns users that can be assigned to this schedule on this date
   const availableUsers = (s: any, d: Date): any[] => {
     return users
       .filter(u => !u.is_frozen)
@@ -276,11 +269,21 @@ export default function SchedulesAssignPage() {
         return prev
       }
 
+      // is_changed is true ONLY if this row has been published before AND
+      // the value differs from what's currently in the database.
+      const hasBeenPublished = existing?.has_been_published ?? false
+      const isChanged = hasBeenPublished && original !== value
+
       next[key] = {
-        ...(existing || { status: 'draft', is_changed: true }),
+        ...(existing || {
+          status: 'draft',
+          is_changed: false,
+          has_been_published: false,
+        }),
         user_id: value,
-        is_changed: original !== value,
+        is_changed: isChanged,
         status: existing?.assignment_id ? existing.status : 'draft',
+        has_been_published: hasBeenPublished,
         assignment_id: existing?.assignment_id,
         original_user_id: original,
       }
@@ -313,24 +316,26 @@ export default function SchedulesAssignPage() {
               )
             )
           } else {
+            // Only mark as is_changed if it was previously published
+            const newIsChanged = cell.has_been_published
             ops.push(
               Promise.resolve(
                 supabase.from('schedule_assignments').update({
                   user_id: value,
-                  status: 'draft',
-                  is_changed: true,
+                  is_changed: newIsChanged,
                 }).eq('id', cell.assignment_id)
               )
             )
           }
         } else if (value) {
+          // Brand new assignment — draft, NOT marked as changed
           insertRows.push({
             schedule_id: scheduleId,
             company_id: currentUser.company_id,
             user_id: value,
             assignment_date: dateStr,
             status: 'draft',
-            is_changed: true,
+            is_changed: false,
             created_by: currentUser.id,
           })
         }
@@ -366,7 +371,7 @@ export default function SchedulesAssignPage() {
       const from = isoDate(weekStart)
       const to = isoDate(addDays(weekStart, 6))
       await loadAll(currentUser.company_id, from, to)
-      showMessage(`Saved ${results.length} change(s) as draft. Click Publish when ready.`, 'success')
+      showMessage(`Saved ${results.length} change(s). Click Publish when ready.`, 'success')
     } catch (err: any) {
       showMessage('Save failed: ' + (err?.message || 'unknown'), 'error')
     } finally {
@@ -374,7 +379,71 @@ export default function SchedulesAssignPage() {
     }
   }
 
-  // === Navigation ===
+  // Count assignments needing publish
+  const unpublishedCount = useMemo(() => {
+    return Object.values(cells).filter(c =>
+      c.assignment_id && (c.status === 'draft' || c.is_changed)
+    ).length
+  }, [cells])
+
+  // === Publish ===
+  const handlePublish = async () => {
+    if (hasUnsaved) {
+      if (!confirm('You have unsaved changes. Save them as draft first, then publish?')) return
+      await handleSaveDraft()
+    }
+
+    if (unpublishedCount === 0) {
+      showMessage('No assignments to publish in this week.', 'error')
+      return
+    }
+
+    if (!confirm(`Publish ${unpublishedCount} assignment(s) for this week? Employees will see them on the calendar.`)) return
+
+    setPublishing(true)
+    const fromISO = isoDate(weekDates[0])
+    const toISO = isoDate(weekDates[6])
+    const now = new Date().toISOString()
+
+    try {
+      const { error } = await supabase
+        .from('schedule_assignments')
+        .update({
+          status: 'published',
+          is_changed: false,
+          published_at: now,
+          published_by: currentUser.id,
+        })
+        .eq('company_id', currentUser.company_id)
+        .gte('assignment_date', fromISO)
+        .lte('assignment_date', toISO)
+        .or('status.eq.draft,is_changed.eq.true')
+
+      if (error) {
+        showMessage('Publish failed: ' + error.message, 'error')
+        setPublishing(false)
+        return
+      }
+
+      await logAuditClient({
+        user: currentUser,
+        action: 'SCHEDULE_ASSIGNMENTS_PUBLISHED',
+        entity: 'schedule_assignments',
+        details: {
+          week: `${fromISO} to ${toISO}`,
+          published_count: unpublishedCount,
+        },
+      })
+
+      await loadAll(currentUser.company_id, fromISO, toISO)
+      showMessage(`Published ${unpublishedCount} assignment(s). Now visible on the calendar.`, 'success')
+    } catch (err: any) {
+      showMessage('Publish failed: ' + (err?.message || 'unknown'), 'error')
+    } finally {
+      setPublishing(false)
+    }
+  }
+
   const tryChangeWeek = (newStart: Date) => {
     if (hasUnsaved) {
       if (!confirm('You have unsaved changes. Discard them and change week?')) return
@@ -434,6 +503,20 @@ export default function SchedulesAssignPage() {
           </div>
         )}
 
+        {unpublishedCount > 0 && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-center gap-3">
+            <span className="text-2xl">⚠️</span>
+            <div className="flex-1">
+              <p className="font-medium text-yellow-800">
+                {unpublishedCount} assignment{unpublishedCount === 1 ? '' : 's'} not yet published this week
+              </p>
+              <p className="text-xs text-yellow-700 mt-0.5">
+                Employees won&apos;t see these on the calendar until you click Publish.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Toolbar */}
         <div className="bg-white rounded-xl shadow p-3 flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1">
@@ -471,18 +554,18 @@ export default function SchedulesAssignPage() {
 
           <button
             onClick={handleSaveDraft}
-            disabled={!hasUnsaved || saving}
+            disabled={!hasUnsaved || saving || publishing}
             className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium"
           >
             {saving ? 'Saving...' : '💾 Save Draft'}
           </button>
 
           <button
-            disabled
-            title="Publish coming in next step"
-            className="bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium"
+            onClick={handlePublish}
+            disabled={publishing || saving || (unpublishedCount === 0 && !hasUnsaved)}
+            className="bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium"
           >
-            ✓ Publish
+            {publishing ? 'Publishing...' : `✓ Publish${unpublishedCount > 0 ? ` (${unpublishedCount})` : ''}`}
           </button>
         </div>
 
@@ -539,8 +622,8 @@ export default function SchedulesAssignPage() {
                       const key = cellKey(s.id, d)
                       const cell = cells[key]
                       const value = cell?.user_id || ''
-                      const isChanged = cell?.is_changed
-                      const isDraft = cell?.status === 'draft'
+                      const isChanged = !!cell?.is_changed
+                      const isFreshDraft = !!cell?.assignment_id && cell?.status === 'draft' && !cell?.has_been_published
                       const isToday = isoDate(d) === isoDate(new Date())
 
                       if (!runs) {
@@ -558,12 +641,17 @@ export default function SchedulesAssignPage() {
                       const currentUserStillAvailable = !value || avail.some(u => u.id === value)
                       const currentUserObj = value ? users.find(u => u.id === value) : null
 
+                      // Yellow highlight ONLY for changes after a publish.
+                      // Fresh drafts (never published) get a softer amber tint and "Draft" label.
+                      const yellowHighlight = isChanged
+                      const amberTint = isFreshDraft && !isChanged
+
                       return (
                         <td
                           key={i}
                           className={`px-2 py-2 align-top text-xs border-r border-gray-100 last:border-r-0 ${
                             isToday ? 'bg-blue-50/30' : ''
-                          } ${isChanged ? 'bg-yellow-100/60' : ''}`}
+                          } ${yellowHighlight ? 'bg-yellow-100/70' : amberTint ? 'bg-amber-50/60' : ''}`}
                         >
                           <select
                             value={value}
@@ -571,9 +659,9 @@ export default function SchedulesAssignPage() {
                             className={`w-full border rounded px-2 py-1 text-xs bg-white ${
                               !currentUserStillAvailable
                                 ? 'border-red-400 text-red-700'
-                                : isChanged
-                                ? 'border-yellow-400'
-                                : isDraft
+                                : yellowHighlight
+                                ? 'border-yellow-500'
+                                : amberTint
                                 ? 'border-amber-300'
                                 : 'border-gray-300'
                             }`}
@@ -590,11 +678,11 @@ export default function SchedulesAssignPage() {
                               </option>
                             ))}
                           </select>
-                          {isDraft && !isChanged && (
-                            <p className="text-[10px] text-amber-700 mt-0.5">Draft</p>
+                          {amberTint && (
+                            <p className="text-[10px] text-amber-700 mt-0.5 font-medium">Draft</p>
                           )}
-                          {isChanged && (
-                            <p className="text-[10px] text-yellow-700 mt-0.5 font-medium">Changed</p>
+                          {yellowHighlight && (
+                            <p className="text-[10px] text-yellow-800 mt-0.5 font-medium">Changed</p>
                           )}
                         </td>
                       )
@@ -608,8 +696,9 @@ export default function SchedulesAssignPage() {
 
         {/* Help text */}
         <div className="bg-white rounded-xl shadow p-3 text-xs text-gray-600 space-y-1">
-          <p>📋 <strong>How it works:</strong> Pick a user from each dropdown to assign them to that schedule on that day. Days where the schedule doesn't run show "—". Users on holiday, day-off, or with an early finish before the schedule starts are hidden from the dropdown.</p>
-          <p>💾 <strong>Save Draft</strong> stores changes without making them visible to employees. <strong>Publish</strong> (coming next step) makes assignments live on the calendar.</p>
+          <p>📋 <strong>How it works:</strong> Pick a user from each dropdown. Days where the schedule doesn&apos;t run show &quot;—&quot;. Users on holiday, day-off, or with an early finish before the schedule starts are hidden.</p>
+          <p>💾 <strong>Save Draft</strong> stores changes silently. <strong>Publish</strong> makes them live for employees on the calendar.</p>
+          <p><span className="inline-block w-2.5 h-2.5 bg-amber-100 border border-amber-300 rounded mr-1 align-middle" /> Draft = never published yet · <span className="inline-block w-2.5 h-2.5 bg-yellow-200 border border-yellow-500 rounded mx-1 align-middle" /> Yellow = changed since the last publish</p>
         </div>
       </div>
     </main>
