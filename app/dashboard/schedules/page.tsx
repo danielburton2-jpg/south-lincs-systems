@@ -99,7 +99,8 @@ export default function SchedulesPage() {
       .from('schedules')
       .select(`*, schedule_documents (id), creator:created_by (full_name)`)
       .eq('company_id', profile.company_id)
-      .order('created_at', { ascending: false })
+      .order('start_time', { ascending: true })
+      .order('name', { ascending: true })
 
     setSchedules(schedulesData || [])
     setLoading(false)
