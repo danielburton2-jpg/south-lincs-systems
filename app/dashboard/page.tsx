@@ -14,6 +14,7 @@ export default function Dashboard() {
   const [managerTitles, setManagerTitles] = useState<string[]>([])
   const [users, setUsers] = useState<any[]>([])
   const [pendingHolidayCount, setPendingHolidayCount] = useState(0)
+  const [openDefectsCount, setOpenDefectsCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const router = useRouter()
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
@@ -54,6 +55,14 @@ export default function Dashboard() {
         .eq('id', profile.company_id)
         .single()
       setCompany(companyData)
+
+      // Open defects count
+      const { count: defectCount } = await supabase
+        .from('vehicle_defects')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', profile.company_id)
+        .eq('status', 'open')
+      setOpenDefectsCount(defectCount || 0)
     }
 
     const { data: featuresData } = await supabase
@@ -137,6 +146,16 @@ export default function Dashboard() {
         },
         () => fetchData()
       )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'vehicle_defects',
+          filter: `company_id=eq.${currentUser.company_id}`,
+        },
+        () => fetchData()
+      )
       .subscribe()
 
     return () => {
@@ -196,6 +215,7 @@ export default function Dashboard() {
   const showMyHolidays = (isAdmin || isManager) && hasFeature('Holidays') && currentUser?.holiday_entitlement !== null && currentUser?.holiday_entitlement !== undefined
   const showSchedules = hasCompanyFeature('Schedules') && (isAdmin || hasFeature('Schedules'))
   const showVehicleChecks = hasCompanyFeature('Vehicle Checks') && (isAdmin || hasFeature('Vehicle Checks'))
+  const showDefectBanner = hasCompanyFeature('Vehicle Checks') && (isAdmin || isManager || hasFeature('Defect Management')) && openDefectsCount > 0
 
   const balance = currentUser?.holiday_entitlement
 
@@ -231,6 +251,28 @@ export default function Dashboard() {
       </div>
 
       <div className="max-w-6xl mx-auto p-6 space-y-6">
+
+        {showDefectBanner && (
+          <button
+            onClick={() => router.push('/dashboard/vehicle-checks/defects')}
+            className="w-full bg-red-50 hover:bg-red-100 border-2 border-red-300 rounded-xl p-4 text-left transition flex items-center justify-between gap-3"
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-3xl">⚠️</span>
+              <div>
+                <p className="text-red-800 font-bold">
+                  {openDefectsCount} open defect{openDefectsCount > 1 ? 's' : ''} need attention
+                </p>
+                <p className="text-red-600 text-xs mt-0.5">
+                  Click to review and resolve
+                </p>
+              </div>
+            </div>
+            <span className="bg-red-600 text-white text-sm font-bold px-4 py-2 rounded-full whitespace-nowrap">
+              View →
+            </span>
+          </button>
+        )}
 
         {daysRemaining !== null && daysRemaining <= 14 && daysRemaining >= 0 && (
           <div className="bg-yellow-50 border border-yellow-300 rounded-xl p-4">
@@ -340,11 +382,16 @@ export default function Dashboard() {
             {showVehicleChecks && isAdmin && (
               <button
                 onClick={() => router.push('/dashboard/vehicles')}
-                className="bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg p-3 text-left transition"
+                className="bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg p-3 text-left transition relative"
               >
                 <div className="text-2xl mb-1">🚛</div>
                 <p className="font-semibold text-red-700 text-sm">Vehicles</p>
                 <p className="text-[11px] text-red-600 mt-0.5">Fleet & defects</p>
+                {openDefectsCount > 0 && (
+                  <span className="absolute top-1.5 right-1.5 bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                    {openDefectsCount}
+                  </span>
+                )}
               </button>
             )}
 

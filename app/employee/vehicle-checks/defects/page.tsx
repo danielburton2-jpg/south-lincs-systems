@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
+import { logAuditClient } from '@/lib/auditClient'
 
 const supabase = createClient()
 
@@ -19,26 +20,60 @@ export default function EmployeeDefectsPage() {
   const router = useRouter()
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
+  const [hasDefectManagement, setHasDefectManagement] = useState(false)
   const [defects, setDefects] = useState<any[]>([])
+  const [photoMap, setPhotoMap] = useState<Record<string, any[]>>({})
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [filterBy, setFilterBy] = useState<'all' | 'mine'>('all')
+  const [message, setMessage] = useState('')
+  const [messageType, setMessageType] = useState<'success' | 'error'>('success')
+
+  const [resolvingId, setResolvingId] = useState<string | null>(null)
+  const [resolutionNotes, setResolutionNotes] = useState('')
+  const [resolutionAction, setResolutionAction] = useState<'fixed' | 'dismissed' | null>(null)
+  const [submitting, setSubmitting] = useState(false)
 
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
-  const loadDefects = useCallback(async (userId: string, companyId: string) => {
+  const showMessage = (msg: string, type: 'success' | 'error') => {
+    setMessage(msg)
+    setMessageType(type)
+    setTimeout(() => setMessage(''), 4000)
+  }
+
+  const loadDefects = useCallback(async (companyId: string) => {
     const { data } = await supabase
       .from('vehicle_defects')
       .select(`
         *,
         vehicle:vehicles (registration, fleet_number, vehicle_type, name),
-        reporter:profiles!vehicle_defects_reported_by_fkey (full_name)
+        reporter:profiles!vehicle_defects_reported_by_fkey (full_name),
+        resolver:profiles!vehicle_defects_resolved_by_fkey (full_name)
       `)
       .eq('company_id', companyId)
       .eq('status', 'open')
       .order('reported_at', { ascending: false })
 
     setDefects(data || [])
+
+    // Load photos for any defects with check_item_id
+    const itemIds = (data || []).map((d: any) => d.check_item_id).filter(Boolean)
+    if (itemIds.length > 0) {
+      const { data: photoData } = await supabase
+        .from('vehicle_check_photos')
+        .select('*')
+        .in('check_item_id', itemIds)
+
+      const map: Record<string, any[]> = {}
+      ;(photoData || []).forEach((p: any) => {
+        if (!map[p.check_item_id]) map[p.check_item_id] = []
+        map[p.check_item_id].push(p)
+      })
+      setPhotoMap(map)
+    } else {
+      setPhotoMap({})
+    }
   }, [])
 
   const init = useCallback(async () => {
@@ -88,7 +123,13 @@ export default function EmployeeDefectsPage() {
       return
     }
 
-    await loadDefects(user.id, profile.company_id)
+    // Check if user has Defect Management feature
+    const userHasDefectMgmt = (userFeats as any[])?.some(
+      (uf: any) => uf.features?.name === 'Defect Management'
+    )
+    setHasDefectManagement(userHasDefectMgmt)
+
+    await loadDefects(profile.company_id)
     setLoading(false)
   }, [router, loadDefects])
 
@@ -100,11 +141,68 @@ export default function EmployeeDefectsPage() {
     const channel = supabase
       .channel('employee-vc-defects')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'vehicle_defects', filter: `company_id=eq.${currentUser.company_id}` }, () => {
-        loadDefects(currentUser.id, currentUser.company_id)
+        loadDefects(currentUser.company_id)
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [currentUser?.id, currentUser?.company_id, loadDefects])
+
+  const startResolve = (defectId: string, action: 'fixed' | 'dismissed') => {
+    setResolvingId(defectId)
+    setResolutionAction(action)
+    setResolutionNotes('')
+  }
+
+  const cancelResolve = () => {
+    setResolvingId(null)
+    setResolutionAction(null)
+    setResolutionNotes('')
+  }
+
+  const submitResolve = async () => {
+    if (!resolvingId || !resolutionAction) return
+
+    setSubmitting(true)
+
+    const { error } = await supabase
+      .from('vehicle_defects')
+      .update({
+        status: resolutionAction,
+        resolved_at: new Date().toISOString(),
+        resolved_by: currentUser.id,
+        resolution_notes: resolutionNotes.trim() || null,
+      })
+      .eq('id', resolvingId)
+
+    setSubmitting(false)
+
+    if (error) {
+      showMessage('Error: ' + error.message, 'error')
+      return
+    }
+
+    await logAuditClient({
+      user: currentUser,
+      action: resolutionAction === 'fixed' ? 'DEFECT_RESOLVED' : 'DEFECT_DISMISSED',
+      entity: 'vehicle_defect',
+      entity_id: resolvingId,
+      details: { resolution_notes: resolutionNotes.trim() || null },
+    })
+
+    showMessage(resolutionAction === 'fixed' ? 'Marked as fixed' : 'Defect dismissed', 'success')
+    cancelResolve()
+  }
+
+  const openPhoto = async (photo: any) => {
+    const { data, error } = await supabase.storage
+      .from('vehicle-check-photos')
+      .createSignedUrl(photo.storage_path, 60)
+    if (error || !data?.signedUrl) {
+      showMessage('Could not open photo', 'error')
+      return
+    }
+    window.location.href = data.signedUrl
+  }
 
   if (loading) {
     return (
@@ -127,7 +225,7 @@ export default function EmployeeDefectsPage() {
         d.defect_note?.toLowerCase().includes(q)
     })
 
-  // Group by vehicle for display
+  // Group by vehicle
   const grouped: Record<string, any[]> = {}
   filtered.forEach(d => {
     const key = d.vehicle_id
@@ -148,11 +246,20 @@ export default function EmployeeDefectsPage() {
         </div>
         <h1 className="text-2xl font-bold mt-2">⚠️ Defects</h1>
         <p className="text-red-100 text-sm mt-1">
-          {defects.length} open defect{defects.length === 1 ? '' : 's'} on company vehicles
+          {defects.length} open defect{defects.length === 1 ? '' : 's'}
+          {hasDefectManagement && ' · You can mark them as fixed'}
         </p>
       </div>
 
       <div className="px-4 pt-4 space-y-3">
+
+        {message && (
+          <div className={`p-3 rounded-xl text-sm font-medium ${
+            messageType === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+          }`}>
+            {message}
+          </div>
+        )}
 
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-2">
           <input
@@ -219,22 +326,103 @@ export default function EmployeeDefectsPage() {
                     )}
                   </div>
                   <ul className="divide-y divide-gray-100">
-                    {list.map(d => (
-                      <li key={d.id} className="p-3">
-                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{d.category}</p>
-                        <p className="text-sm font-medium text-gray-800">{d.item_text}</p>
-                        {d.defect_note && (
-                          <div className="mt-2 bg-red-50 border border-red-200 rounded-lg p-2">
-                            <p className="text-xs text-red-800 leading-snug whitespace-pre-wrap">{d.defect_note}</p>
+                    {list.map(d => {
+                      const isResolving = resolvingId === d.id
+                      const photos = photoMap[d.check_item_id] || []
+
+                      return (
+                        <li key={d.id} className="p-3">
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{d.category}</p>
+                          <p className="text-sm font-medium text-gray-800">{d.item_text}</p>
+                          {d.defect_note && (
+                            <div className="mt-2 bg-red-50 border border-red-200 rounded-lg p-2">
+                              <p className="text-xs text-red-800 leading-snug whitespace-pre-wrap">{d.defect_note}</p>
+                            </div>
+                          )}
+
+                          {/* Photos */}
+                          {photos.length > 0 && (
+                            <div className="mt-2 grid grid-cols-3 gap-2">
+                              {photos.map(p => (
+                                <button
+                                  key={p.id}
+                                  onClick={() => openPhoto(p)}
+                                  className="bg-gray-100 hover:bg-gray-200 rounded-lg p-2 text-center transition"
+                                >
+                                  <span className="text-2xl">📷</span>
+                                  <p className="text-[10px] text-gray-600 truncate">{p.file_name}</p>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          <div className="flex items-center gap-2 mt-2 text-xs text-gray-500 flex-wrap">
+                            <span>By {d.reporter?.full_name || 'Unknown'}</span>
+                            <span>·</span>
+                            <span>{new Date(d.reported_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                           </div>
-                        )}
-                        <div className="flex items-center gap-2 mt-2 text-xs text-gray-500 flex-wrap">
-                          <span>Reported by {d.reporter?.full_name || 'Unknown'}</span>
-                          <span>·</span>
-                          <span>{new Date(d.reported_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                      </li>
-                    ))}
+
+                          {/* Resolution UI - only if user has Defect Management feature */}
+                          {hasDefectManagement && (
+                            <>
+                              {isResolving ? (
+                                <div className="mt-3 bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
+                                  <p className="text-sm font-semibold text-gray-800">
+                                    {resolutionAction === 'fixed' ? '✓ Mark as Fixed' : '✗ Dismiss Defect'}
+                                  </p>
+                                  <textarea
+                                    value={resolutionNotes}
+                                    onChange={(e) => setResolutionNotes(e.target.value)}
+                                    rows={2}
+                                    placeholder={
+                                      resolutionAction === 'fixed'
+                                        ? 'Resolution notes (e.g. parts replaced)'
+                                        : 'Reason for dismissing (optional)'
+                                    }
+                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
+                                  />
+                                  <div className="flex gap-2 justify-end">
+                                    <button
+                                      onClick={cancelResolve}
+                                      disabled={submitting}
+                                      className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg disabled:opacity-50"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button
+                                      onClick={submitResolve}
+                                      disabled={submitting}
+                                      className={`text-xs text-white px-3 py-1.5 rounded-lg disabled:opacity-50 ${
+                                        resolutionAction === 'fixed'
+                                          ? 'bg-green-600 hover:bg-green-700'
+                                          : 'bg-gray-600 hover:bg-gray-700'
+                                      }`}
+                                    >
+                                      {submitting ? 'Saving...' : 'Confirm'}
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="mt-3 flex gap-2 justify-end">
+                                  <button
+                                    onClick={() => startResolve(d.id, 'dismissed')}
+                                    className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg font-medium"
+                                  >
+                                    ✗ Dismiss
+                                  </button>
+                                  <button
+                                    onClick={() => startResolve(d.id, 'fixed')}
+                                    className="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg font-medium"
+                                  >
+                                    ✓ Mark Fixed
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </li>
+                      )
+                    })}
                   </ul>
                 </div>
               )
