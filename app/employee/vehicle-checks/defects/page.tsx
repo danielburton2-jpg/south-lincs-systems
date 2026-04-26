@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
 import { logAuditClient } from '@/lib/auditClient'
 
@@ -16,16 +16,22 @@ const VEHICLE_TYPE_ICONS: Record<string, string> = {
   minibus: '🚐',
 }
 
+type FilterTab = 'mine' | 'all' | 'reported'
+
 export default function EmployeeDefectsPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialFilter = (searchParams?.get('filter') as FilterTab) || 'all'
+
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
   const [hasDefectManagement, setHasDefectManagement] = useState(false)
   const [defects, setDefects] = useState<any[]>([])
   const [photoMap, setPhotoMap] = useState<Record<string, any[]>>({})
+  const [notesMap, setNotesMap] = useState<Record<string, any[]>>({})
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [filterBy, setFilterBy] = useState<'all' | 'mine'>('all')
+  const [filterTab, setFilterTab] = useState<FilterTab>(initialFilter)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error'>('success')
 
@@ -33,6 +39,9 @@ export default function EmployeeDefectsPage() {
   const [resolutionNotes, setResolutionNotes] = useState('')
   const [resolutionAction, setResolutionAction] = useState<'fixed' | 'dismissed' | null>(null)
   const [submitting, setSubmitting] = useState(false)
+
+  const [addingNoteFor, setAddingNoteFor] = useState<string | null>(null)
+  const [noteText, setNoteText] = useState('')
 
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
@@ -49,7 +58,8 @@ export default function EmployeeDefectsPage() {
         *,
         vehicle:vehicles (registration, fleet_number, vehicle_type, name),
         reporter:profiles!vehicle_defects_reported_by_fkey (full_name),
-        resolver:profiles!vehicle_defects_resolved_by_fkey (full_name)
+        resolver:profiles!vehicle_defects_resolved_by_fkey (full_name),
+        assignee:profiles!vehicle_defects_assigned_to_fkey (full_name, job_title)
       `)
       .eq('company_id', companyId)
       .eq('status', 'open')
@@ -57,14 +67,13 @@ export default function EmployeeDefectsPage() {
 
     setDefects(data || [])
 
-    // Load photos for any defects with check_item_id
+    // Photos
     const itemIds = (data || []).map((d: any) => d.check_item_id).filter(Boolean)
     if (itemIds.length > 0) {
       const { data: photoData } = await supabase
         .from('vehicle_check_photos')
         .select('*')
         .in('check_item_id', itemIds)
-
       const map: Record<string, any[]> = {}
       ;(photoData || []).forEach((p: any) => {
         if (!map[p.check_item_id]) map[p.check_item_id] = []
@@ -74,26 +83,35 @@ export default function EmployeeDefectsPage() {
     } else {
       setPhotoMap({})
     }
+
+    // Notes
+    const defectIds = (data || []).map((d: any) => d.id)
+    if (defectIds.length > 0) {
+      const { data: notesData } = await supabase
+        .from('vehicle_defect_notes')
+        .select('*, author:profiles(full_name)')
+        .in('defect_id', defectIds)
+        .order('created_at', { ascending: true })
+      const nmap: Record<string, any[]> = {}
+      ;(notesData || []).forEach((n: any) => {
+        if (!nmap[n.defect_id]) nmap[n.defect_id] = []
+        nmap[n.defect_id].push(n)
+      })
+      setNotesMap(nmap)
+    } else {
+      setNotesMap({})
+    }
   }, [])
 
   const init = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      router.push('/login')
-      return
-    }
+    if (!user) { router.push('/login'); return }
     const { data: profile } = await supabase
       .from('profiles').select('*').eq('id', user.id).single()
-    if (!profile) {
-      router.push('/login')
-      return
-    }
+    if (!profile) { router.push('/login'); return }
     setCurrentUser(profile)
 
-    if (!profile.company_id) {
-      router.push('/employee')
-      return
-    }
+    if (!profile.company_id) { router.push('/employee'); return }
 
     const { data: companyData } = await supabase
       .from('companies')
@@ -105,10 +123,7 @@ export default function EmployeeDefectsPage() {
     const companyHasFeature = companyData?.company_features?.some(
       (cf: any) => cf.is_enabled && cf.features?.name === 'Vehicle Checks'
     )
-    if (!companyHasFeature) {
-      router.push('/employee')
-      return
-    }
+    if (!companyHasFeature) { router.push('/employee'); return }
 
     const { data: userFeats } = await supabase
       .from('user_features')
@@ -118,12 +133,8 @@ export default function EmployeeDefectsPage() {
     const userHasFeature = (userFeats as any[])?.some(
       (uf: any) => uf.features?.name === 'Vehicle Checks'
     )
-    if (!userHasFeature) {
-      router.push('/employee')
-      return
-    }
+    if (!userHasFeature) { router.push('/employee'); return }
 
-    // Check if user has Defect Management feature
     const userHasDefectMgmt = (userFeats as any[])?.some(
       (uf: any) => uf.features?.name === 'Defect Management'
     )
@@ -143,6 +154,9 @@ export default function EmployeeDefectsPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'vehicle_defects', filter: `company_id=eq.${currentUser.company_id}` }, () => {
         loadDefects(currentUser.company_id)
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'vehicle_defect_notes', filter: `company_id=eq.${currentUser.company_id}` }, () => {
+        loadDefects(currentUser.company_id)
+      })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [currentUser?.id, currentUser?.company_id, loadDefects])
@@ -151,6 +165,7 @@ export default function EmployeeDefectsPage() {
     setResolvingId(defectId)
     setResolutionAction(action)
     setResolutionNotes('')
+    setAddingNoteFor(null)
   }
 
   const cancelResolve = () => {
@@ -161,7 +176,6 @@ export default function EmployeeDefectsPage() {
 
   const submitResolve = async () => {
     if (!resolvingId || !resolutionAction) return
-
     setSubmitting(true)
 
     const { error } = await supabase
@@ -175,11 +189,7 @@ export default function EmployeeDefectsPage() {
       .eq('id', resolvingId)
 
     setSubmitting(false)
-
-    if (error) {
-      showMessage('Error: ' + error.message, 'error')
-      return
-    }
+    if (error) { showMessage('Error: ' + error.message, 'error'); return }
 
     await logAuditClient({
       user: currentUser,
@@ -193,14 +203,53 @@ export default function EmployeeDefectsPage() {
     cancelResolve()
   }
 
+  const startAddNote = (defectId: string) => {
+    setAddingNoteFor(defectId)
+    setNoteText('')
+    setResolvingId(null)
+  }
+
+  const cancelAddNote = () => {
+    setAddingNoteFor(null)
+    setNoteText('')
+  }
+
+  const submitNote = async (defectId: string) => {
+    if (!noteText.trim()) {
+      showMessage('Note cannot be empty', 'error')
+      return
+    }
+    setSubmitting(true)
+
+    const { error } = await supabase
+      .from('vehicle_defect_notes')
+      .insert({
+        defect_id: defectId,
+        company_id: currentUser.company_id,
+        author_id: currentUser.id,
+        note: noteText.trim(),
+      })
+
+    setSubmitting(false)
+    if (error) { showMessage('Error: ' + error.message, 'error'); return }
+
+    await logAuditClient({
+      user: currentUser,
+      action: 'DEFECT_NOTE_ADDED',
+      entity: 'vehicle_defect',
+      entity_id: defectId,
+      details: { note: noteText.trim() },
+    })
+
+    cancelAddNote()
+    showMessage('Note added', 'success')
+  }
+
   const openPhoto = async (photo: any) => {
     const { data, error } = await supabase.storage
       .from('vehicle-check-photos')
       .createSignedUrl(photo.storage_path, 60)
-    if (error || !data?.signedUrl) {
-      showMessage('Could not open photo', 'error')
-      return
-    }
+    if (error || !data?.signedUrl) { showMessage('Could not open photo', 'error'); return }
     window.location.href = data.signedUrl
   }
 
@@ -213,7 +262,11 @@ export default function EmployeeDefectsPage() {
   }
 
   const filtered = defects
-    .filter(d => filterBy === 'all' ? true : d.reported_by === currentUser?.id)
+    .filter(d => {
+      if (filterTab === 'mine') return d.assigned_to === currentUser?.id
+      if (filterTab === 'reported') return d.reported_by === currentUser?.id
+      return true
+    })
     .filter(d => {
       if (!search.trim()) return true
       const q = search.toLowerCase()
@@ -225,7 +278,13 @@ export default function EmployeeDefectsPage() {
         d.defect_note?.toLowerCase().includes(q)
     })
 
-  // Group by vehicle
+  const counts = {
+    mine: defects.filter(d => d.assigned_to === currentUser?.id).length,
+    all: defects.length,
+    reported: defects.filter(d => d.reported_by === currentUser?.id).length,
+  }
+
+  // Group by vehicle for display
   const grouped: Record<string, any[]> = {}
   filtered.forEach(d => {
     const key = d.vehicle_id
@@ -246,8 +305,10 @@ export default function EmployeeDefectsPage() {
         </div>
         <h1 className="text-2xl font-bold mt-2">⚠️ Defects</h1>
         <p className="text-red-100 text-sm mt-1">
-          {defects.length} open defect{defects.length === 1 ? '' : 's'}
-          {hasDefectManagement && ' · You can mark them as fixed'}
+          {counts.mine > 0 && (
+            <span className="font-semibold">🔧 {counts.mine} assigned to you · </span>
+          )}
+          {defects.length} total open
         </p>
       </div>
 
@@ -261,6 +322,45 @@ export default function EmployeeDefectsPage() {
           </div>
         )}
 
+        {/* Filter tabs */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-1.5 flex gap-1">
+          <button
+            onClick={() => setFilterTab('mine')}
+            className={`flex-1 py-2 rounded-xl text-xs font-medium transition relative ${
+              filterTab === 'mine'
+                ? 'bg-purple-600 text-white'
+                : 'bg-transparent text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            🔧 Assigned to me
+            {counts.mine > 0 && filterTab !== 'mine' && (
+              <span className="absolute -top-1 -right-1 bg-purple-600 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center">
+                {counts.mine}
+              </span>
+            )}
+          </button>
+          <button
+            onClick={() => setFilterTab('all')}
+            className={`flex-1 py-2 rounded-xl text-xs font-medium transition ${
+              filterTab === 'all'
+                ? 'bg-red-600 text-white'
+                : 'bg-transparent text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            All ({counts.all})
+          </button>
+          <button
+            onClick={() => setFilterTab('reported')}
+            className={`flex-1 py-2 rounded-xl text-xs font-medium transition ${
+              filterTab === 'reported'
+                ? 'bg-red-600 text-white'
+                : 'bg-transparent text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            By me ({counts.reported})
+          </button>
+        </div>
+
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-2">
           <input
             type="text"
@@ -271,35 +371,17 @@ export default function EmployeeDefectsPage() {
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={() => setFilterBy('all')}
-            className={`py-2 rounded-xl text-sm font-medium transition ${
-              filterBy === 'all'
-                ? 'bg-red-600 text-white'
-                : 'bg-white border border-gray-200 text-gray-700'
-            }`}
-          >
-            All defects
-          </button>
-          <button
-            onClick={() => setFilterBy('mine')}
-            className={`py-2 rounded-xl text-sm font-medium transition ${
-              filterBy === 'mine'
-                ? 'bg-red-600 text-white'
-                : 'bg-white border border-gray-200 text-gray-700'
-            }`}
-          >
-            Reported by me
-          </button>
-        </div>
-
         {filtered.length === 0 ? (
           <div className="bg-white rounded-2xl shadow-sm p-8 border border-gray-100 text-center">
-            <p className="text-5xl mb-3">✅</p>
-            <p className="text-gray-700 font-medium">No open defects</p>
+            <p className="text-5xl mb-3">{filterTab === 'mine' ? '🎉' : '✅'}</p>
+            <p className="text-gray-700 font-medium">
+              {filterTab === 'mine' ? 'Nothing assigned to you' :
+                filterTab === 'reported' ? 'You haven\'t reported anything' :
+                'No open defects'}
+            </p>
             <p className="text-xs text-gray-500 mt-1">
-              {defects.length === 0 ? 'All vehicles are good to go' : 'No defects match your filters'}
+              {filterTab === 'mine' ? 'Workshop will assign you defects to repair' :
+                defects.length === 0 ? 'All vehicles are good to go' : 'No matches'}
             </p>
           </div>
         ) : (
@@ -328,10 +410,24 @@ export default function EmployeeDefectsPage() {
                   <ul className="divide-y divide-gray-100">
                     {list.map(d => {
                       const isResolving = resolvingId === d.id
+                      const isAddingNote = addingNoteFor === d.id
                       const photos = photoMap[d.check_item_id] || []
+                      const notes = notesMap[d.id] || []
+                      const isAssignedToMe = d.assigned_to === currentUser?.id
+                      const canAddNote = isAssignedToMe || hasDefectManagement
+                      const canResolve = isAssignedToMe || hasDefectManagement
 
                       return (
-                        <li key={d.id} className="p-3">
+                        <li key={d.id} className={`p-3 ${isAssignedToMe ? 'bg-purple-50/40' : ''}`}>
+
+                          {isAssignedToMe && (
+                            <div className="bg-purple-100 border border-purple-300 rounded-lg px-2 py-1 mb-2 inline-block">
+                              <p className="text-[10px] font-bold text-purple-800 uppercase tracking-wide">
+                                🔧 Assigned to you
+                              </p>
+                            </div>
+                          )}
+
                           <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">{d.category}</p>
                           <p className="text-sm font-medium text-gray-800">{d.item_text}</p>
                           {d.defect_note && (
@@ -340,7 +436,6 @@ export default function EmployeeDefectsPage() {
                             </div>
                           )}
 
-                          {/* Photos */}
                           {photos.length > 0 && (
                             <div className="mt-2 grid grid-cols-3 gap-2">
                               {photos.map(p => (
@@ -360,50 +455,94 @@ export default function EmployeeDefectsPage() {
                             <span>By {d.reporter?.full_name || 'Unknown'}</span>
                             <span>·</span>
                             <span>{new Date(d.reported_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                            {d.assignee && !isAssignedToMe && (
+                              <>
+                                <span>·</span>
+                                <span className="text-purple-700 font-medium">🔧 {d.assignee.full_name}</span>
+                              </>
+                            )}
                           </div>
 
-                          {/* Resolution UI - only if user has Defect Management feature */}
-                          {hasDefectManagement && (
-                            <>
-                              {isResolving ? (
-                                <div className="mt-3 bg-gray-50 border border-gray-200 rounded-lg p-3 space-y-2">
-                                  <p className="text-sm font-semibold text-gray-800">
-                                    {resolutionAction === 'fixed' ? '✓ Mark as Fixed' : '✗ Dismiss Defect'}
+                          {/* Repair notes thread */}
+                          {notes.length > 0 && (
+                            <div className="mt-3 space-y-1.5">
+                              <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">🔧 Repair Log ({notes.length})</p>
+                              {notes.map((n: any) => (
+                                <div key={n.id} className="bg-amber-50 border border-amber-200 rounded-lg p-2">
+                                  <p className="text-xs text-gray-800 whitespace-pre-wrap leading-snug">{n.note}</p>
+                                  <p className="text-[10px] text-gray-500 mt-1">
+                                    {n.author?.full_name || 'Unknown'} · {new Date(n.created_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                                   </p>
-                                  <textarea
-                                    value={resolutionNotes}
-                                    onChange={(e) => setResolutionNotes(e.target.value)}
-                                    rows={2}
-                                    placeholder={
-                                      resolutionAction === 'fixed'
-                                        ? 'Resolution notes (e.g. parts replaced)'
-                                        : 'Reason for dismissing (optional)'
-                                    }
-                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
-                                  />
-                                  <div className="flex gap-2 justify-end">
-                                    <button
-                                      onClick={cancelResolve}
-                                      disabled={submitting}
-                                      className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg disabled:opacity-50"
-                                    >
-                                      Cancel
-                                    </button>
-                                    <button
-                                      onClick={submitResolve}
-                                      disabled={submitting}
-                                      className={`text-xs text-white px-3 py-1.5 rounded-lg disabled:opacity-50 ${
-                                        resolutionAction === 'fixed'
-                                          ? 'bg-green-600 hover:bg-green-700'
-                                          : 'bg-gray-600 hover:bg-gray-700'
-                                      }`}
-                                    >
-                                      {submitting ? 'Saving...' : 'Confirm'}
-                                    </button>
-                                  </div>
                                 </div>
-                              ) : (
-                                <div className="mt-3 flex gap-2 justify-end">
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Add note form */}
+                          {isAddingNote && (
+                            <div className="mt-3 bg-amber-50 border border-amber-300 rounded-lg p-3 space-y-2">
+                              <p className="text-sm font-semibold text-gray-800">🔧 Add Repair Note</p>
+                              <textarea
+                                value={noteText}
+                                onChange={(e) => setNoteText(e.target.value)}
+                                rows={3}
+                                placeholder="What's been done? Parts ordered, work in progress..."
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 bg-white"
+                              />
+                              <div className="flex gap-2 justify-end">
+                                <button onClick={cancelAddNote} disabled={submitting} className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg disabled:opacity-50">Cancel</button>
+                                <button
+                                  onClick={() => submitNote(d.id)}
+                                  disabled={submitting}
+                                  className="text-xs bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg disabled:opacity-50"
+                                >
+                                  {submitting ? 'Adding...' : 'Add Note'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Resolve form */}
+                          {isResolving && (
+                            <div className="mt-3 bg-gray-50 border border-gray-300 rounded-lg p-3 space-y-2">
+                              <p className="text-sm font-semibold text-gray-800">
+                                {resolutionAction === 'fixed' ? '✓ Mark as Fixed' : '✗ Dismiss Defect'}
+                              </p>
+                              <textarea
+                                value={resolutionNotes}
+                                onChange={(e) => setResolutionNotes(e.target.value)}
+                                rows={2}
+                                placeholder={resolutionAction === 'fixed' ? 'Final resolution notes' : 'Reason for dismissing'}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900"
+                              />
+                              <div className="flex gap-2 justify-end">
+                                <button onClick={cancelResolve} disabled={submitting} className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg disabled:opacity-50">Cancel</button>
+                                <button
+                                  onClick={submitResolve}
+                                  disabled={submitting}
+                                  className={`text-xs text-white px-3 py-1.5 rounded-lg disabled:opacity-50 ${
+                                    resolutionAction === 'fixed' ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 hover:bg-gray-700'
+                                  }`}
+                                >
+                                  {submitting ? 'Saving...' : 'Confirm'}
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Action buttons */}
+                          {!isResolving && !isAddingNote && (canAddNote || canResolve) && (
+                            <div className="mt-3 flex gap-2 justify-end flex-wrap">
+                              {canAddNote && (
+                                <button
+                                  onClick={() => startAddNote(d.id)}
+                                  className="text-xs bg-amber-100 hover:bg-amber-200 text-amber-700 px-3 py-1.5 rounded-lg font-medium"
+                                >
+                                  📝 Add Note
+                                </button>
+                              )}
+                              {canResolve && (
+                                <>
                                   <button
                                     onClick={() => startResolve(d.id, 'dismissed')}
                                     className="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg font-medium"
@@ -416,9 +555,9 @@ export default function EmployeeDefectsPage() {
                                   >
                                     ✓ Mark Fixed
                                   </button>
-                                </div>
+                                </>
                               )}
-                            </>
+                            </div>
                           )}
                         </li>
                       )
@@ -432,7 +571,6 @@ export default function EmployeeDefectsPage() {
 
       </div>
 
-      {/* Sticky bottom: Report a defect */}
       <div className="fixed bottom-16 left-0 right-0 bg-white border-t border-gray-200 px-4 py-3 shadow-lg">
         <button
           onClick={() => router.push('/employee/vehicle-checks/defects/new')}
