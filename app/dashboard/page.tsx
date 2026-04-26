@@ -13,6 +13,7 @@ export default function Dashboard() {
   const [userFeatures, setUserFeatures] = useState<any[]>([])
   const [managerTitles, setManagerTitles] = useState<string[]>([])
   const [users, setUsers] = useState<any[]>([])
+  const [pendingHolidayCount, setPendingHolidayCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const router = useRouter()
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
@@ -66,12 +67,14 @@ export default function Dashboard() {
       .eq('is_enabled', true)
     setUserFeatures(featuresData || [])
 
+    let titles: string[] = []
     if (profile.role === 'manager') {
-      const { data: titles } = await supabase
+      const { data: titlesData } = await supabase
         .from('manager_job_titles')
         .select('job_title')
         .eq('manager_id', user.id)
-      setManagerTitles(titles?.map((t: any) => t.job_title) || [])
+      titles = titlesData?.map((t: any) => t.job_title) || []
+      setManagerTitles(titles)
     }
 
     const res = await fetch('/api/get-company-users', {
@@ -82,12 +85,70 @@ export default function Dashboard() {
     const result = await res.json()
     if (result.users) setUsers(result.users)
 
+    // Get pending holiday count for the user's scope
+    const holRes = await fetch('/api/get-holiday-requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ company_id: profile.company_id, scope: 'company' }),
+    })
+    const holResult = await holRes.json()
+    if (holResult.requests) {
+      let pending = holResult.requests.filter((r: any) =>
+        r.status === 'pending' || r.status === 'cancel_pending'
+      )
+      if (profile.role === 'manager') {
+        pending = pending.filter((r: any) =>
+          r.user?.job_title && titles.includes(r.user.job_title)
+        )
+      }
+      // Don't count own requests
+      pending = pending.filter((r: any) => r.user_id !== user.id)
+      setPendingHolidayCount(pending.length)
+    }
+
     setLoading(false)
   }, [router])
 
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  // Realtime: listen for holiday request changes
+  useEffect(() => {
+    if (!currentUser?.company_id) return
+
+    const channel = supabase
+      .channel('dashboard-holidays-count')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'holiday_requests',
+          filter: `company_id=eq.${currentUser.company_id}`,
+        },
+        () => {
+          fetchData()
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${currentUser.id}`,
+        },
+        () => {
+          fetchData()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [currentUser?.company_id, currentUser?.id, fetchData])
 
   const visibleUsers = currentUser?.role === 'admin'
     ? users
@@ -121,6 +182,16 @@ export default function Dashboard() {
     }
   }
 
+  const hasFeature = (name: string) => {
+    return userFeatures.some((uf: any) => uf.features?.name === name)
+  }
+
+  const hasCompanyFeature = (name: string) => {
+    return company?.company_features?.some((cf: any) =>
+      cf.is_enabled && cf.features?.name === name
+    )
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-gray-100">
@@ -133,6 +204,13 @@ export default function Dashboard() {
   const daysRemaining = effectiveEnd
     ? Math.ceil((new Date(effectiveEnd).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
     : null
+
+  const isAdmin = currentUser?.role === 'admin'
+  const isManager = currentUser?.role === 'manager'
+  const showHolidayApprovals = (isAdmin || (isManager && managerTitles.length > 0)) && hasCompanyFeature('Holidays')
+  const showMyHolidays = (isAdmin || isManager) && hasFeature('Holidays') && currentUser?.holiday_entitlement !== null && currentUser?.holiday_entitlement !== undefined
+
+  const balance = currentUser?.holiday_entitlement
 
   return (
     <main className="min-h-screen bg-gray-100">
@@ -167,6 +245,7 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* Stats grid */}
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-white rounded-xl shadow p-5 text-center">
             <p className="text-3xl font-bold text-blue-600">{visibleUsers.length}</p>
@@ -186,60 +265,80 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Action Tiles */}
         <div className="bg-white rounded-xl shadow p-6">
-          <h2 className="text-xl font-semibold text-gray-800 mb-4">Your Features</h2>
-          {currentUser?.role === 'admin' ? (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {company?.company_features
-                ?.filter((cf: any) => cf.is_enabled)
-                .map((cf: any) => (
-                  <button
-                    key={cf.feature_id}
-                    onClick={() => router.push(`/dashboard/${cf.features.name.toLowerCase()}`)}
-                    className="bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-xl p-4 text-left transition"
-                  >
-                    <p className="font-semibold text-purple-700">{cf.features.name}</p>
-                    <p className="text-xs text-purple-600 mt-1">{cf.features.description}</p>
-                  </button>
-                ))}
-            </div>
-          ) : userFeatures.length === 0 ? (
-            <p className="text-gray-400 text-sm">You don&apos;t have access to any features yet.</p>
-          ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              {userFeatures.map((uf: any) => (
-                <button
-                  key={uf.feature_id}
-                  onClick={() => router.push(`/dashboard/${uf.features.name.toLowerCase()}`)}
-                  className="bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-xl p-4 text-left transition"
-                >
-                  <p className="font-semibold text-blue-700">{uf.features.name}</p>
-                  <p className="text-xs text-blue-600 mt-1">{uf.features.description}</p>
-                </button>
-              ))}
-            </div>
-          )}
+          <h2 className="text-xl font-semibold text-gray-800 mb-4">Quick Actions</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+
+            {/* Manage Users */}
+            {isAdmin && (
+              <button
+                onClick={() => router.push('/dashboard/users')}
+                className="bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-xl p-4 text-left transition"
+              >
+                <div className="text-3xl mb-2">👥</div>
+                <p className="font-semibold text-purple-700">Manage Users</p>
+                <p className="text-xs text-purple-600 mt-1">Add, edit and freeze users</p>
+              </button>
+            )}
+
+            {isManager && (
+              <button
+                onClick={() => router.push('/dashboard/users')}
+                className="bg-purple-50 hover:bg-purple-100 border border-purple-200 rounded-xl p-4 text-left transition"
+              >
+                <div className="text-3xl mb-2">👥</div>
+                <p className="font-semibold text-purple-700">Your Team</p>
+                <p className="text-xs text-purple-600 mt-1">View team members</p>
+              </button>
+            )}
+
+            {/* Holiday Approvals */}
+            {showHolidayApprovals && (
+              <button
+                onClick={() => router.push('/dashboard/holidays')}
+                className="bg-yellow-50 hover:bg-yellow-100 border border-yellow-200 rounded-xl p-4 text-left transition relative"
+              >
+                <div className="text-3xl mb-2">🏖️</div>
+                <p className="font-semibold text-yellow-700">Holiday Approvals</p>
+                <p className="text-xs text-yellow-600 mt-1">Review and approve requests</p>
+                {pendingHolidayCount > 0 && (
+                  <span className="absolute top-2 right-2 bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full">
+                    {pendingHolidayCount}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {/* My Holidays */}
+            {showMyHolidays && (
+              <button
+                onClick={() => router.push('/dashboard/my-holidays')}
+                className="bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-xl p-4 text-left transition"
+              >
+                <div className="text-3xl mb-2">🏝️</div>
+                <p className="font-semibold text-orange-700">My Holidays</p>
+                <p className="text-xs text-orange-600 mt-1">
+                  {balance !== null && balance !== undefined ? `${balance} days remaining` : 'Request time off'}
+                </p>
+              </button>
+            )}
+
+          </div>
         </div>
 
+        {/* Team list preview */}
         <div className="bg-white rounded-xl shadow p-6">
           <div className="flex justify-between items-center mb-4">
             <h2 className="text-xl font-semibold text-gray-800">
               {currentUser?.role === 'admin' ? 'All Users' : 'Your Team'}
             </h2>
-            {currentUser?.role === 'admin' && (
+            {visibleUsers.length > 0 && (
               <button
                 onClick={() => router.push('/dashboard/users')}
                 className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm"
               >
-                Manage Users →
-              </button>
-            )}
-            {currentUser?.role === 'manager' && visibleUsers.length > 0 && (
-              <button
-                onClick={() => router.push('/dashboard/users')}
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm"
-              >
-                View Team →
+                {currentUser?.role === 'admin' ? 'Manage Users →' : 'View Team →'}
               </button>
             )}
           </div>
