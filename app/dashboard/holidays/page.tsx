@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
-import { getUKBankHolidays } from '@/lib/bankHolidays'
 
 const supabase = createClient()
 
@@ -51,6 +50,7 @@ export default function DashboardHolidays() {
   const [submittingHoliday, setSubmittingHoliday] = useState(false)
   const [submittingAdjustment, setSubmittingAdjustment] = useState(false)
   const [actionInProgress, setActionInProgress] = useState(false)
+  const [conflictData, setConflictData] = useState<any>(null)
 
   const router = useRouter()
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
@@ -208,7 +208,6 @@ export default function DashboardHolidays() {
     return []
   }
 
-  // For Manage tab - employees you can manage (NOT including yourself)
   const getManageableEmployees = () => {
     return getVisibleUsers().filter(u => u.id !== currentUser?.id)
   }
@@ -260,11 +259,71 @@ export default function DashboardHolidays() {
     const action = req.status === 'cancel_pending' ? 'approve_cancel' : 'approve'
     const wasCancelPending = req.status === 'cancel_pending'
 
-    // Snapshot for rollback if the API call fails
+    setActionInProgress(true)
+
+    // First call - check if conflicts need acknowledgement (only for normal approve)
+    if (action === 'approve') {
+      const checkRes = await fetch('/api/holiday-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          request_id: req.id,
+          reviewer_id: currentUser.id,
+          reviewer_email: currentUser.email,
+          reviewer_role: currentUser.role,
+          review_notes: reviewNotes,
+        }),
+      })
+
+      const checkResult = await checkRes.json()
+
+      // If conflicts found and not yet acknowledged, show popup
+      if (checkRes.ok && checkResult.needs_acknowledgement) {
+        setActionInProgress(false)
+        setConflictData({
+          request: req,
+          conflicts: checkResult.conflicts,
+          conflict_count: checkResult.conflict_count,
+        })
+        return
+      }
+
+      setActionInProgress(false)
+
+      if (!checkRes.ok) {
+        showMessage('Error: ' + checkResult.error, 'error')
+        return
+      }
+
+      // Optimistic UI update for the approved request
+      setRequests(prev =>
+        prev.map(r =>
+          r.id === req.id
+            ? {
+                ...r,
+                status: 'approved',
+                review_notes: reviewNotes || r.review_notes,
+                reviewed_by: currentUser.id,
+                reviewed_at: new Date().toISOString(),
+              }
+            : r
+        )
+      )
+      setSelectedRequest(null)
+      setReviewNotes('')
+
+      const msg = checkResult.conflicts_removed > 0
+        ? `Request approved — ${checkResult.conflicts_removed} schedule assignment${checkResult.conflicts_removed > 1 ? 's' : ''} auto-removed`
+        : 'Request approved'
+      showMessage(msg, 'success')
+      fetchData()
+      return
+    }
+
+    // approve_cancel flow (unchanged)
     const previousRequests = requests
 
-    // ---- OPTIMISTIC UPDATE: update UI instantly ----
-    setActionInProgress(true)
     setRequests(prev =>
       prev.map(r =>
         r.id === req.id
@@ -298,16 +357,69 @@ export default function DashboardHolidays() {
     setActionInProgress(false)
 
     if (!res.ok) {
-      // Roll back the optimistic change
       setRequests(previousRequests)
       showMessage('Error: ' + result.error, 'error')
       return
     }
 
-    showMessage(action === 'approve_cancel' ? 'Cancellation approved' : 'Request approved', 'success')
-
-    // Refresh from server to pick up balance changes etc.
+    showMessage('Cancellation approved', 'success')
     fetchData()
+  }
+
+  const handleConfirmConflictApprove = async () => {
+    if (!conflictData) return
+    const req = conflictData.request
+
+    setActionInProgress(true)
+
+    const res = await fetch('/api/holiday-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'approve',
+        request_id: req.id,
+        reviewer_id: currentUser.id,
+        reviewer_email: currentUser.email,
+        reviewer_role: currentUser.role,
+        review_notes: reviewNotes,
+        conflict_acknowledged: true,
+      }),
+    })
+
+    const result = await res.json()
+    setActionInProgress(false)
+    setConflictData(null)
+
+    if (!res.ok) {
+      showMessage('Error: ' + result.error, 'error')
+      return
+    }
+
+    setRequests(prev =>
+      prev.map(r =>
+        r.id === req.id
+          ? {
+              ...r,
+              status: 'approved',
+              review_notes: reviewNotes || r.review_notes,
+              reviewed_by: currentUser.id,
+              reviewed_at: new Date().toISOString(),
+            }
+          : r
+      )
+    )
+    setSelectedRequest(null)
+    setReviewNotes('')
+
+    const msg = result.conflicts_removed > 0
+      ? `Request approved — ${result.conflicts_removed} schedule assignment${result.conflicts_removed > 1 ? 's' : ''} auto-removed`
+      : 'Request approved'
+    showMessage(msg, 'success')
+    fetchData()
+  }
+
+  const handleCancelConflictApprove = () => {
+    setConflictData(null)
   }
 
   const handleReject = async (req: any) => {
@@ -322,15 +434,12 @@ export default function DashboardHolidays() {
 
     const previousRequests = requests
 
-    // ---- OPTIMISTIC UPDATE ----
     setActionInProgress(true)
     setRequests(prev =>
       prev.map(r =>
         r.id === req.id
           ? {
               ...r,
-              // If rejecting a cancel request, the holiday goes back to approved.
-              // If rejecting a normal pending request, it becomes rejected.
               status: wasCancelPending ? 'approved' : 'rejected',
               review_notes: reviewNotes || r.review_notes,
               reviewed_by: currentUser.id,
@@ -418,14 +527,16 @@ export default function DashboardHolidays() {
       return
     }
 
-    showMessage('Holiday added and auto-approved!', 'success')
+    const msg = result.conflicts_removed > 0
+      ? `Holiday added — ${result.conflicts_removed} schedule assignment${result.conflicts_removed > 1 ? 's' : ''} auto-removed`
+      : 'Holiday added and auto-approved!'
+    showMessage(msg, 'success')
     setManageStartDate('')
     setManageEndDate('')
     setManageIsHalfDay(false)
     setManageReason('')
     setManageEarlyFinishTime('')
 
-    // Refresh so the new holiday + balance show immediately
     fetchData()
   }
 
@@ -587,7 +698,6 @@ export default function DashboardHolidays() {
 
   const monthDates = getMonthDates()
   const monthName = calendarMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
-  const today = formatDateLocal(new Date())
 
   return (
     <main className="min-h-screen bg-gray-100">
@@ -1217,6 +1327,68 @@ export default function DashboardHolidays() {
                 )}
               </>
             )}
+          </div>
+        )}
+
+        {/* Conflict acknowledgement modal */}
+        {conflictData && (
+          <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+              <div className="p-6 space-y-4">
+                <div className="flex items-start gap-3">
+                  <span className="text-3xl">⚠️</span>
+                  <div className="flex-1">
+                    <h2 className="text-xl font-bold text-gray-800">Schedule Conflict</h2>
+                    <p className="text-sm text-gray-600 mt-1">
+                      This holiday overlaps with{' '}
+                      <span className="font-semibold text-red-600">{conflictData.conflict_count}</span>{' '}
+                      already-published schedule assignment{conflictData.conflict_count > 1 ? 's' : ''}.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3 space-y-2 max-h-60 overflow-y-auto">
+                  {conflictData.conflicts.map((c: any) => (
+                    <div key={c.id} className="text-sm flex justify-between items-start gap-3 pb-2 border-b border-red-100 last:border-b-0 last:pb-0">
+                      <div>
+                        <p className="font-semibold text-red-900">{c.schedules?.name || '(unknown)'}</p>
+                        <p className="text-xs text-red-700">
+                          {new Date(c.assignment_date + 'T00:00:00').toLocaleDateString('en-GB', {
+                            weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
+                          })}
+                        </p>
+                      </div>
+                      <span className="text-xs text-red-700 whitespace-nowrap">
+                        {c.schedules?.start_time?.slice(0, 5)}–{c.schedules?.end_time?.slice(0, 5)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
+                  <p className="text-xs text-yellow-800">
+                    <span className="font-semibold">⚡ If you continue:</span> The {conflictData.conflict_count} assignment{conflictData.conflict_count > 1 ? 's' : ''} above will be removed from the schedule. This action will be logged. You may need to reassign someone else to cover.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={handleCancelConflictApprove}
+                    disabled={actionInProgress}
+                    className="bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl font-medium transition disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleConfirmConflictApprove}
+                    disabled={actionInProgress}
+                    className="bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-medium transition disabled:opacity-50"
+                  >
+                    {actionInProgress ? 'Approving...' : 'Acknowledge & Approve'}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

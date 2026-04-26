@@ -25,12 +25,86 @@ export async function POST(request: Request) {
       // For adjust_balance
       adjustment_amount,
       adjustment_reason,
+      // For conflict acknowledgement
+      conflict_acknowledged,
     } = await request.json()
 
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!
     )
+
+    // ---------- helper: remove conflicting published assignments ----------
+    const removeConflictsAndLog = async (
+      holidayUserId: string,
+      holidayCompanyId: string,
+      holidayStart: string,
+      holidayEnd: string,
+      holidayRequestId: string,
+      acknowledgerId: string,
+      acknowledgerEmail: string | undefined,
+      acknowledgerRole: string | undefined
+    ) => {
+      // Find PUBLISHED assignments overlapping the holiday
+      const { data: conflicting } = await supabase
+        .from('schedule_assignments')
+        .select('id, schedule_id, assignment_date, status, schedules(name, start_time, end_time)')
+        .eq('company_id', holidayCompanyId)
+        .eq('user_id', holidayUserId)
+        .eq('status', 'published')
+        .gte('assignment_date', holidayStart)
+        .lte('assignment_date', holidayEnd)
+
+      if (!conflicting || conflicting.length === 0) return { removed: 0, conflicts: [] }
+
+      // Log each conflict acknowledgement
+      const ackRows = conflicting.map((a: any) => ({
+        company_id: holidayCompanyId,
+        assignment_id: a.id,
+        holiday_request_id: holidayRequestId,
+        acknowledged_by: acknowledgerId,
+        acknowledged_at: new Date().toISOString(),
+        details: {
+          schedule_id: a.schedule_id,
+          schedule_name: a.schedules?.name || null,
+          assignment_date: a.assignment_date,
+          start_time: a.schedules?.start_time || null,
+          end_time: a.schedules?.end_time || null,
+          user_id: holidayUserId,
+        },
+      }))
+
+      await supabase
+        .from('schedule_conflict_acknowledgements')
+        .insert(ackRows)
+
+      // Delete the conflicting assignments
+      const ids = conflicting.map((a: any) => a.id)
+      await supabase
+        .from('schedule_assignments')
+        .delete()
+        .in('id', ids)
+
+      // Audit log: one entry summarising the acknowledgement
+      await logAudit({
+        user_id: acknowledgerId,
+        user_email: acknowledgerEmail,
+        user_role: acknowledgerRole,
+        action: 'HOLIDAY_CONFLICT_ACKNOWLEDGED',
+        entity: 'holiday_request',
+        entity_id: holidayRequestId,
+        details: {
+          target_user_id: holidayUserId,
+          holiday_start: holidayStart,
+          holiday_end: holidayEnd,
+          assignments_removed: conflicting.length,
+          assignment_dates: conflicting.map((a: any) => a.assignment_date),
+          schedules: conflicting.map((a: any) => a.schedules?.name).filter(Boolean),
+        },
+      })
+
+      return { removed: conflicting.length, conflicts: conflicting }
+    }
 
     // CREATE a new holiday request (employee self-service)
     if (action === 'create') {
@@ -135,7 +209,27 @@ export async function POST(request: Request) {
         },
       })
 
-      return NextResponse.json({ success: true, request: data })
+      // ---- Conflict handling: auto-remove overlapping published assignments ----
+      let conflictResult = { removed: 0, conflicts: [] as any[] }
+      if (request_type === 'holiday' || request_type === 'keep_day_off') {
+        conflictResult = await removeConflictsAndLog(
+          target_user_id,
+          company_id,
+          start_date,
+          end_date,
+          data.id,
+          reviewer_id,
+          reviewer_email,
+          reviewer_role
+        )
+      }
+
+      return NextResponse.json({
+        success: true,
+        request: data,
+        conflicts_removed: conflictResult.removed,
+        conflicts: conflictResult.conflicts,
+      })
     }
 
     // ADJUST_BALANCE — admin adjusts holiday entitlement
@@ -244,6 +338,27 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'You cannot approve your own request' }, { status: 403 })
       }
 
+      // ---- Check for conflicts BEFORE approving ----
+      // If conflicts exist and not yet acknowledged, return them so the UI can ask for confirmation
+      if (req.request_type === 'holiday' || req.request_type === 'keep_day_off') {
+        const { data: conflicting } = await supabase
+          .from('schedule_assignments')
+          .select('id, assignment_date, schedule_id, schedules(name, start_time, end_time)')
+          .eq('company_id', req.company_id)
+          .eq('user_id', req.user_id)
+          .eq('status', 'published')
+          .gte('assignment_date', req.start_date)
+          .lte('assignment_date', req.end_date)
+
+        if (conflicting && conflicting.length > 0 && !conflict_acknowledged) {
+          return NextResponse.json({
+            needs_acknowledgement: true,
+            conflicts: conflicting,
+            conflict_count: conflicting.length,
+          })
+        }
+      }
+
       const { error } = await supabase
         .from('holiday_requests')
         .update({
@@ -280,7 +395,25 @@ export async function POST(request: Request) {
         details: { request_type: req.request_type, days_deducted: req.request_type === 'holiday' ? req.days_requested : 0 },
       })
 
-      return NextResponse.json({ success: true })
+      // ---- After approval, remove any conflicting published assignments ----
+      let conflictResult = { removed: 0, conflicts: [] as any[] }
+      if (req.request_type === 'holiday' || req.request_type === 'keep_day_off') {
+        conflictResult = await removeConflictsAndLog(
+          req.user_id,
+          req.company_id,
+          req.start_date,
+          req.end_date,
+          request_id,
+          reviewer_id,
+          reviewer_email,
+          reviewer_role
+        )
+      }
+
+      return NextResponse.json({
+        success: true,
+        conflicts_removed: conflictResult.removed,
+      })
     }
 
     // REJECT a holiday request

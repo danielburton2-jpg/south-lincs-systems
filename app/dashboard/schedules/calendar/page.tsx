@@ -51,6 +51,7 @@ export default function SchedulesCalendarPage() {
   const [schedules, setSchedules] = useState<any[]>([])
   const [assignments, setAssignments] = useState<any[]>([])
   const [holidays, setHolidays] = useState<any[]>([])
+  const [conflicts, setConflicts] = useState<any[]>([])
   const [bankHolidays, setBankHolidays] = useState<Set<string>>(new Set())
   const [bankHolidayNames, setBankHolidayNames] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -85,7 +86,7 @@ export default function SchedulesCalendarPage() {
   }
 
   const loadAll = useCallback(async (companyId: string, weekFromISO: string, weekToISO: string) => {
-    const [profilesRes, schedsRes, asgsRes, holsRes, docsRes] = await Promise.all([
+    const [profilesRes, schedsRes, asgsRes, holsRes, docsRes, conflictsRes] = await Promise.all([
       supabase
         .from('profiles')
         .select(`id, full_name, role, job_title, display_order, is_frozen`)
@@ -114,6 +115,10 @@ export default function SchedulesCalendarPage() {
         .from('schedule_documents')
         .select('id, schedule_id')
         .eq('company_id', companyId),
+      supabase
+        .from('schedule_conflict_acknowledgements')
+        .select('id, assignment_id, holiday_request_id, acknowledged_at, details')
+        .eq('company_id', companyId),
     ])
 
     const filteredUsers = (profilesRes.data || []).filter((p: any) => p.role !== 'superuser')
@@ -131,6 +136,7 @@ export default function SchedulesCalendarPage() {
     setSchedules(schedsWithDocs)
     setAssignments(asgsRes.data || [])
     setHolidays(holsRes.data || [])
+    setConflicts(conflictsRes.data || [])
   }, [])
 
   const init = useCallback(async () => {
@@ -210,6 +216,11 @@ export default function SchedulesCalendarPage() {
         const to = isoDate(addDays(weekStart, 6))
         loadAll(currentUser.company_id, from, to)
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_conflict_acknowledgements', filter: `company_id=eq.${currentUser.company_id}` }, () => {
+        const from = isoDate(weekStart)
+        const to = isoDate(addDays(weekStart, 6))
+        loadAll(currentUser.company_id, from, to)
+      })
       .subscribe()
     return () => {
       supabase.removeChannel(channel)
@@ -230,6 +241,46 @@ export default function SchedulesCalendarPage() {
   }, [weekStart])
 
   const getSchedule = (scheduleId: string) => schedules.find(s => s.id === scheduleId)
+
+  const unresolvedConflictsInWeek = useMemo(() => {
+    const weekFrom = isoDate(weekDates[0])
+    const weekTo = isoDate(weekDates[6])
+
+    const publishedKeys = new Set(
+      assignments
+        .filter(a => a.status === 'published')
+        .map(a => `${a.schedule_id}|${a.assignment_date}`)
+    )
+
+    return conflicts
+      .filter(c => {
+        const d = c.details?.assignment_date
+        const sId = c.details?.schedule_id
+        if (!d || !sId) return false
+        if (d < weekFrom || d > weekTo) return false
+        return !publishedKeys.has(`${sId}|${d}`)
+      })
+      .map(c => ({
+        ...c,
+        assignment_date: c.details.assignment_date,
+        schedule_id: c.details.schedule_id,
+        schedule_name: c.details.schedule_name,
+        start_time: c.details.start_time,
+        end_time: c.details.end_time,
+        original_user_id: c.details.user_id,
+      }))
+  }, [conflicts, assignments, weekDates])
+
+  const unresolvedConflictsByCell = useMemo(() => {
+    const map = new Map<string, any[]>()
+    unresolvedConflictsInWeek.forEach(c => {
+      const key = `${c.original_user_id}|${c.assignment_date}`
+      const arr = map.get(key) || []
+      arr.push(c)
+      map.set(key, arr)
+    })
+    return map
+  }, [unresolvedConflictsInWeek])
 
   const holidayFor = (userId: string, d: Date): any | null => {
     const iso = isoDate(d)
@@ -296,6 +347,9 @@ export default function SchedulesCalendarPage() {
   const modalAsgs = modalUserId && modalDate ? cellAssignments(modalUserId, modalDate) : []
   const modalHol = modalUserId && modalDate ? holidayFor(modalUserId, modalDate) : null
   const modalBankHolName = modalDate ? bankHolName(modalDate) : null
+  const modalConflicts = modalUserId && modalDate
+    ? unresolvedConflictsByCell.get(`${modalUserId}|${isoDate(modalDate)}`) || []
+    : []
 
   const cellText = (userId: string, d: Date): string => {
     const lines: string[] = []
@@ -437,6 +491,8 @@ export default function SchedulesCalendarPage() {
     .filter(d => isBankHol(d))
     .map(d => ({ date: d, name: bankHolName(d)! }))
 
+  const userName = (id: string) => users.find(u => u.id === id)?.full_name || '(unknown)'
+
   return (
     <main className="min-h-screen bg-gray-100">
       <IdleWarningModal show={showWarning} secondsLeft={secondsLeft} onStay={stayLoggedIn} />
@@ -493,6 +549,47 @@ export default function SchedulesCalendarPage() {
       </div>
 
       <div className="max-w-[1400px] mx-auto p-4 md:p-6 space-y-4">
+
+        {canEdit && unresolvedConflictsInWeek.length > 0 && (
+          <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 no-print">
+            <div className="flex items-start gap-3">
+              <span className="text-2xl flex-shrink-0">⚠️</span>
+              <div className="flex-1">
+                <p className="font-bold text-red-800">
+                  Reassign needed — {unresolvedConflictsInWeek.length} schedule slot{unresolvedConflictsInWeek.length > 1 ? 's' : ''} unassigned this week
+                </p>
+                <p className="text-xs text-red-700 mt-1">
+                  These shifts were removed when a holiday was approved. Open the Assign page to reassign someone.
+                </p>
+                <div className="mt-2 space-y-1">
+                  {unresolvedConflictsInWeek.map((c) => (
+                    <div key={c.id} className="text-xs text-red-800 flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold">{c.schedule_name || '(unknown)'}</span>
+                      <span className="text-red-600">·</span>
+                      <span>
+                        {new Date(c.assignment_date + 'T00:00:00').toLocaleDateString('en-GB', {
+                          weekday: 'short', day: '2-digit', month: 'short',
+                        })}
+                      </span>
+                      <span className="text-red-600">·</span>
+                      <span>{formatTime(c.start_time || '')}–{formatTime(c.end_time || '')}</span>
+                      <span className="text-red-600">·</span>
+                      <span className="italic">was: {userName(c.original_user_id)}</span>
+                    </div>
+                  ))}
+                </div>
+                {canEdit && (
+                  <button
+                    onClick={() => router.push('/dashboard/schedules/assign')}
+                    className="mt-3 bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium"
+                  >
+                    ✏️ Go to Assign Page
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {bankHolsInWeek.length > 0 && (
           <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 flex items-center gap-3">
@@ -628,15 +725,29 @@ export default function SchedulesCalendarPage() {
                         const wasReassigned = !hasUnpublished && isCellReassigned(cellAsgs)
                         const bh = isBankHol(d)
                         const isEmpty = cellAsgs.length === 0 && !hol
+                        const cellConflicts = canEdit
+                          ? unresolvedConflictsByCell.get(`${u.id}|${isoDate(d)}`) || []
+                          : []
+                        const hasConflict = cellConflicts.length > 0
 
                         return (
                           <td
                             key={i}
                             onClick={() => openCellModal(u.id, d)}
                             className={`px-2 py-2 align-top text-xs border-r border-gray-100 last:border-r-0 cursor-pointer hover:bg-gray-50 transition ${
-                              hasUnpublished ? 'bg-yellow-100/70' : wasReassigned ? 'bg-yellow-50/70' : bh ? 'bg-orange-50/50' : ''
+                              hasConflict ? 'bg-red-50 ring-2 ring-red-300 ring-inset' :
+                              hasUnpublished ? 'bg-yellow-100/70' :
+                              wasReassigned ? 'bg-yellow-50/70' :
+                              bh ? 'bg-orange-50/50' : ''
                             }`}
                           >
+                            {hasConflict && (
+                              <div className="bg-red-100 border border-red-300 text-red-800 rounded px-2 py-1 text-[11px] font-semibold mb-1 flex items-center gap-1">
+                                <span>⚠️</span>
+                                <span>Reassign needed</span>
+                              </div>
+                            )}
+
                             {hol ? (
                               <div className={`px-2 py-1 rounded font-medium text-[11px] mb-1 ${
                                 hol.request_type === 'holiday' ? 'bg-red-100 text-red-700' :
@@ -647,7 +758,7 @@ export default function SchedulesCalendarPage() {
                               </div>
                             ) : null}
 
-                            {isEmpty && (
+                            {isEmpty && !hasConflict && (
                               <div className="px-2 py-1 rounded text-[11px] leading-tight bg-gray-50 border border-gray-200 text-gray-500 italic text-center">
                                 Day Off
                               </div>
@@ -700,13 +811,19 @@ export default function SchedulesCalendarPage() {
                   const hasUnpublished = cellAsgs.some(a => a.is_changed || a.status === 'draft')
                   const wasReassigned = !hasUnpublished && isCellReassigned(cellAsgs)
                   const isEmpty = cellAsgs.length === 0 && !hol
+                  const cellConflicts = canEdit
+                    ? unresolvedConflictsByCell.get(`${u.id}|${isoDate(dayDate)}`) || []
+                    : []
+                  const hasConflict = cellConflicts.length > 0
 
                   return (
                     <div
                       key={u.id}
                       onClick={() => openCellModal(u.id, dayDate)}
                       className={`p-4 flex gap-4 cursor-pointer hover:bg-gray-50 transition ${
-                        hasUnpublished ? 'bg-yellow-100/60' : wasReassigned ? 'bg-yellow-50' : ''
+                        hasConflict ? 'bg-red-50 ring-2 ring-red-300 ring-inset' :
+                        hasUnpublished ? 'bg-yellow-100/60' :
+                        wasReassigned ? 'bg-yellow-50' : ''
                       }`}
                     >
                       <div className="w-40 flex-shrink-0">
@@ -714,6 +831,12 @@ export default function SchedulesCalendarPage() {
                         {u.job_title && (<p className="text-xs text-gray-500 mt-0.5">{u.job_title}</p>)}
                       </div>
                       <div className="flex-1 flex flex-wrap gap-2">
+                        {hasConflict && (
+                          <div className="bg-red-100 border border-red-300 text-red-800 rounded px-3 py-1.5 text-xs font-semibold flex items-center gap-1">
+                            <span>⚠️</span>
+                            <span>Reassign needed</span>
+                          </div>
+                        )}
                         {hol && (
                           <div className={`px-3 py-1.5 rounded font-medium text-xs ${
                             hol.request_type === 'holiday' ? 'bg-red-100 text-red-700' :
@@ -723,7 +846,7 @@ export default function SchedulesCalendarPage() {
                             {renderHolidayLabel(hol)}
                           </div>
                         )}
-                        {isEmpty && (
+                        {isEmpty && !hasConflict && (
                           <div className="px-3 py-1.5 rounded text-xs bg-gray-50 border border-gray-200 text-gray-500 italic">
                             Day Off
                           </div>
@@ -788,6 +911,10 @@ export default function SchedulesCalendarPage() {
             <span className="w-3 h-3 rounded bg-gray-50 border border-gray-200 inline-block"></span>
             <span className="text-gray-600">Day Off (unassigned)</span>
           </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded bg-red-100 ring-2 ring-red-300 inline-block"></span>
+            <span className="text-gray-600">Reassign needed</span>
+          </span>
           <span className="ml-auto text-gray-500 italic">Click any cell for details</span>
         </div>
       </div>
@@ -805,6 +932,24 @@ export default function SchedulesCalendarPage() {
                 <button onClick={closeCellModal} className="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
               </div>
 
+              {modalConflicts.length > 0 && canEdit && (
+                <div className="bg-red-50 border-2 border-red-300 rounded-xl p-3">
+                  <p className="text-sm font-bold text-red-800 flex items-center gap-2">
+                    <span>⚠️</span> Reassign needed
+                  </p>
+                  <p className="text-xs text-red-700 mt-1">
+                    {modalConflicts.length} schedule{modalConflicts.length > 1 ? 's' : ''} unassigned for this slot — original holder went on holiday:
+                  </p>
+                  <div className="mt-2 space-y-1">
+                    {modalConflicts.map((c: any) => (
+                      <div key={c.id} className="text-xs text-red-800">
+                        • <span className="font-semibold">{c.schedule_name}</span> ({formatTime(c.start_time || '')}–{formatTime(c.end_time || '')})
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {modalBankHolName && (
                 <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 flex items-center gap-2">
                   <span className="text-xl">🎉</span>
@@ -812,7 +957,7 @@ export default function SchedulesCalendarPage() {
                 </div>
               )}
 
-              {modalAsgs.length === 0 && !modalHol && (
+              {modalAsgs.length === 0 && !modalHol && modalConflicts.length === 0 && (
                 <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-center">
                   <p className="text-gray-700 font-medium">Day Off</p>
                   <p className="text-xs text-gray-500 mt-1">No schedule assigned for this day.</p>
