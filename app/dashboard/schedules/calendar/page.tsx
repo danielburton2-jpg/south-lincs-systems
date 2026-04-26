@@ -89,7 +89,7 @@ export default function SchedulesCalendarPage() {
     const [profilesRes, schedsRes, asgsRes, holsRes, docsRes, conflictsRes] = await Promise.all([
       supabase
         .from('profiles')
-        .select(`id, full_name, role, job_title, display_order, is_frozen`)
+        .select(`id, full_name, role, job_title, employee_number, display_order, is_frozen`)
         .eq('company_id', companyId)
         .eq('is_deleted', false)
         .order('display_order', { ascending: true, nullsFirst: false })
@@ -392,7 +392,7 @@ export default function SchedulesCalendarPage() {
       return bh ? `${base}\n(${bh})` : base
     })]]
     const body = visibleUsers.map(u => [
-      u.full_name + (u.job_title ? `\n${u.job_title}` : ''),
+      u.full_name + (u.employee_number ? `\n#${u.employee_number}` : ''),
       ...weekDates.map(d => cellText(u.id, d)),
     ])
 
@@ -756,7 +756,7 @@ export default function SchedulesCalendarPage() {
                     <tr key={u.id} className="border-b border-gray-100 last:border-b-0">
                       <td className="px-3 py-3 align-top sticky left-0 bg-white z-10 border-r border-gray-100">
                         <p className="font-semibold text-gray-800 text-sm leading-tight">{u.full_name}</p>
-                        {u.job_title && (<p className="text-[11px] text-gray-500 mt-0.5">{u.job_title}</p>)}
+                        {u.employee_number && (<p className="text-[11px] text-gray-500 mt-0.5">#{u.employee_number}</p>)}
                         {u.is_frozen && (<p className="text-[10px] text-amber-700 font-medium mt-0.5">Frozen</p>)}
                       </td>
                       {weekDates.map((d, i) => {
@@ -876,7 +876,7 @@ export default function SchedulesCalendarPage() {
                     >
                       <div className="w-40 flex-shrink-0">
                         <p className="font-semibold text-gray-800 text-sm">{u.full_name}</p>
-                        {u.job_title && (<p className="text-xs text-gray-500 mt-0.5">{u.job_title}</p>)}
+                        {u.employee_number && (<p className="text-xs text-gray-500 mt-0.5">#{u.employee_number}</p>)}
                       </div>
                       <div className="flex-1 flex flex-wrap gap-2">
                         {hasConflict && (
@@ -975,7 +975,7 @@ export default function SchedulesCalendarPage() {
                 <div>
                   <h2 className="text-xl font-bold text-gray-800">{modalUser?.full_name}</h2>
                   <p className="text-sm text-gray-500 mt-0.5">{formatDateFull(modalDate)}</p>
-                  {modalUser?.job_title && (<p className="text-xs text-gray-500 mt-0.5">{modalUser.job_title}</p>)}
+                  {modalUser?.employee_number && (<p className="text-xs text-gray-500 mt-0.5">#{modalUser.employee_number}</p>)}
                 </div>
                 <button onClick={closeCellModal} className="text-gray-400 hover:text-gray-700 text-2xl leading-none">×</button>
               </div>
