@@ -60,8 +60,6 @@ export default function DashboardHolidays() {
   }
 
   const fetchData = useCallback(async () => {
-    setLoading(true)
-
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       router.push('/login')
@@ -121,6 +119,48 @@ export default function DashboardHolidays() {
     fetchData()
     fetchBankHolidaysWithNames()
   }, [fetchData])
+
+  // Realtime subscriptions
+  useEffect(() => {
+    if (!currentUser?.company_id) return
+
+    const requestsChannel = supabase
+      .channel('dashboard-holidays-requests')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'holiday_requests',
+          filter: `company_id=eq.${currentUser.company_id}`,
+        },
+        () => {
+          fetchData()
+        }
+      )
+      .subscribe()
+
+    const profilesChannel = supabase
+      .channel('dashboard-holidays-profiles')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'profiles',
+          filter: `company_id=eq.${currentUser.company_id}`,
+        },
+        () => {
+          fetchData()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(requestsChannel)
+      supabase.removeChannel(profilesChannel)
+    }
+  }, [currentUser?.company_id, fetchData])
 
   const getVisibleRequests = () => {
     if (!currentUser) return []
@@ -183,7 +223,6 @@ export default function DashboardHolidays() {
     showMessage(action === 'approve_cancel' ? 'Cancellation approved' : 'Request approved', 'success')
     setSelectedRequest(null)
     setReviewNotes('')
-    fetchData()
   }
 
   const handleReject = async (req: any) => {
@@ -217,7 +256,6 @@ export default function DashboardHolidays() {
     showMessage(action === 'reject_cancel' ? 'Cancellation rejected' : 'Request rejected', 'success')
     setSelectedRequest(null)
     setReviewNotes('')
-    fetchData()
   }
 
   const formatDate = (date: string) => {

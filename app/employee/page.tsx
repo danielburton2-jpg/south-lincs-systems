@@ -14,8 +14,6 @@ export default function EmployeeHome() {
   const router = useRouter()
 
   const fetchData = useCallback(async () => {
-    setLoading(true)
-
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       router.push('/login')
@@ -61,6 +59,48 @@ export default function EmployeeHome() {
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  // Realtime: listen for profile updates (balance changes) and feature changes
+  useEffect(() => {
+    if (!currentUser?.id) return
+
+    const profileChannel = supabase
+      .channel('employee-home-profile')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${currentUser.id}`,
+        },
+        () => {
+          fetchData()
+        }
+      )
+      .subscribe()
+
+    const featuresChannel = supabase
+      .channel('employee-home-features')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'user_features',
+          filter: `user_id=eq.${currentUser.id}`,
+        },
+        () => {
+          fetchData()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(profileChannel)
+      supabase.removeChannel(featuresChannel)
+    }
+  }, [currentUser?.id, fetchData])
 
   const getGreeting = () => {
     const hour = new Date().getHours()
@@ -109,7 +149,6 @@ export default function EmployeeHome() {
 
   return (
     <main className="min-h-screen bg-gray-50 pb-24">
-      {/* Header */}
       <div className="bg-gradient-to-br from-blue-600 to-blue-800 text-white px-6 pt-10 pb-8 rounded-b-3xl shadow-lg">
         <div className="flex items-center justify-between mb-1">
           <p className="text-blue-100 text-sm">{today}</p>
@@ -128,7 +167,6 @@ export default function EmployeeHome() {
 
       <div className="px-6 pt-6 space-y-6">
 
-        {/* Holiday Balance Highlight Card */}
         {showHolidayBalance && (
           <div className="bg-gradient-to-br from-yellow-400 to-orange-500 rounded-2xl shadow-lg p-5 text-white">
             <div className="flex items-center justify-between">
@@ -179,7 +217,6 @@ export default function EmployeeHome() {
 
       </div>
 
-      {/* Bottom Navigation - Just Home + Profile */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
         <div className="flex justify-around items-center h-16 max-w-md mx-auto">
           <button

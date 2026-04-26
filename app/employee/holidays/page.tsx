@@ -49,7 +49,6 @@ export default function EmployeeHolidays() {
   }
 
   const fetchData = useCallback(async () => {
-    setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) {
       router.push('/login')
@@ -93,6 +92,48 @@ export default function EmployeeHolidays() {
     fetchData()
     getUKBankHolidays().then(setBankHolidays)
   }, [fetchData])
+
+  // Realtime subscriptions
+  useEffect(() => {
+    if (!currentUser?.id) return
+
+    const requestsChannel = supabase
+      .channel('employee-holidays-requests')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'holiday_requests',
+          filter: `user_id=eq.${currentUser.id}`,
+        },
+        () => {
+          fetchData()
+        }
+      )
+      .subscribe()
+
+    const profileChannel = supabase
+      .channel('employee-holidays-profile')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${currentUser.id}`,
+        },
+        () => {
+          fetchData()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(requestsChannel)
+      supabase.removeChannel(profileChannel)
+    }
+  }, [currentUser?.id, fetchData])
 
   const calculateDays = () => {
     if (requestType !== 'holiday') return 0
@@ -174,7 +215,6 @@ export default function EmployeeHolidays() {
     setReason('')
     setEarlyFinishTime('')
     setShowRequestForm(false)
-    fetchData()
   }
 
   const handleCancelRequest = async (req: any) => {
@@ -198,7 +238,6 @@ export default function EmployeeHolidays() {
       }
       showMessage('Request cancelled', 'success')
       setSelectedRequest(null)
-      fetchData()
     } else if (req.status === 'approved') {
       const confirmed = confirm('Send a cancellation request to your manager? Your days will be returned if approved.')
       if (!confirmed) return
@@ -219,7 +258,6 @@ export default function EmployeeHolidays() {
       }
       showMessage('Cancellation request sent for approval', 'success')
       setSelectedRequest(null)
-      fetchData()
     }
   }
 
@@ -623,7 +661,6 @@ export default function EmployeeHolidays() {
 
       </div>
 
-      {/* Bottom Navigation - Just Home + Profile */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
         <div className="flex justify-around items-center h-16 max-w-md mx-auto">
           <button
