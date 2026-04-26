@@ -33,6 +33,26 @@ const formatDateShort = (d: Date) =>
 
 const formatTime = (t: string) => t?.slice(0, 5) || ''
 
+const DAY_LABELS: Record<string, string> = {
+  mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun'
+}
+
+const formatBytes = (b: number) => {
+  if (!b) return ''
+  if (b < 1024) return `${b} B`
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`
+  return `${(b / 1024 / 1024).toFixed(1)} MB`
+}
+
+const getFileIcon = (mime: string | null) => {
+  if (!mime) return '📄'
+  if (mime.startsWith('image/')) return '🖼️'
+  if (mime === 'application/pdf') return '📕'
+  if (mime.includes('word') || mime.includes('document')) return '📝'
+  if (mime.includes('sheet') || mime.includes('excel')) return '📊'
+  return '📄'
+}
+
 export default function EmployeeSchedulePage() {
   const router = useRouter()
 
@@ -46,6 +66,12 @@ export default function EmployeeSchedulePage() {
   const [loading, setLoading] = useState(true)
 
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeekMon(new Date()))
+
+  // Modal state
+  const [openSchedule, setOpenSchedule] = useState<any | null>(null)
+  const [openDocs, setOpenDocs] = useState<any[]>([])
+  const [docsLoading, setDocsLoading] = useState(false)
+  const [docMessage, setDocMessage] = useState('')
 
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
@@ -223,6 +249,38 @@ export default function EmployeeSchedulePage() {
     return 'Off'
   }
 
+  const openScheduleModal = async (sched: any) => {
+    setOpenSchedule(sched)
+    setOpenDocs([])
+    setDocMessage('')
+    setDocsLoading(true)
+    const { data } = await supabase
+      .from('schedule_documents')
+      .select('*')
+      .eq('schedule_id', sched.id)
+      .order('uploaded_at', { ascending: false })
+    setOpenDocs(data || [])
+    setDocsLoading(false)
+  }
+
+  const closeModal = () => {
+    setOpenSchedule(null)
+    setOpenDocs([])
+    setDocMessage('')
+  }
+
+  const handleDownload = async (doc: any) => {
+    const { data, error } = await supabase.storage
+      .from('schedule-documents')
+      .createSignedUrl(doc.storage_path, 60)
+
+    if (error || !data?.signedUrl) {
+      setDocMessage('Could not open file')
+      return
+    }
+    window.open(data.signedUrl, '_blank')
+  }
+
   const weekLabel = `${formatDateLong(weekDates[0])} – ${formatDateLong(weekDates[6])}`
 
   if (loading) {
@@ -234,6 +292,10 @@ export default function EmployeeSchedulePage() {
   }
 
   const todayIso = isoDate(new Date())
+
+  const recurringPills = openSchedule?.recurring_days
+    ? Object.entries(openSchedule.recurring_days).filter(([_, v]) => v).map(([k]) => DAY_LABELS[k])
+    : []
 
   return (
     <main className="min-h-screen bg-gray-50 pb-24">
@@ -340,9 +402,10 @@ export default function EmployeeSchedulePage() {
                     const sched = getSchedule(a.schedule_id)
                     if (!sched) return null
                     return (
-                      <div
+                      <button
                         key={a.id}
-                        className="bg-blue-50 border border-blue-200 rounded-lg p-3"
+                        onClick={() => openScheduleModal(sched)}
+                        className="w-full text-left bg-blue-50 hover:bg-blue-100 active:bg-blue-200 border border-blue-200 rounded-lg p-3 transition"
                       >
                         <div className="flex items-start gap-2">
                           <span className="text-lg flex-shrink-0">
@@ -353,12 +416,10 @@ export default function EmployeeSchedulePage() {
                             <p className="text-xs text-blue-700 mt-0.5">
                               🕐 {formatTime(sched.start_time)}–{formatTime(sched.end_time)}
                             </p>
-                            {sched.description && (
-                              <p className="text-xs text-blue-600 mt-1 line-clamp-2">{sched.description}</p>
-                            )}
                           </div>
+                          <span className="text-blue-400 text-sm flex-shrink-0">›</span>
                         </div>
-                      </div>
+                      </button>
                     )
                   })}
 
@@ -374,6 +435,112 @@ export default function EmployeeSchedulePage() {
         </div>
 
       </div>
+
+      {/* Schedule detail modal */}
+      {openSchedule && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center sm:p-4"
+          onClick={closeModal}
+        >
+          <div
+            className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-lg max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="sticky top-0 bg-white border-b border-gray-100 px-5 py-4 flex justify-between items-start gap-3">
+              <div className="flex items-start gap-2 min-w-0 flex-1">
+                <span className="text-2xl flex-shrink-0">
+                  {openSchedule.schedule_type === 'recurring' ? '🔁' : '📅'}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-lg font-bold text-gray-800 break-words">{openSchedule.name}</h2>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {openSchedule.schedule_type === 'recurring' ? 'Recurring' : 'One-off'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={closeModal}
+                className="text-gray-400 hover:text-gray-700 text-2xl leading-none flex-shrink-0"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4">
+
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-xs text-gray-500 mb-1">🕐 Time</p>
+                <p className="font-medium text-gray-800">
+                  {formatTime(openSchedule.start_time)} – {formatTime(openSchedule.end_time)}
+                </p>
+              </div>
+
+              {openSchedule.schedule_type === 'recurring' && recurringPills.length > 0 && (
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-500 mb-1">📋 Days</p>
+                  <p className="font-medium text-gray-800">{recurringPills.join(', ')}</p>
+                </div>
+              )}
+
+              {openSchedule.schedule_type === 'one_off' && openSchedule.start_date && (
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-500 mb-1">📆 Date</p>
+                  <p className="font-medium text-gray-800">
+                    {openSchedule.start_date === openSchedule.end_date
+                      ? formatDateLong(new Date(openSchedule.start_date + 'T00:00:00'))
+                      : `${formatDateLong(new Date(openSchedule.start_date + 'T00:00:00'))} → ${formatDateLong(new Date(openSchedule.end_date + 'T00:00:00'))}`}
+                  </p>
+                </div>
+              )}
+
+              {openSchedule.description && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-1 font-medium">Description</p>
+                  <p className="text-sm text-gray-800 whitespace-pre-wrap">{openSchedule.description}</p>
+                </div>
+              )}
+
+              <div className="pt-3 border-t border-gray-100">
+                <p className="text-sm font-semibold text-gray-800 mb-2">📎 Attachments</p>
+                {docMessage && (
+                  <p className="text-xs text-red-600 mb-2">{docMessage}</p>
+                )}
+                {docsLoading ? (
+                  <p className="text-sm text-gray-400 italic">Loading attachments...</p>
+                ) : openDocs.length === 0 ? (
+                  <p className="text-sm text-gray-400 italic">No attachments</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {openDocs.map(doc => (
+                      <li key={doc.id}>
+                        <button
+                          onClick={() => handleDownload(doc)}
+                          className="w-full flex items-center gap-3 bg-gray-50 hover:bg-gray-100 active:bg-gray-200 rounded-lg px-3 py-2 text-left transition"
+                        >
+                          <span className="text-2xl flex-shrink-0">{getFileIcon(doc.mime_type)}</span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-gray-800 truncate">{doc.file_name}</p>
+                            <p className="text-xs text-gray-500">{formatBytes(doc.file_size)}</p>
+                          </div>
+                          <span className="text-blue-600 text-sm font-medium flex-shrink-0">Open</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <button
+                onClick={closeModal}
+                className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-lg font-medium transition"
+              >
+                Close
+              </button>
+
+            </div>
+          </div>
+        </div>
+      )}
 
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
         <div className="flex justify-around items-center h-16 max-w-md mx-auto">
