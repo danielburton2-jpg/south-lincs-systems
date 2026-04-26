@@ -8,7 +8,6 @@ import { logAuditClient } from '@/lib/auditClient'
 
 const supabase = createClient()
 
-// --- Date helpers ---
 const isoDate = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
@@ -45,10 +44,11 @@ const dowOf = (d: Date): string => {
 type CellMap = Record<string, {
   user_id: string | null
   status: 'draft' | 'published'
-  is_changed: boolean         // only true if changed AFTER a publish
-  has_been_published: boolean // true once a published_at exists in db
+  is_changed: boolean             // true if changed AFTER a publish (drives unpublished-change yellow)
+  has_been_published: boolean
+  first_user_id: string | null    // the very first user ever assigned to this cell — never changes
   assignment_id?: string
-  original_user_id?: string | null
+  saved_user_id?: string | null   // the user_id currently in the database (to detect unsaved edits)
 }>
 
 const cellKey = (scheduleId: string, date: Date) => `${scheduleId}|${isoDate(date)}`
@@ -107,7 +107,8 @@ export default function SchedulesAssignPage() {
         .select('id, user_id, request_type, status, start_date, end_date, half_day_type, early_finish_time')
         .eq('company_id', companyId)
         .eq('status', 'approved')
-        .or(`and(start_date.lte.${weekToISO},end_date.gte.${weekFromISO})`),
+        .lte('start_date', weekToISO)
+        .gte('end_date', weekFromISO),
     ])
 
     const filteredUsers = (usersRes.data || []).filter((p: any) => p.role !== 'superuser')
@@ -124,8 +125,9 @@ export default function SchedulesAssignPage() {
         status: a.status,
         is_changed: a.is_changed,
         has_been_published: !!a.published_at,
+        first_user_id: a.first_user_id ?? a.user_id, // fallback if column not yet populated
         assignment_id: a.id,
-        original_user_id: a.user_id,
+        saved_user_id: a.user_id,
       }
     })
     setCells(cmap)
@@ -261,7 +263,6 @@ export default function SchedulesAssignPage() {
     const key = cellKey(s.id, d)
     setCells(prev => {
       const existing = prev[key]
-      const original = existing?.original_user_id ?? null
       const value = newUserId || null
       const next: CellMap = { ...prev }
 
@@ -269,23 +270,18 @@ export default function SchedulesAssignPage() {
         return prev
       }
 
-      // is_changed is true ONLY if this row has been published before AND
-      // the value differs from what's currently in the database.
-      const hasBeenPublished = existing?.has_been_published ?? false
-      const isChanged = hasBeenPublished && original !== value
-
       next[key] = {
         ...(existing || {
           status: 'draft',
           is_changed: false,
           has_been_published: false,
+          first_user_id: null,
         }),
         user_id: value,
-        is_changed: isChanged,
-        status: existing?.assignment_id ? existing.status : 'draft',
-        has_been_published: hasBeenPublished,
-        assignment_id: existing?.assignment_id,
-        original_user_id: original,
+        // is_changed = changes since last publish (drives the unpublished-change yellow during edit)
+        is_changed: existing?.has_been_published
+          ? (existing.saved_user_id ?? null) !== value
+          : false,
       }
 
       return next
@@ -303,10 +299,10 @@ export default function SchedulesAssignPage() {
 
       Object.entries(cells).forEach(([key, cell]) => {
         const [scheduleId, dateStr] = key.split('|')
-        const original = cell.original_user_id ?? null
+        const saved = cell.saved_user_id ?? null
         const value = cell.user_id
 
-        if (original === value) return
+        if (saved === value) return
 
         if (cell.assignment_id) {
           if (!value) {
@@ -316,7 +312,6 @@ export default function SchedulesAssignPage() {
               )
             )
           } else {
-            // Only mark as is_changed if it was previously published
             const newIsChanged = cell.has_been_published
             ops.push(
               Promise.resolve(
@@ -328,7 +323,7 @@ export default function SchedulesAssignPage() {
             )
           }
         } else if (value) {
-          // Brand new assignment — draft, NOT marked as changed
+          // Brand new — first_user_id auto-set by db trigger
           insertRows.push({
             schedule_id: scheduleId,
             company_id: currentUser.company_id,
@@ -379,7 +374,7 @@ export default function SchedulesAssignPage() {
     }
   }
 
-  // Count assignments needing publish
+  // Count assignments needing publish (drafts or post-publish changes)
   const unpublishedCount = useMemo(() => {
     return Object.values(cells).filter(c =>
       c.assignment_id && (c.status === 'draft' || c.is_changed)
@@ -622,8 +617,14 @@ export default function SchedulesAssignPage() {
                       const key = cellKey(s.id, d)
                       const cell = cells[key]
                       const value = cell?.user_id || ''
-                      const isChanged = !!cell?.is_changed
+                      const isUnpublishedChange = !!cell?.is_changed
                       const isFreshDraft = !!cell?.assignment_id && cell?.status === 'draft' && !cell?.has_been_published
+                      // "Permanent" change indicator: current user differs from the very first user
+                      const isHistoricallyChanged =
+                        !!cell?.assignment_id &&
+                        cell?.first_user_id &&
+                        cell?.user_id &&
+                        cell.first_user_id !== cell.user_id
                       const isToday = isoDate(d) === isoDate(new Date())
 
                       if (!runs) {
@@ -641,17 +642,19 @@ export default function SchedulesAssignPage() {
                       const currentUserStillAvailable = !value || avail.some(u => u.id === value)
                       const currentUserObj = value ? users.find(u => u.id === value) : null
 
-                      // Yellow highlight ONLY for changes after a publish.
-                      // Fresh drafts (never published) get a softer amber tint and "Draft" label.
-                      const yellowHighlight = isChanged
-                      const amberTint = isFreshDraft && !isChanged
+                      // Bright yellow = unpublished change (highest priority)
+                      // Soft yellow = historically changed since first assignment
+                      // Amber = fresh draft (never published)
+                      const yellowHighlight = isUnpublishedChange
+                      const softYellow = !isUnpublishedChange && isHistoricallyChanged
+                      const amberTint = !isUnpublishedChange && !isHistoricallyChanged && isFreshDraft
 
                       return (
                         <td
                           key={i}
                           className={`px-2 py-2 align-top text-xs border-r border-gray-100 last:border-r-0 ${
                             isToday ? 'bg-blue-50/30' : ''
-                          } ${yellowHighlight ? 'bg-yellow-100/70' : amberTint ? 'bg-amber-50/60' : ''}`}
+                          } ${yellowHighlight ? 'bg-yellow-100/70' : softYellow ? 'bg-yellow-50/70' : amberTint ? 'bg-amber-50/60' : ''}`}
                         >
                           <select
                             value={value}
@@ -661,6 +664,8 @@ export default function SchedulesAssignPage() {
                                 ? 'border-red-400 text-red-700'
                                 : yellowHighlight
                                 ? 'border-yellow-500'
+                                : softYellow
+                                ? 'border-yellow-300'
                                 : amberTint
                                 ? 'border-amber-300'
                                 : 'border-gray-300'
@@ -682,7 +687,10 @@ export default function SchedulesAssignPage() {
                             <p className="text-[10px] text-amber-700 mt-0.5 font-medium">Draft</p>
                           )}
                           {yellowHighlight && (
-                            <p className="text-[10px] text-yellow-800 mt-0.5 font-medium">Changed</p>
+                            <p className="text-[10px] text-yellow-800 mt-0.5 font-medium">Unpublished change</p>
+                          )}
+                          {softYellow && (
+                            <p className="text-[10px] text-yellow-700 mt-0.5 font-medium">Reassigned</p>
                           )}
                         </td>
                       )
@@ -698,7 +706,11 @@ export default function SchedulesAssignPage() {
         <div className="bg-white rounded-xl shadow p-3 text-xs text-gray-600 space-y-1">
           <p>📋 <strong>How it works:</strong> Pick a user from each dropdown. Days where the schedule doesn&apos;t run show &quot;—&quot;. Users on holiday, day-off, or with an early finish before the schedule starts are hidden.</p>
           <p>💾 <strong>Save Draft</strong> stores changes silently. <strong>Publish</strong> makes them live for employees on the calendar.</p>
-          <p><span className="inline-block w-2.5 h-2.5 bg-amber-100 border border-amber-300 rounded mr-1 align-middle" /> Draft = never published yet · <span className="inline-block w-2.5 h-2.5 bg-yellow-200 border border-yellow-500 rounded mx-1 align-middle" /> Yellow = changed since the last publish</p>
+          <p className="flex flex-wrap gap-3 pt-1">
+            <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 bg-amber-100 border border-amber-300 rounded" /> Draft</span>
+            <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 bg-yellow-200 border border-yellow-500 rounded" /> Unpublished change</span>
+            <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 bg-yellow-50 border border-yellow-300 rounded" /> Reassigned (since first added)</span>
+          </p>
         </div>
       </div>
     </main>

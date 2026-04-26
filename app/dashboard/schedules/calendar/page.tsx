@@ -4,6 +4,8 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 
 const supabase = createClient()
 
@@ -56,7 +58,6 @@ export default function SchedulesCalendarPage() {
   const [dayDate, setDayDate] = useState<Date>(() => new Date())
   const [justMe, setJustMe] = useState(false)
 
-  // Cell modal state
   const [modalUserId, setModalUserId] = useState<string | null>(null)
   const [modalDate, setModalDate] = useState<Date | null>(null)
 
@@ -96,7 +97,6 @@ export default function SchedulesCalendarPage() {
 
     const filteredUsers = (profilesRes.data || []).filter((p: any) => p.role !== 'superuser')
 
-    // Attach doc counts to schedules
     const docsBySchedule: Record<string, number> = {}
     ;(docsRes.data || []).forEach((d: any) => {
       docsBySchedule[d.schedule_id] = (docsBySchedule[d.schedule_id] || 0) + 1
@@ -179,7 +179,6 @@ export default function SchedulesCalendarPage() {
     loadAll(currentUser.company_id, from, to)
   }, [weekStart, currentUser?.company_id, loadAll])
 
-  // Realtime
   useEffect(() => {
     if (!currentUser?.company_id) return
     const channel = supabase
@@ -233,6 +232,11 @@ export default function SchedulesCalendarPage() {
       })
   }
 
+  // Returns true if the cell (any of its assignments) has been reassigned at some point in history
+  const isCellReassigned = (asgs: any[]): boolean => {
+    return asgs.some(a => a.first_user_id && a.user_id && a.first_user_id !== a.user_id)
+  }
+
   const goPrevWeek = () => setWeekStart(prev => addDays(prev, -7))
   const goNextWeek = () => setWeekStart(prev => addDays(prev, 7))
   const goToday = () => {
@@ -264,11 +268,94 @@ export default function SchedulesCalendarPage() {
     setModalDate(null)
   }
 
-  // Modal-only helpers
   const modalUser = modalUserId ? users.find(u => u.id === modalUserId) : null
   const modalAsgs = modalUserId && modalDate ? cellAssignments(modalUserId, modalDate) : []
   const modalHol = modalUserId && modalDate ? holidayFor(modalUserId, modalDate) : null
   const modalHasAnything = modalAsgs.length > 0 || !!modalHol
+
+  const cellText = (userId: string, d: Date): string => {
+    const lines: string[] = []
+    const hol = holidayFor(userId, d)
+    if (hol) lines.push(renderHolidayLabel(hol))
+    const cellAsgs = cellAssignments(userId, d)
+    cellAsgs.forEach(a => {
+      const s = getSchedule(a.schedule_id)
+      if (s) {
+        lines.push(`${s.name}\n${formatTime(s.start_time)}–${formatTime(s.end_time)}`)
+      }
+    })
+    return lines.join('\n\n') || ''
+  }
+
+  const exportPDF = () => {
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const generatedOn = new Date().toLocaleString('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    })
+
+    doc.setFontSize(16)
+    doc.setFont('helvetica', 'bold')
+    doc.text(company?.name || 'Company', 14, 14)
+
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'normal')
+    doc.text(`Schedule Calendar — ${weekLabel}`, 14, 20)
+
+    doc.setFontSize(8)
+    doc.setTextColor(110)
+    doc.text(`Generated: ${generatedOn}`, pageWidth - 14, 14, { align: 'right' })
+    doc.setTextColor(0)
+
+    const head = [['Name', ...weekDates.map(d => `${d.toLocaleDateString('en-GB', { weekday: 'short' })}\n${formatDateShort(d)}`)]]
+    const body = visibleUsers.map(u => [
+      u.full_name + (u.job_title ? `\n${u.job_title}` : ''),
+      ...weekDates.map(d => cellText(u.id, d)),
+    ])
+
+    autoTable(doc, {
+      startY: 26,
+      head,
+      body,
+      headStyles: {
+        fillColor: [29, 78, 216],
+        textColor: 255,
+        fontStyle: 'bold',
+        fontSize: 8,
+        valign: 'middle',
+        halign: 'left',
+      },
+      bodyStyles: {
+        fontSize: 7,
+        cellPadding: 1.5,
+        valign: 'top',
+      },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
+      columnStyles: {
+        0: { cellWidth: 38, fontStyle: 'bold' },
+      },
+      didDrawPage: () => {
+        const pageCount = doc.getNumberOfPages()
+        const pageNum = doc.getCurrentPageInfo().pageNumber
+        const pageHeight = doc.internal.pageSize.getHeight()
+        doc.setFontSize(8)
+        doc.setTextColor(150)
+        doc.text(
+          `Page ${pageNum} of ${pageCount}`,
+          pageWidth - 14,
+          pageHeight - 8,
+          { align: 'right' }
+        )
+        doc.setTextColor(0)
+      },
+    })
+
+    doc.save(`schedule-${isoDate(weekDates[0])}-to-${isoDate(weekDates[6])}.pdf`)
+  }
+
+  const handlePrint = () => {
+    window.print()
+  }
 
   if (loading) {
     return (
@@ -278,11 +365,26 @@ export default function SchedulesCalendarPage() {
     )
   }
 
+  const printDate = new Date().toLocaleString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
+
   return (
     <main className="min-h-screen bg-gray-100">
       <IdleWarningModal show={showWarning} secondsLeft={secondsLeft} onStay={stayLoggedIn} />
 
-      <div className="bg-blue-700 text-white px-6 py-4 flex justify-between items-center">
+      <style jsx global>{`
+        @media print {
+          body { background: white !important; }
+          .no-print { display: none !important; }
+          .print-only { display: block !important; }
+          main { background: white !important; }
+          @page { size: A4 landscape; margin: 1cm; }
+        }
+        .print-only { display: none; }
+      `}</style>
+
+      <div className="bg-blue-700 text-white px-6 py-4 flex justify-between items-center no-print">
         <div>
           <h1 className="text-2xl font-bold">{company?.name}</h1>
           <p className="text-blue-200 text-sm">Schedule Calendar</p>
@@ -295,10 +397,17 @@ export default function SchedulesCalendarPage() {
         </button>
       </div>
 
+      <div className="print-only px-6 py-4 border-b border-gray-300">
+        <h1 className="text-2xl font-bold text-gray-900">{company?.name}</h1>
+        <p className="text-sm text-gray-700">Schedule Calendar — {weekLabel}</p>
+        <div className="flex justify-between text-xs text-gray-600 mt-2">
+          <span>Generated: {printDate}</span>
+        </div>
+      </div>
+
       <div className="max-w-[1400px] mx-auto p-4 md:p-6 space-y-4">
 
-        {/* Toolbar */}
-        <div className="bg-white rounded-xl shadow p-3 flex flex-wrap items-center gap-3">
+        <div className="bg-white rounded-xl shadow p-3 flex flex-wrap items-center gap-3 no-print">
           <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
             <button
               onClick={() => setView('week')}
@@ -375,6 +484,25 @@ export default function SchedulesCalendarPage() {
             Just me
           </label>
 
+          {view === 'week' && (
+            <>
+              <button
+                onClick={exportPDF}
+                disabled={visibleUsers.length === 0}
+                className="bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white px-3 py-1.5 rounded-lg text-xs font-medium"
+              >
+                ⬇ PDF
+              </button>
+              <button
+                onClick={handlePrint}
+                disabled={visibleUsers.length === 0}
+                className="bg-gray-700 hover:bg-gray-800 disabled:bg-gray-300 text-white px-3 py-1.5 rounded-lg text-xs font-medium"
+              >
+                🖨 Print
+              </button>
+            </>
+          )}
+
           {canEdit && (
             <button
               onClick={() => router.push('/dashboard/schedules/assign')}
@@ -433,7 +561,10 @@ export default function SchedulesCalendarPage() {
                       {weekDates.map((d, i) => {
                         const cellAsgs = cellAssignments(u.id, d)
                         const hol = holidayFor(u.id, d)
+                        // Bright yellow = currently has unpublished change
+                        // Soft yellow = was reassigned at some point in history (current user ≠ first user)
                         const hasUnpublished = cellAsgs.some(a => a.is_changed || a.status === 'draft')
+                        const wasReassigned = !hasUnpublished && isCellReassigned(cellAsgs)
                         const isToday = isoDate(d) === isoDate(new Date())
 
                         return (
@@ -442,7 +573,7 @@ export default function SchedulesCalendarPage() {
                             onClick={() => openCellModal(u.id, d)}
                             className={`px-2 py-2 align-top text-xs border-r border-gray-100 last:border-r-0 cursor-pointer hover:bg-gray-50 transition ${
                               isToday ? 'bg-blue-50/30' : ''
-                            } ${hasUnpublished ? 'bg-yellow-100/60' : ''}`}
+                            } ${hasUnpublished ? 'bg-yellow-100/70' : wasReassigned ? 'bg-yellow-50/70' : ''}`}
                           >
                             {hol ? (
                               <div className={`px-2 py-1 rounded font-medium text-[11px] mb-1 ${
@@ -463,6 +594,7 @@ export default function SchedulesCalendarPage() {
                             <div className="space-y-1">
                               {cellAsgs.map(a => {
                                 const sched = getSchedule(a.schedule_id)
+                                const reassigned = a.first_user_id && a.user_id && a.first_user_id !== a.user_id
                                 return (
                                   <div
                                     key={a.id}
@@ -471,6 +603,8 @@ export default function SchedulesCalendarPage() {
                                         ? 'bg-amber-50 border border-amber-200 text-amber-800'
                                         : a.is_changed
                                         ? 'bg-yellow-100 border border-yellow-300 text-yellow-900'
+                                        : reassigned
+                                        ? 'bg-yellow-50 border border-yellow-200 text-yellow-900'
                                         : 'bg-blue-50 border border-blue-100 text-blue-900'
                                     }`}
                                   >
@@ -492,7 +626,7 @@ export default function SchedulesCalendarPage() {
 
         {/* Day View */}
         {view === 'day' && (
-          <div className="bg-white rounded-xl shadow overflow-hidden">
+          <div className="bg-white rounded-xl shadow overflow-hidden no-print">
             <div className="divide-y divide-gray-100">
               {visibleUsers.length === 0 ? (
                 <div className="text-center text-gray-400 py-12 text-sm">No users to show</div>
@@ -501,12 +635,15 @@ export default function SchedulesCalendarPage() {
                   const cellAsgs = cellAssignments(u.id, dayDate)
                   const hol = holidayFor(u.id, dayDate)
                   const hasUnpublished = cellAsgs.some(a => a.is_changed || a.status === 'draft')
+                  const wasReassigned = !hasUnpublished && isCellReassigned(cellAsgs)
 
                   return (
                     <div
                       key={u.id}
                       onClick={() => openCellModal(u.id, dayDate)}
-                      className={`p-4 flex gap-4 cursor-pointer hover:bg-gray-50 transition ${hasUnpublished ? 'bg-yellow-50' : ''}`}
+                      className={`p-4 flex gap-4 cursor-pointer hover:bg-gray-50 transition ${
+                        hasUnpublished ? 'bg-yellow-100/60' : wasReassigned ? 'bg-yellow-50' : ''
+                      }`}
                     >
                       <div className="w-40 flex-shrink-0">
                         <p className="font-semibold text-gray-800 text-sm">{u.full_name}</p>
@@ -531,6 +668,7 @@ export default function SchedulesCalendarPage() {
                         )}
                         {cellAsgs.map(a => {
                           const sched = getSchedule(a.schedule_id)
+                          const reassigned = a.first_user_id && a.user_id && a.first_user_id !== a.user_id
                           return (
                             <div
                               key={a.id}
@@ -539,6 +677,8 @@ export default function SchedulesCalendarPage() {
                                   ? 'bg-amber-50 border border-amber-200 text-amber-800'
                                   : a.is_changed
                                   ? 'bg-yellow-100 border border-yellow-300 text-yellow-900'
+                                  : reassigned
+                                  ? 'bg-yellow-50 border border-yellow-200 text-yellow-900'
                                   : 'bg-blue-50 border border-blue-100 text-blue-900'
                               }`}
                             >
@@ -556,7 +696,7 @@ export default function SchedulesCalendarPage() {
         )}
 
         {/* Legend */}
-        <div className="bg-white rounded-xl shadow p-3 flex flex-wrap gap-3 text-xs">
+        <div className="bg-white rounded-xl shadow p-3 flex flex-wrap gap-3 text-xs no-print">
           <span className="font-medium text-gray-600">Legend:</span>
           <span className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded bg-blue-50 border border-blue-100 inline-block"></span>
@@ -568,7 +708,11 @@ export default function SchedulesCalendarPage() {
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded bg-yellow-100 inline-block"></span>
-            <span className="text-gray-600">Changed since publish</span>
+            <span className="text-gray-600">Unpublished change</span>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded bg-yellow-50 border border-yellow-200 inline-block"></span>
+            <span className="text-gray-600">Reassigned (changed since first added)</span>
           </span>
           <span className="flex items-center gap-1.5">
             <span className="w-3 h-3 rounded bg-red-100 inline-block"></span>
@@ -585,7 +729,7 @@ export default function SchedulesCalendarPage() {
       {/* Cell Modal */}
       {modalUserId && modalDate && (
         <div
-          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 no-print"
           onClick={closeCellModal}
         >
           <div
@@ -615,7 +759,6 @@ export default function SchedulesCalendarPage() {
                 </div>
               )}
 
-              {/* Holiday block */}
               {modalHol && (
                 <div className={`p-4 rounded-xl border ${
                   modalHol.request_type === 'holiday'
@@ -648,16 +791,18 @@ export default function SchedulesCalendarPage() {
                 </div>
               )}
 
-              {/* Schedule list */}
               {modalAsgs.length > 0 && (
                 <div className="space-y-2">
                   {modalAsgs.map(a => {
                     const sched = getSchedule(a.schedule_id)
                     if (!sched) return null
+                    const reassigned = a.first_user_id && a.user_id && a.first_user_id !== a.user_id
                     const statusClass = a.status === 'draft'
                       ? 'border-amber-200 bg-amber-50'
                       : a.is_changed
                       ? 'border-yellow-300 bg-yellow-50'
+                      : reassigned
+                      ? 'border-yellow-200 bg-yellow-50/50'
                       : 'border-gray-200 bg-white'
 
                     const recurringDays = sched.recurring_days
@@ -681,7 +826,10 @@ export default function SchedulesCalendarPage() {
                                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">Draft</span>
                               )}
                               {a.is_changed && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-200 text-yellow-800 font-medium">Changed</span>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-200 text-yellow-800 font-medium">Unpublished change</span>
+                              )}
+                              {!a.is_changed && reassigned && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-medium">Reassigned</span>
                               )}
                             </div>
 
@@ -722,7 +870,6 @@ export default function SchedulesCalendarPage() {
                 </div>
               )}
 
-              {/* Footer actions */}
               <div className="flex gap-2 pt-3 border-t border-gray-100">
                 {canEdit && (
                   <button
