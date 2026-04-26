@@ -194,6 +194,7 @@ export default function Dashboard() {
   const isManager = currentUser?.role === 'manager'
   const showHolidayApprovals = (isAdmin || (isManager && managerTitles.length > 0)) && hasCompanyFeature('Holidays')
   const showMyHolidays = (isAdmin || isManager) && hasFeature('Holidays') && currentUser?.holiday_entitlement !== null && currentUser?.holiday_entitlement !== undefined
+  const showSchedules = hasCompanyFeature('Schedules') && (isAdmin || hasFeature('Schedules'))
 
   const balance = currentUser?.holiday_entitlement
 
@@ -321,6 +322,17 @@ export default function Dashboard() {
                 <p className="text-[11px] text-orange-600 mt-0.5">
                   {balance !== null && balance !== undefined ? `${balance} days left` : 'Request time off'}
                 </p>
+              </button>
+            )}
+
+            {showSchedules && (
+              <button
+                onClick={() => router.push('/dashboard/schedules')}
+                className="bg-teal-50 hover:bg-teal-100 border border-teal-200 rounded-lg p-3 text-left transition"
+              >
+                <div className="text-2xl mb-1">📅</div>
+                <p className="font-semibold text-teal-700 text-sm">Schedules</p>
+                <p className="text-[11px] text-teal-600 mt-0.5">View & manage rotas</p>
               </button>
             )}
 
