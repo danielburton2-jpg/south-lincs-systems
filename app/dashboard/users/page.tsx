@@ -151,8 +151,8 @@ export default function DashboardUsers() {
     ? users.filter(u => !u.is_deleted && u.job_title && managerTitles.includes(u.job_title))
     : []
 
-  const allJobTitles = Array.from(new Set(
-    users.filter(u => u.job_title && !u.is_deleted).map(u => u.job_title)
+  const allJobTitles: string[] = Array.from(new Set<string>(
+    users.filter(u => u.job_title && !u.is_deleted).map((u: any) => u.job_title)
   )).sort()
 
   const resetForm = () => {
@@ -168,7 +168,7 @@ export default function DashboardUsers() {
     setSelectedManagerTitles([])
   }
 
-  const handleStartEdit = (user: any) => {
+  const handleStartEdit = async (user: any) => {
     setEditingUser(user)
     setFullName(user.full_name || '')
     setEmail(user.email || '')
@@ -180,6 +180,18 @@ export default function DashboardUsers() {
     setSelectedFeatures(
       user.user_features?.filter((uf: any) => uf.is_enabled).map((uf: any) => uf.feature_id) || []
     )
+
+    // Pre-fill manager titles when editing a manager
+    if (user.role === 'manager') {
+      const { data: titles } = await supabase
+        .from('manager_job_titles')
+        .select('job_title')
+        .eq('manager_id', user.id)
+      setSelectedManagerTitles((titles?.map((t: any) => t.job_title) || []) as string[])
+    } else {
+      setSelectedManagerTitles([])
+    }
+
     setShowAddForm(true)
   }
 
@@ -225,22 +237,31 @@ export default function DashboardUsers() {
     e.preventDefault()
     setSubmitting(true)
 
+    const userFeaturesPayload = features
+      .filter(f => companyFeatures.some((cf: any) => cf.feature_id === f.id))
+      .map(f => ({
+        feature_id: f.id,
+        is_enabled: selectedFeatures.includes(f.id),
+      }))
+
     const res = await fetch('/api/update-user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user_id: editingUser.id,
         full_name: fullName,
+        email: editingUser.email,
         role,
         job_title: jobTitle,
         employment_start_date: employmentStartDate || null,
         holiday_entitlement: holidayEntitlement ? parseFloat(holidayEntitlement) : null,
         working_days: workingDays,
-        feature_ids: selectedFeatures,
-        manager_job_titles: role === 'manager' ? selectedManagerTitles : [],
+        user_features: userFeaturesPayload,
+        manager_titles: role === 'manager' ? selectedManagerTitles : [],
         actor_id: currentUser.id,
         actor_email: currentUser.email,
         actor_role: currentUser.role,
+        company_name: company?.name,
       }),
     })
 
