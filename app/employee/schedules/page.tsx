@@ -270,6 +270,7 @@ export default function EmployeeSchedulePage() {
   }
 
   const handleDownload = async (doc: any) => {
+    setDocMessage('')
     const { data, error } = await supabase.storage
       .from('schedule-documents')
       .createSignedUrl(doc.storage_path, 60)
@@ -278,7 +279,9 @@ export default function EmployeeSchedulePage() {
       setDocMessage('Could not open file')
       return
     }
-    window.open(data.signedUrl, '_blank')
+
+    // location.href works reliably on mobile Safari/Chrome (no popup blocker)
+    window.location.href = data.signedUrl
   }
 
   const weekLabel = `${formatDateLong(weekDates[0])} – ${formatDateLong(weekDates[6])}`
