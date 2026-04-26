@@ -94,5 +94,11 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: [
+    /*
+     * Match all paths except internal/static assets.
+     * Uses negative lookahead with non-capturing groups only (Next.js requirement).
+     */
+    '/((?!_next/static|_next/image|favicon\\.ico|manifest\\.json|manifest\\.webmanifest|sw\\.js|workbox-.*|icon-.*\\.png|apple-touch-icon.*|robots\\.txt|sitemap\\.xml|.*\\.png|.*\\.jpg|.*\\.jpeg|.*\\.gif|.*\\.webp|.*\\.svg|.*\\.ico|.*\\.woff|.*\\.woff2|.*\\.ttf|.*\\.otf|.*\\.eot|.*\\.css|.*\\.js|.*\\.map).*)',
+  ],
 }
