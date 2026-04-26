@@ -20,7 +20,7 @@ const DAYS = [
 
 type ScheduleType = 'one_off' | 'recurring'
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024
 
 export default function CreateSchedulePage() {
   const [currentUser, setCurrentUser] = useState<any>(null)
@@ -30,7 +30,6 @@ export default function CreateSchedulePage() {
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error'>('success')
 
-  // Form
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [scheduleType, setScheduleType] = useState<ScheduleType>('one_off')
@@ -165,9 +164,6 @@ export default function CreateSchedulePage() {
       end_date: endDate || null,
       recurring_days: scheduleType === 'recurring' ? recurringDays : null,
       created_by: currentUser.id,
-      // Created as draft. Admin must Publish before employees can see it.
-      is_published: false,
-      has_unpublished_changes: true,
     }
 
     const { data: schedule, error: insertErr } = await supabase
@@ -253,17 +249,17 @@ export default function CreateSchedulePage() {
       if (failed.length > 0) {
         setSubmitting(false)
         showMessage(
-          `Schedule saved as draft, but ${failed.length} file(s) failed: ${failed.map(f => f.name).join(', ')}`,
+          `Schedule saved, but ${failed.length} file(s) failed: ${failed.map(f => f.name).join(', ')}`,
           'error'
         )
-        setTimeout(() => router.push(`/dashboard/schedules/${schedule.id}`), 2000)
+        setTimeout(() => router.push('/dashboard/schedules'), 2000)
         return
       }
     }
 
     setSubmitting(false)
-    showMessage('Draft saved! Open the schedule to publish it.', 'success')
-    setTimeout(() => router.push(`/dashboard/schedules/${schedule.id}`), 800)
+    showMessage('Schedule created!', 'success')
+    setTimeout(() => router.push('/dashboard/schedules'), 600)
   }
 
   if (loading) {
@@ -292,16 +288,6 @@ export default function CreateSchedulePage() {
       </div>
 
       <div className="max-w-3xl mx-auto p-6 space-y-6">
-
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-3">
-          <span className="text-2xl">📝</span>
-          <div>
-            <p className="font-medium text-amber-800">New schedules start as Draft</p>
-            <p className="text-xs text-amber-700 mt-0.5">
-              You can review and Publish from the schedule page after saving.
-            </p>
-          </div>
-        </div>
 
         {message && (
           <div className={`p-4 rounded-lg text-sm font-medium ${
@@ -559,7 +545,7 @@ export default function CreateSchedulePage() {
               disabled={submitting}
               className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-medium transition disabled:opacity-50"
             >
-              {submitting ? 'Saving Draft...' : 'Save as Draft'}
+              {submitting ? 'Creating...' : 'Create Schedule'}
             </button>
           </div>
         </form>

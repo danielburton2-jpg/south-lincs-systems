@@ -137,7 +137,6 @@ export default function SchedulesPage() {
   }, [])
 
   const isAdmin = currentUser?.role === 'admin'
-  const isManager = currentUser?.role === 'manager'
   const canManage = isAdmin
 
   const visibleSchedules = (() => {
@@ -194,7 +193,13 @@ export default function SchedulesPage() {
           <div>
             <h2 className="text-xl font-semibold text-gray-800">Active Schedules</h2>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            <button
+              onClick={() => router.push('/dashboard/schedules/calendar')}
+              className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
+            >
+              📆 Calendar
+            </button>
             <button
               onClick={() => router.push('/dashboard/schedules/reports')}
               className="bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium"
@@ -339,18 +344,11 @@ export default function SchedulesPage() {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex flex-col gap-1 items-start">
-                          {s.active ? (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Active</span>
-                          ) : (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">Inactive</span>
-                          )}
-                          {!s.is_published ? (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Draft</span>
-                          ) : s.has_unpublished_changes ? (
-                            <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 font-medium">Unpublished changes</span>
-                          ) : null}
-                        </div>
+                        {s.active ? (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Active</span>
+                        ) : (
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">Inactive</span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -396,12 +394,6 @@ export default function SchedulesPage() {
                     )}
                     {!s.active && (
                       <span className="text-gray-400">Inactive</span>
-                    )}
-                    {!s.is_published && (
-                      <span className="text-amber-700 font-medium">Draft</span>
-                    )}
-                    {s.is_published && s.has_unpublished_changes && (
-                      <span className="text-yellow-700 font-medium">Unpublished changes</span>
                     )}
                   </div>
 
