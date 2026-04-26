@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Suspense } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
@@ -18,7 +18,8 @@ const VEHICLE_TYPE_ICONS: Record<string, string> = {
 
 type FilterTab = 'mine' | 'all' | 'reported'
 
-export default function EmployeeDefectsPage() {
+// Wrapper component that uses useSearchParams (must be inside Suspense)
+function DefectsPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const initialFilter = (searchParams?.get('filter') as FilterTab) || 'all'
@@ -67,7 +68,6 @@ export default function EmployeeDefectsPage() {
 
     setDefects(data || [])
 
-    // Photos
     const itemIds = (data || []).map((d: any) => d.check_item_id).filter(Boolean)
     if (itemIds.length > 0) {
       const { data: photoData } = await supabase
@@ -84,7 +84,6 @@ export default function EmployeeDefectsPage() {
       setPhotoMap({})
     }
 
-    // Notes
     const defectIds = (data || []).map((d: any) => d.id)
     if (defectIds.length > 0) {
       const { data: notesData } = await supabase
@@ -146,7 +145,6 @@ export default function EmployeeDefectsPage() {
 
   useEffect(() => { init() }, [init])
 
-  // Realtime
   useEffect(() => {
     if (!currentUser?.id || !currentUser?.company_id) return
     const channel = supabase
@@ -284,7 +282,6 @@ export default function EmployeeDefectsPage() {
     reported: defects.filter(d => d.reported_by === currentUser?.id).length,
   }
 
-  // Group by vehicle for display
   const grouped: Record<string, any[]> = {}
   filtered.forEach(d => {
     const key = d.vehicle_id
@@ -322,7 +319,6 @@ export default function EmployeeDefectsPage() {
           </div>
         )}
 
-        {/* Filter tabs */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-1.5 flex gap-1">
           <button
             onClick={() => setFilterTab('mine')}
@@ -463,7 +459,6 @@ export default function EmployeeDefectsPage() {
                             )}
                           </div>
 
-                          {/* Repair notes thread */}
                           {notes.length > 0 && (
                             <div className="mt-3 space-y-1.5">
                               <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">🔧 Repair Log ({notes.length})</p>
@@ -478,7 +473,6 @@ export default function EmployeeDefectsPage() {
                             </div>
                           )}
 
-                          {/* Add note form */}
                           {isAddingNote && (
                             <div className="mt-3 bg-amber-50 border border-amber-300 rounded-lg p-3 space-y-2">
                               <p className="text-sm font-semibold text-gray-800">🔧 Add Repair Note</p>
@@ -502,7 +496,6 @@ export default function EmployeeDefectsPage() {
                             </div>
                           )}
 
-                          {/* Resolve form */}
                           {isResolving && (
                             <div className="mt-3 bg-gray-50 border border-gray-300 rounded-lg p-3 space-y-2">
                               <p className="text-sm font-semibold text-gray-800">
@@ -530,7 +523,6 @@ export default function EmployeeDefectsPage() {
                             </div>
                           )}
 
-                          {/* Action buttons */}
                           {!isResolving && !isAddingNote && (canAddNote || canResolve) && (
                             <div className="mt-3 flex gap-2 justify-end flex-wrap">
                               {canAddNote && (
@@ -593,5 +585,18 @@ export default function EmployeeDefectsPage() {
         </div>
       </nav>
     </main>
+  )
+}
+
+// Default export — wraps the content in Suspense (required for useSearchParams)
+export default function EmployeeDefectsPage() {
+  return (
+    <Suspense fallback={
+      <main className="min-h-screen flex items-center justify-center bg-gray-50">
+        <p className="text-gray-500">Loading...</p>
+      </main>
+    }>
+      <DefectsPageContent />
+    </Suspense>
   )
 }
