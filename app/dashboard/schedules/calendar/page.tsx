@@ -349,6 +349,7 @@ export default function SchedulesCalendarPage() {
       theme: 'grid',
       tableLineColor: [180, 180, 180],
       tableLineWidth: 0.2,
+      tableWidth: 281,
       headStyles: {
         fillColor: [29, 78, 216],
         textColor: 255,
@@ -372,20 +373,20 @@ export default function SchedulesCalendarPage() {
       alternateRowStyles: { fillColor: [248, 250, 252] },
       columnStyles: {
         0: {
-          cellWidth: 35,
+          cellWidth: 38,
           fontStyle: 'bold',
           halign: 'left',
           valign: 'middle',
           fillColor: [243, 244, 246],
           textColor: [30, 30, 30],
         },
-        1: { cellWidth: 'auto' },
-        2: { cellWidth: 'auto' },
-        3: { cellWidth: 'auto' },
-        4: { cellWidth: 'auto' },
-        5: { cellWidth: 'auto' },
-        6: { cellWidth: 'auto' },
-        7: { cellWidth: 'auto' },
+        1: { cellWidth: 34.7 },
+        2: { cellWidth: 34.7 },
+        3: { cellWidth: 34.7 },
+        4: { cellWidth: 34.7 },
+        5: { cellWidth: 34.7 },
+        6: { cellWidth: 34.7 },
+        7: { cellWidth: 34.7 },
       },
       didParseCell: (data) => {
         if (data.section === 'body' && data.column.index > 0) {
