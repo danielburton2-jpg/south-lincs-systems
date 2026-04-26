@@ -23,9 +23,7 @@ const isCompleted = (s: any) => {
   if (s.completed_at) return true
   if (s.schedule_type === 'one_off' && s.end_date) {
     const today = todayISO()
-    // Past date — fully done
     if (s.end_date < today) return true
-    // Same date — check if end time has passed
     if (s.end_date === today && s.end_time) {
       const now = new Date()
       const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
@@ -43,7 +41,7 @@ export default function SchedulesPage() {
   const [showInactive, setShowInactive] = useState(false)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<'all' | 'one_off' | 'recurring'>('all')
-  const [tick, setTick] = useState(0) // forces re-render so time-based filtering keeps up
+  const [tick, setTick] = useState(0)
   const router = useRouter()
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
@@ -67,7 +65,6 @@ export default function SchedulesPage() {
       return
     }
 
-    // Feature gate
     const { data: companyData } = await supabase
       .from('companies')
       .select(`*, company_features (is_enabled, feature_id, features (id, name))`)
@@ -112,7 +109,6 @@ export default function SchedulesPage() {
     fetchData()
   }, [fetchData])
 
-  // Realtime
   useEffect(() => {
     if (!currentUser?.company_id) return
 
@@ -135,7 +131,6 @@ export default function SchedulesPage() {
     }
   }, [currentUser?.company_id, fetchData])
 
-  // Tick every minute so time-based completion filtering stays in sync with the clock
   useEffect(() => {
     const interval = setInterval(() => setTick(t => t + 1), 60_000)
     return () => clearInterval(interval)
@@ -143,10 +138,8 @@ export default function SchedulesPage() {
 
   const isAdmin = currentUser?.role === 'admin'
   const isManager = currentUser?.role === 'manager'
-  const canManage = isAdmin || isManager
+  const canManage = isAdmin
 
-  // Hide completed schedules from this page (they live on /reports instead)
-  // tick is referenced so this re-evaluates each minute
   const visibleSchedules = (() => {
     void tick
     return schedules
@@ -197,7 +190,6 @@ export default function SchedulesPage() {
 
       <div className="max-w-6xl mx-auto p-6 space-y-4">
 
-        {/* HEADER */}
         <div className="flex justify-between items-center flex-wrap gap-3">
           <div>
             <h2 className="text-xl font-semibold text-gray-800">Active Schedules</h2>
@@ -220,7 +212,6 @@ export default function SchedulesPage() {
           </div>
         </div>
 
-        {/* FILTERS */}
         <div className="bg-white rounded-xl shadow p-4 flex flex-wrap gap-3 items-center">
           <input
             type="text"
@@ -257,7 +248,6 @@ export default function SchedulesPage() {
           </label>
         </div>
 
-        {/* LIST */}
         {visibleSchedules.length === 0 ? (
           <div className="bg-white rounded-xl shadow p-12 text-center">
             <div className="text-5xl mb-3">📅</div>
@@ -277,7 +267,6 @@ export default function SchedulesPage() {
           </div>
         ) : (
           <div className="bg-white rounded-xl shadow overflow-hidden">
-            {/* Desktop table */}
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-gray-50 border-b border-gray-200">
@@ -350,11 +339,18 @@ export default function SchedulesPage() {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        {s.active ? (
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Active</span>
-                        ) : (
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">Inactive</span>
-                        )}
+                        <div className="flex flex-col gap-1 items-start">
+                          {s.active ? (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">Active</span>
+                          ) : (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">Inactive</span>
+                          )}
+                          {!s.is_published ? (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">Draft</span>
+                          ) : s.has_unpublished_changes ? (
+                            <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-800 font-medium">Unpublished changes</span>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -362,7 +358,6 @@ export default function SchedulesPage() {
               </table>
             </div>
 
-            {/* Mobile list */}
             <div className="md:hidden divide-y divide-gray-100">
               {visibleSchedules.map(s => (
                 <div
@@ -401,6 +396,12 @@ export default function SchedulesPage() {
                     )}
                     {!s.active && (
                       <span className="text-gray-400">Inactive</span>
+                    )}
+                    {!s.is_published && (
+                      <span className="text-amber-700 font-medium">Draft</span>
+                    )}
+                    {s.is_published && s.has_unpublished_changes && (
+                      <span className="text-yellow-700 font-medium">Unpublished changes</span>
                     )}
                   </div>
 

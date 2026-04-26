@@ -68,12 +68,11 @@ export default function CreateSchedulePage() {
       return
     }
 
-    if (profile.role !== 'admin' && profile.role !== 'manager') {
+    if (profile.role !== 'admin') {
       router.push('/dashboard/schedules')
       return
     }
 
-    // Feature gate
     const { data: companyData } = await supabase
       .from('companies')
       .select(`*, company_features (is_enabled, feature_id, features (id, name))`)
@@ -86,22 +85,6 @@ export default function CreateSchedulePage() {
     if (!companyHasSchedules) {
       router.push('/dashboard')
       return
-    }
-
-    if (profile.role !== 'admin') {
-      const { data: userFeats } = await supabase
-        .from('user_features')
-        .select('is_enabled, features (name)')
-        .eq('user_id', user.id)
-        .eq('is_enabled', true)
-
-      const userHasSchedules = (userFeats as any[])?.some(
-        (uf: any) => uf.features?.name === 'Schedules'
-      )
-      if (!userHasSchedules) {
-        router.push('/dashboard')
-        return
-      }
     }
 
     setCurrentUser(profile)
@@ -171,7 +154,6 @@ export default function CreateSchedulePage() {
     setSubmitting(true)
     setMessage('')
 
-    // 1. Insert the schedule row
     const insertPayload: any = {
       company_id: currentUser.company_id,
       name: name.trim(),
@@ -183,6 +165,9 @@ export default function CreateSchedulePage() {
       end_date: endDate || null,
       recurring_days: scheduleType === 'recurring' ? recurringDays : null,
       created_by: currentUser.id,
+      // Created as draft. Admin must Publish before employees can see it.
+      is_published: false,
+      has_unpublished_changes: true,
     }
 
     const { data: schedule, error: insertErr } = await supabase
@@ -197,7 +182,6 @@ export default function CreateSchedulePage() {
       return
     }
 
-    // Audit: schedule created
     await logAuditClient({
       user: currentUser,
       action: 'SCHEDULE_CREATED',
@@ -215,7 +199,6 @@ export default function CreateSchedulePage() {
       },
     })
 
-    // 2. Upload files
     if (files.length > 0) {
       const uploadResults = await Promise.all(
         files.map(async (file) => {
@@ -248,7 +231,6 @@ export default function CreateSchedulePage() {
 
           if (docErr) return { ok: false, name: file.name, error: docErr.message }
 
-          // Audit: document uploaded
           await logAuditClient({
             user: currentUser,
             action: 'SCHEDULE_DOC_UPLOADED',
@@ -271,17 +253,17 @@ export default function CreateSchedulePage() {
       if (failed.length > 0) {
         setSubmitting(false)
         showMessage(
-          `Schedule saved, but ${failed.length} file(s) failed: ${failed.map(f => f.name).join(', ')}`,
+          `Schedule saved as draft, but ${failed.length} file(s) failed: ${failed.map(f => f.name).join(', ')}`,
           'error'
         )
-        setTimeout(() => router.push('/dashboard/schedules'), 2000)
+        setTimeout(() => router.push(`/dashboard/schedules/${schedule.id}`), 2000)
         return
       }
     }
 
     setSubmitting(false)
-    showMessage('Schedule created!', 'success')
-    setTimeout(() => router.push('/dashboard/schedules'), 600)
+    showMessage('Draft saved! Open the schedule to publish it.', 'success')
+    setTimeout(() => router.push(`/dashboard/schedules/${schedule.id}`), 800)
   }
 
   if (loading) {
@@ -311,6 +293,16 @@ export default function CreateSchedulePage() {
 
       <div className="max-w-3xl mx-auto p-6 space-y-6">
 
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-3">
+          <span className="text-2xl">📝</span>
+          <div>
+            <p className="font-medium text-amber-800">New schedules start as Draft</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              You can review and Publish from the schedule page after saving.
+            </p>
+          </div>
+        </div>
+
         {message && (
           <div className={`p-4 rounded-lg text-sm font-medium ${
             messageType === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
@@ -321,7 +313,6 @@ export default function CreateSchedulePage() {
 
         <form onSubmit={handleSubmit} className="space-y-5">
 
-          {/* BASICS */}
           <div className="bg-white rounded-xl shadow p-6 space-y-4">
             <h3 className="text-lg font-semibold text-gray-800">Schedule Information</h3>
 
@@ -353,7 +344,6 @@ export default function CreateSchedulePage() {
             </div>
           </div>
 
-          {/* TYPE */}
           <div className="bg-white rounded-xl shadow p-6 space-y-4">
             <h3 className="text-lg font-semibold text-gray-800">Type</h3>
 
@@ -388,7 +378,6 @@ export default function CreateSchedulePage() {
             </div>
           </div>
 
-          {/* TIMES */}
           <div className="bg-white rounded-xl shadow p-6 space-y-4">
             <h3 className="text-lg font-semibold text-gray-800">Times</h3>
 
@@ -420,7 +409,6 @@ export default function CreateSchedulePage() {
             </div>
           </div>
 
-          {/* DATES (one-off) or DAYS (recurring) */}
           {scheduleType === 'one_off' ? (
             <div className="bg-white rounded-xl shadow p-6 space-y-4">
               <h3 className="text-lg font-semibold text-gray-800">Dates</h3>
@@ -510,7 +498,6 @@ export default function CreateSchedulePage() {
             </div>
           )}
 
-          {/* DOCUMENTS */}
           <div className="bg-white rounded-xl shadow p-6 space-y-4">
             <div>
               <h3 className="text-lg font-semibold text-gray-800">Documents</h3>
@@ -558,7 +545,6 @@ export default function CreateSchedulePage() {
             )}
           </div>
 
-          {/* ACTIONS */}
           <div className="flex gap-3">
             <button
               type="button"
@@ -573,7 +559,7 @@ export default function CreateSchedulePage() {
               disabled={submitting}
               className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-medium transition disabled:opacity-50"
             >
-              {submitting ? 'Creating...' : 'Create Schedule'}
+              {submitting ? 'Saving Draft...' : 'Save as Draft'}
             </button>
           </div>
         </form>

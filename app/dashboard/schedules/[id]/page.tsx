@@ -18,7 +18,7 @@ const DAYS = [
   { key: 'sun', label: 'Sun' },
 ]
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024
 
 const todayISO = () => {
   const d = new Date()
@@ -37,11 +37,11 @@ export default function ScheduleDetailPage() {
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [publishing, setPublishing] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error'>('success')
 
-  // Edit form state
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [scheduleType, setScheduleType] = useState<'one_off' | 'recurring'>('one_off')
@@ -77,7 +77,6 @@ export default function ScheduleDetailPage() {
     }
     setCurrentUser(profile)
 
-    // Feature gate
     const { data: companyData } = await supabase
       .from('companies')
       .select(`*, company_features (is_enabled, features (name))`)
@@ -109,10 +108,9 @@ export default function ScheduleDetailPage() {
 
     setCompany(companyData)
 
-    // Load the schedule
     const { data: scheduleData, error } = await supabase
       .from('schedules')
-      .select(`*, creator:created_by (full_name)`)
+      .select(`*, creator:created_by (full_name), publisher:published_by (full_name)`)
       .eq('id', scheduleId)
       .single()
 
@@ -123,7 +121,6 @@ export default function ScheduleDetailPage() {
     }
     setSchedule(scheduleData)
 
-    // Populate edit form
     setName(scheduleData.name)
     setDescription(scheduleData.description || '')
     setScheduleType(scheduleData.schedule_type)
@@ -139,7 +136,6 @@ export default function ScheduleDetailPage() {
       })
     }
 
-    // Load documents
     const { data: docs } = await supabase
       .from('schedule_documents')
       .select('*, uploader:uploaded_by (full_name)')
@@ -156,9 +152,8 @@ export default function ScheduleDetailPage() {
 
   const isAdmin = currentUser?.role === 'admin'
   const isManager = currentUser?.role === 'manager'
-  const canManage = isAdmin || isManager
+  const canManage = isAdmin
 
-  // Completion logic
   const isManuallyCompleted = !!schedule?.completed_at
   const isAutoCompleted =
     !isManuallyCompleted &&
@@ -171,6 +166,9 @@ export default function ScheduleDetailPage() {
         return schedule.end_time < currentTime
       })()))
   const isCompleted = isManuallyCompleted || isAutoCompleted
+
+  const isDraft = schedule && !schedule.is_published
+  const hasUnpublishedChanges = schedule && schedule.is_published && schedule.has_unpublished_changes
 
   const formatTime = (t: string) => t?.slice(0, 5) || ''
   const formatDate = (d: string) =>
@@ -207,7 +205,6 @@ export default function ScheduleDetailPage() {
     return null
   }
 
-  // Detect which fields actually changed for audit details
   const buildChangedFields = () => {
     const changed: Record<string, { from: any; to: any }> = {}
     if (name.trim() !== schedule.name) {
@@ -266,6 +263,7 @@ export default function ScheduleDetailPage() {
       end_date: endDate || null,
       recurring_days: scheduleType === 'recurring' ? recurringDays : null,
       active,
+      has_unpublished_changes: true,
     }
 
     const { error } = await supabase
@@ -280,7 +278,6 @@ export default function ScheduleDetailPage() {
       return
     }
 
-    // Audit
     if (Object.keys(changedFields).length > 0) {
       await logAuditClient({
         user: currentUser,
@@ -294,8 +291,48 @@ export default function ScheduleDetailPage() {
       })
     }
 
-    showMessage('Schedule updated', 'success')
+    showMessage(schedule.is_published
+      ? 'Saved. Click Publish to make changes visible to employees.'
+      : 'Draft saved. Click Publish when ready.', 'success')
     setEditing(false)
+    loadSchedule()
+  }
+
+  const handlePublish = async () => {
+    if (!confirm(`Publish "${schedule.name}"? This will make all changes visible to employees.`)) return
+
+    setPublishing(true)
+    const now = new Date().toISOString()
+
+    const { error } = await supabase
+      .from('schedules')
+      .update({
+        is_published: true,
+        has_unpublished_changes: false,
+        published_at: now,
+        published_by: currentUser.id,
+      })
+      .eq('id', scheduleId)
+
+    if (error) {
+      setPublishing(false)
+      showMessage('Error publishing: ' + error.message, 'error')
+      return
+    }
+
+    await logAuditClient({
+      user: currentUser,
+      action: 'SCHEDULE_PUBLISHED',
+      entity: 'schedule',
+      entity_id: scheduleId,
+      details: {
+        name: schedule.name,
+        was_first_publish: !schedule.published_at,
+      },
+    })
+
+    setPublishing(false)
+    showMessage('Published. Employees can now see this schedule.', 'success')
     loadSchedule()
   }
 
@@ -428,7 +465,6 @@ export default function ScheduleDetailPage() {
 
         if (docErr) return { ok: false, name: file.name, error: docErr.message }
 
-        // Audit
         await logAuditClient({
           user: currentUser,
           action: 'SCHEDULE_DOC_UPLOADED',
@@ -450,11 +486,18 @@ export default function ScheduleDetailPage() {
     setUploading(false)
     e.target.value = ''
 
+    if (results.some(r => r.ok)) {
+      await supabase
+        .from('schedules')
+        .update({ has_unpublished_changes: true })
+        .eq('id', scheduleId)
+    }
+
     const failed = results.filter(r => !r.ok)
     if (failed.length > 0) {
       showMessage(`${failed.length} upload(s) failed: ${failed.map(f => f.name).join(', ')}`, 'error')
     } else {
-      showMessage(`Uploaded ${results.length} file(s)`, 'success')
+      showMessage(`Uploaded ${results.length} file(s). Don't forget to Publish.`, 'success')
     }
     loadSchedule()
   }
@@ -494,8 +537,14 @@ export default function ScheduleDetailPage() {
       },
     })
 
+    await supabase
+      .from('schedules')
+      .update({ has_unpublished_changes: true })
+      .eq('id', scheduleId)
+
     setDocuments(prev => prev.filter(d => d.id !== doc.id))
-    showMessage('Document deleted', 'success')
+    showMessage('Document deleted. Publish to apply.', 'success')
+    loadSchedule()
   }
 
   const getFileIcon = (mime: string | null) => {
@@ -548,7 +597,35 @@ export default function ScheduleDetailPage() {
           </div>
         )}
 
-        {/* Completed banner */}
+        {!editing && (isDraft || hasUnpublishedChanges) && (
+          <div className={`rounded-xl p-4 flex items-center gap-3 border ${
+            isDraft
+              ? 'bg-amber-50 border-amber-200'
+              : 'bg-yellow-50 border-yellow-200'
+          }`}>
+            <span className="text-2xl">{isDraft ? '📝' : '⚠️'}</span>
+            <div className="flex-1">
+              <p className={`font-medium ${isDraft ? 'text-amber-800' : 'text-yellow-800'}`}>
+                {isDraft ? 'Draft — not yet published' : 'Unpublished changes'}
+              </p>
+              <p className={`text-xs mt-0.5 ${isDraft ? 'text-amber-700' : 'text-yellow-700'}`}>
+                {isDraft
+                  ? 'Employees cannot see this schedule until you publish it.'
+                  : 'Recent changes are saved but not visible to employees yet.'}
+              </p>
+            </div>
+            {canManage && (
+              <button
+                onClick={handlePublish}
+                disabled={publishing}
+                className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium"
+              >
+                {publishing ? 'Publishing…' : 'Publish'}
+              </button>
+            )}
+          </div>
+        )}
+
         {isCompleted && !editing && (
           <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 flex items-center gap-3">
             <span className="text-2xl">✅</span>
@@ -573,7 +650,6 @@ export default function ScheduleDetailPage() {
           </div>
         )}
 
-        {/* VIEW MODE */}
         {!editing ? (
           <>
             <div className="bg-white rounded-xl shadow p-6 space-y-4">
@@ -592,6 +668,16 @@ export default function ScheduleDetailPage() {
                     {!schedule.active && (
                       <span className="text-xs px-2 py-1 rounded-full font-medium bg-gray-100 text-gray-600">
                         Inactive
+                      </span>
+                    )}
+                    {isDraft && (
+                      <span className="text-xs px-2 py-1 rounded-full font-medium bg-amber-100 text-amber-700">
+                        Draft
+                      </span>
+                    )}
+                    {hasUnpublishedChanges && (
+                      <span className="text-xs px-2 py-1 rounded-full font-medium bg-yellow-100 text-yellow-800">
+                        Unpublished changes
                       </span>
                     )}
                     {isCompleted && (
@@ -671,14 +757,20 @@ export default function ScheduleDetailPage() {
                 )}
               </div>
 
-              {schedule.creator?.full_name && (
-                <p className="text-xs text-gray-400 pt-2 border-t border-gray-100">
-                  Created by {schedule.creator.full_name} on {new Date(schedule.created_at).toLocaleDateString('en-GB')}
-                </p>
-              )}
+              <div className="text-xs text-gray-400 pt-2 border-t border-gray-100 space-y-1">
+                {schedule.creator?.full_name && (
+                  <p>
+                    Created by {schedule.creator.full_name} on {new Date(schedule.created_at).toLocaleDateString('en-GB')}
+                  </p>
+                )}
+                {schedule.published_at && schedule.publisher?.full_name && (
+                  <p>
+                    Last published by {schedule.publisher.full_name} on {formatDateTime(schedule.published_at)}
+                  </p>
+                )}
+              </div>
             </div>
 
-            {/* DOCUMENTS */}
             <div className="bg-white rounded-xl shadow p-6 space-y-4">
               <div className="flex justify-between items-center">
                 <div>
@@ -748,7 +840,6 @@ export default function ScheduleDetailPage() {
             </div>
           </>
         ) : (
-          /* EDIT MODE */
           <form onSubmit={handleSave} className="space-y-5">
 
             <div className="bg-white rounded-xl shadow p-6 space-y-4">
