@@ -66,6 +66,7 @@ export default function CompanyUsersPage() {
   const [newPassword, setNewPassword] = useState('')
   const [newRole, setNewRole] = useState('user')
   const [newJobTitle, setNewJobTitle] = useState('')
+  const [newEmployeeNumber, setNewEmployeeNumber] = useState('')
   const [newUserFeatures, setNewUserFeatures] = useState<Record<string, boolean>>({})
   const [newManagerTitles, setNewManagerTitles] = useState<string[]>([])
   const [newEmploymentStart, setNewEmploymentStart] = useState('')
@@ -79,6 +80,7 @@ export default function CompanyUsersPage() {
   const [editEmail, setEditEmail] = useState('')
   const [editRole, setEditRole] = useState('')
   const [editJobTitle, setEditJobTitle] = useState('')
+  const [editEmployeeNumber, setEditEmployeeNumber] = useState('')
   const [editUserFeatures, setEditUserFeatures] = useState<Record<string, boolean>>({})
   const [editManagerTitles, setEditManagerTitles] = useState<string[]>([])
   const [editEmploymentStart, setEditEmploymentStart] = useState('')
@@ -223,9 +225,11 @@ export default function CompanyUsersPage() {
         full_name: newName,
         role: newRole,
         job_title: newJobTitle,
+        employee_number: newEmployeeNumber || null,
         company_id: companyId,
         employment_start_date: newEmploymentStart || null,
         holiday_entitlement: finalEntitlement,
+        full_year_entitlement: newFullEntitlement ? parseFloat(newFullEntitlement) : null,
         working_days: newWorkingDays,
         user_features: newRole === 'admin'
           ? companyFeatures.map(id => ({ feature_id: id, is_enabled: true }))
@@ -250,6 +254,7 @@ export default function CompanyUsersPage() {
     setNewPassword('')
     setNewRole('user')
     setNewJobTitle('')
+    setNewEmployeeNumber('')
     setNewManagerTitles([])
     setNewEmploymentStart('')
     setNewFullEntitlement('')
@@ -269,6 +274,7 @@ export default function CompanyUsersPage() {
     setEditEmail(user.email)
     setEditRole(user.role)
     setEditJobTitle(user.job_title || '')
+    setEditEmployeeNumber(user.employee_number || '')
     setEditEmploymentStart(user.employment_start_date || '')
     setEditEntitlement(user.holiday_entitlement?.toString() || '')
     setEditWorkingDays(user.working_days || DEFAULT_WORKING_DAYS)
@@ -299,6 +305,7 @@ export default function CompanyUsersPage() {
         email: editEmail,
         role: editRole,
         job_title: editJobTitle,
+        employee_number: editEmployeeNumber || null,
         employment_start_date: editEmploymentStart || null,
         holiday_entitlement: editEntitlement ? parseFloat(editEntitlement) : null,
         working_days: editWorkingDays,
@@ -628,16 +635,31 @@ export default function CompanyUsersPage() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                <input
-                  type="email"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  autoComplete="off"
-                  required
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoComplete="off"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Employee Number <span className="text-xs text-gray-400">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={newEmployeeNumber}
+                    onChange={(e) => setNewEmployeeNumber(e.target.value)}
+                    placeholder="e.g. 27"
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoComplete="off"
+                  />
+                </div>
               </div>
 
               <div>
@@ -795,16 +817,31 @@ export default function CompanyUsersPage() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                <input
-                  type="email"
-                  value={editEmail}
-                  onChange={(e) => setEditEmail(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  autoComplete="off"
-                  required
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={editEmail}
+                    onChange={(e) => setEditEmail(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoComplete="off"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Employee Number <span className="text-xs text-gray-400">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={editEmployeeNumber}
+                    onChange={(e) => setEditEmployeeNumber(e.target.value)}
+                    placeholder="e.g. 27"
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoComplete="off"
+                  />
+                </div>
               </div>
 
               <div>
@@ -907,6 +944,11 @@ export default function CompanyUsersPage() {
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${getRoleBadgeColor(user.role)}`}>
                           {user.role}
                         </span>
+                        {user.employee_number && (
+                          <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                            #{user.employee_number}
+                          </span>
+                        )}
                         {user.job_title && (
                           <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                             {user.job_title}

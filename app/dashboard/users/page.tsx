@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
@@ -14,6 +14,41 @@ const DAY_LABELS: Record<string, string> = {
 
 const DEFAULT_WORKING_DAYS = {
   sun: false, mon: true, tue: true, wed: true, thu: true, fri: true, sat: false
+}
+
+// Pro-rata helper (mirrors server-side logic so we can preview the result)
+function calculateProRata(
+  fullYearEntitlement: number,
+  employmentStartDate: string,
+  holidayYearStartDate: string | null
+): number {
+  if (!fullYearEntitlement || !employmentStartDate) return fullYearEntitlement || 0
+
+  const startDate = new Date(employmentStartDate + 'T00:00:00')
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const effectiveStart = startDate < today ? today : startDate
+
+  let yearStartMonth = 0
+  let yearStartDay = 1
+  if (holidayYearStartDate) {
+    const hys = new Date(holidayYearStartDate + 'T00:00:00')
+    yearStartMonth = hys.getMonth()
+    yearStartDay = hys.getDate()
+  }
+
+  let yearEnd = new Date(effectiveStart.getFullYear(), yearStartMonth, yearStartDay)
+  if (yearEnd <= effectiveStart) {
+    yearEnd = new Date(effectiveStart.getFullYear() + 1, yearStartMonth, yearStartDay)
+  }
+
+  const msPerDay = 1000 * 60 * 60 * 24
+  const daysRemaining = Math.ceil((yearEnd.getTime() - effectiveStart.getTime()) / msPerDay)
+  const yearStart = new Date(yearEnd.getFullYear() - 1, yearStartMonth, yearStartDay)
+  const totalDays = Math.round((yearEnd.getTime() - yearStart.getTime()) / msPerDay)
+
+  const proRated = (fullYearEntitlement * daysRemaining) / totalDays
+  return Math.round(proRated * 2) / 2
 }
 
 export default function DashboardUsers() {
@@ -37,7 +72,9 @@ export default function DashboardUsers() {
   const [password, setPassword] = useState('')
   const [role, setRole] = useState('user')
   const [jobTitle, setJobTitle] = useState('')
+  const [employeeNumber, setEmployeeNumber] = useState('')
   const [employmentStartDate, setEmploymentStartDate] = useState('')
+  const [fullYearEntitlement, setFullYearEntitlement] = useState('')
   const [holidayEntitlement, setHolidayEntitlement] = useState('')
   const [workingDays, setWorkingDays] = useState<any>(DEFAULT_WORKING_DAYS)
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>([])
@@ -155,13 +192,23 @@ export default function DashboardUsers() {
     users.filter(u => u.job_title && !u.is_deleted).map((u: any) => u.job_title)
   )).sort()
 
+  // Live pro-rata preview
+  const proRataPreview = useMemo(() => {
+    if (!fullYearEntitlement || isNaN(parseFloat(fullYearEntitlement))) return null
+    if (!employmentStartDate) return null
+    const fy = parseFloat(fullYearEntitlement)
+    return calculateProRata(fy, employmentStartDate, company?.holiday_year_start || null)
+  }, [fullYearEntitlement, employmentStartDate, company?.holiday_year_start])
+
   const resetForm = () => {
     setFullName('')
     setEmail('')
     setPassword('')
     setRole('user')
     setJobTitle('')
+    setEmployeeNumber('')
     setEmploymentStartDate('')
+    setFullYearEntitlement('')
     setHolidayEntitlement('')
     setWorkingDays(DEFAULT_WORKING_DAYS)
     setSelectedFeatures([])
@@ -174,14 +221,15 @@ export default function DashboardUsers() {
     setEmail(user.email || '')
     setRole(user.role || 'user')
     setJobTitle(user.job_title || '')
+    setEmployeeNumber(user.employee_number || '')
     setEmploymentStartDate(user.employment_start_date || '')
+    setFullYearEntitlement(user.full_year_entitlement?.toString() || '')
     setHolidayEntitlement(user.holiday_entitlement?.toString() || '')
     setWorkingDays(user.working_days || DEFAULT_WORKING_DAYS)
     setSelectedFeatures(
       user.user_features?.filter((uf: any) => uf.is_enabled).map((uf: any) => uf.feature_id) || []
     )
 
-    // Pre-fill manager titles when editing a manager
     if (user.role === 'manager') {
       const { data: titles } = await supabase
         .from('manager_job_titles')
@@ -209,7 +257,9 @@ export default function DashboardUsers() {
         role,
         company_id: currentUser.company_id,
         job_title: jobTitle,
+        employee_number: employeeNumber || null,
         employment_start_date: employmentStartDate || null,
+        full_year_entitlement: fullYearEntitlement ? parseFloat(fullYearEntitlement) : null,
         holiday_entitlement: holidayEntitlement ? parseFloat(holidayEntitlement) : null,
         working_days: workingDays,
         feature_ids: selectedFeatures,
@@ -228,7 +278,10 @@ export default function DashboardUsers() {
       return
     }
 
-    showMessage('User created!', 'success')
+    const proRataMsg = result.pro_rata_entitlement !== null && result.pro_rata_entitlement !== undefined
+      ? ` (pro-rata: ${result.pro_rata_entitlement} days)`
+      : ''
+    showMessage('User created!' + proRataMsg, 'success')
     setShowAddForm(false)
     resetForm()
   }
@@ -253,7 +306,9 @@ export default function DashboardUsers() {
         email: editingUser.email,
         role,
         job_title: jobTitle,
+        employee_number: employeeNumber || null,
         employment_start_date: employmentStartDate || null,
+        full_year_entitlement: fullYearEntitlement ? parseFloat(fullYearEntitlement) : null,
         holiday_entitlement: holidayEntitlement ? parseFloat(holidayEntitlement) : null,
         working_days: workingDays,
         user_features: userFeaturesPayload,
@@ -399,6 +454,10 @@ export default function DashboardUsers() {
   const showHolidayFields = companyFeatures.some((cf: any) => cf.features?.name === 'Holidays')
     && selectedFeatures.includes(features.find(f => f.name === 'Holidays')?.id)
 
+  const holidayYearStartLabel = company?.holiday_year_start
+    ? new Date(company.holiday_year_start + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })
+    : '1 January (default)'
+
   return (
     <main className="min-h-screen bg-gray-100">
       <IdleWarningModal show={showWarning} secondsLeft={secondsLeft} onStay={stayLoggedIn} />
@@ -503,7 +562,7 @@ export default function DashboardUsers() {
                 </div>
               )}
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
                   <select
@@ -523,6 +582,18 @@ export default function DashboardUsers() {
                     value={jobTitle}
                     onChange={(e) => setJobTitle(e.target.value)}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Employee Number <span className="text-gray-400">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={employeeNumber}
+                    onChange={(e) => setEmployeeNumber(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                    placeholder="e.g. 27"
                   />
                 </div>
               </div>
@@ -569,26 +640,68 @@ export default function DashboardUsers() {
               {/* Holiday-specific fields */}
               {showHolidayFields && (
                 <>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-gray-200">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Employment Start Date</label>
-                      <input
-                        type="date"
-                        value={employmentStartDate}
-                        onChange={(e) => setEmploymentStartDate(e.target.value)}
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
-                      />
+                  <div className="pt-4 border-t border-gray-200">
+                    <h3 className="text-sm font-semibold text-gray-700 mb-3">🏖️ Holiday Settings</h3>
+                    <p className="text-xs text-gray-500 mb-3">
+                      Holiday year starts: <span className="font-medium">{holidayYearStartLabel}</span>
+                    </p>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Employment Start Date</label>
+                        <input
+                          type="date"
+                          value={employmentStartDate}
+                          onChange={(e) => setEmploymentStartDate(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Full Year Entitlement <span className="text-gray-400">(days/year)</span>
+                        </label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          value={fullYearEntitlement}
+                          onChange={(e) => setFullYearEntitlement(e.target.value)}
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                          placeholder="e.g. 28"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Holiday Entitlement (days)</label>
+
+                    {!editingUser && proRataPreview !== null && (
+                      <div className="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm">
+                        <p className="font-medium text-blue-800">📐 Pro-rata calculation</p>
+                        <p className="text-blue-700 mt-1">
+                          Based on starting <span className="font-semibold">{new Date(employmentStartDate + 'T00:00:00').toLocaleDateString('en-GB')}</span>,
+                          this employee will be granted{' '}
+                          <span className="font-bold">{proRataPreview} days</span> for the rest of this holiday year.
+                        </p>
+                        <p className="text-xs text-blue-600 mt-1">
+                          (Their full-year entitlement of {fullYearEntitlement} days will apply from the next holiday year.)
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="mt-3">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Current Balance <span className="text-gray-400">(days available now)</span>
+                      </label>
                       <input
                         type="number"
                         step="0.5"
                         value={holidayEntitlement}
                         onChange={(e) => setHolidayEntitlement(e.target.value)}
                         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
-                        placeholder="e.g. 28"
+                        placeholder={!editingUser && proRataPreview !== null ? `Will default to ${proRataPreview}` : 'e.g. 28'}
                       />
+                      <p className="text-xs text-gray-500 mt-1">
+                        {editingUser
+                          ? 'Override the current balance manually if needed.'
+                          : 'Leave blank to use the pro-rata value above. Override with a custom number if needed.'}
+                      </p>
                     </div>
                   </div>
 
@@ -659,6 +772,11 @@ export default function DashboardUsers() {
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${getRoleBadgeColor(user.role)}`}>
                           {user.role}
                         </span>
+                        {user.employee_number && (
+                          <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
+                            #{user.employee_number}
+                          </span>
+                        )}
                         {user.job_title && (
                           <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                             {user.job_title}
@@ -670,7 +788,12 @@ export default function DashboardUsers() {
                       </div>
                       <p className="text-sm text-gray-500 mt-1">{user.email}</p>
                       {user.holiday_entitlement !== null && user.holiday_entitlement !== undefined && (
-                        <p className="text-xs text-gray-500 mt-1">🏖️ {user.holiday_entitlement} days</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          🏖️ {user.holiday_entitlement} days
+                          {user.full_year_entitlement && user.full_year_entitlement !== user.holiday_entitlement && (
+                            <span className="text-gray-400"> (full year: {user.full_year_entitlement})</span>
+                          )}
+                        </p>
                       )}
                     </div>
 
