@@ -359,36 +359,36 @@ export default function SchedulesCalendarPage() {
     cellAsgs.forEach(a => {
       const s = getSchedule(a.schedule_id)
       if (s) {
-        lines.push(`${s.name}\n${formatTime(s.start_time)}–${formatTime(s.end_time)}`)
+        lines.push(`${s.name}: ${formatTime(s.start_time)}-${formatTime(s.end_time)}`)
       }
     })
     if (lines.length === 0) return 'Day Off'
-    return lines.join('\n\n')
+    return lines.join('\n')
   }
 
   const exportPDF = () => {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
     const pageWidth = doc.internal.pageSize.getWidth()
+    const pageHeight = doc.internal.pageSize.getHeight()
     const generatedOn = new Date().toLocaleString('en-GB', {
       day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
     })
 
-    doc.setFontSize(16)
-    doc.setFont('helvetica', 'bold')
-    doc.text(company?.name || 'Company', 14, 14)
+    // Compact top header: matches example PDF style (small print at top, no big blue block)
+    doc.setFontSize(8)
+    doc.setTextColor(80)
+    doc.setFont('helvetica', 'normal')
+    doc.text(`Printed at ${generatedOn}`, 8, 8)
 
     doc.setFontSize(11)
-    doc.setFont('helvetica', 'normal')
-    doc.text(`Schedule Calendar — ${weekLabel}`, 14, 20)
-
-    doc.setFontSize(8)
-    doc.setTextColor(110)
-    doc.text(`Generated: ${generatedOn}`, pageWidth - 14, 14, { align: 'right' })
+    doc.setFont('helvetica', 'bold')
     doc.setTextColor(0)
+    doc.text(`${company?.name || 'Schedule'} — ${weekLabel}`, pageWidth / 2, 8, { align: 'center' })
 
+    // Single header row with "Name" + 7 weekdays. Column widths fixed and equal.
     const head = [['Name', ...weekDates.map(d => {
       const bh = bankHolName(d)
-      const base = `${d.toLocaleDateString('en-GB', { weekday: 'short' })}\n${formatDateShort(d)}`
+      const base = `${d.toLocaleDateString('en-GB', { weekday: 'long' })}\n${formatDateShort(d)}`
       return bh ? `${base}\n(${bh})` : base
     })]]
     const body = visibleUsers.map(u => [
@@ -397,42 +397,45 @@ export default function SchedulesCalendarPage() {
     ])
 
     autoTable(doc, {
-      startY: 26,
+      startY: 13,
       head,
       body,
       theme: 'grid',
-      tableLineColor: [180, 180, 180],
+      // Repeat header row on every page for uniformity
+      showHead: 'everyPage',
+      // Don't split a single user's row across two pages
+      rowPageBreak: 'avoid',
+      tableLineColor: [120, 120, 120],
       tableLineWidth: 0.2,
       tableWidth: 281,
       headStyles: {
-        fillColor: [29, 78, 216],
-        textColor: 255,
+        fillColor: [240, 240, 240],
+        textColor: 0,
         fontStyle: 'bold',
         fontSize: 8,
         halign: 'center',
         valign: 'middle',
-        lineColor: [180, 180, 180],
+        lineColor: [120, 120, 120],
         lineWidth: 0.2,
-        cellPadding: 2,
+        cellPadding: 1.5,
       },
       bodyStyles: {
         fontSize: 7,
-        cellPadding: 2,
-        valign: 'middle',
-        halign: 'center',
-        lineColor: [220, 220, 220],
+        cellPadding: 1.5,
+        valign: 'top',
+        halign: 'left',
+        lineColor: [180, 180, 180],
         lineWidth: 0.1,
-        minCellHeight: 14,
+        textColor: 0,
       },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
       columnStyles: {
         0: {
           cellWidth: 38,
           fontStyle: 'bold',
           halign: 'left',
-          valign: 'middle',
-          fillColor: [243, 244, 246],
-          textColor: [30, 30, 30],
+          valign: 'top',
+          fillColor: [255, 255, 255],
+          textColor: 0,
         },
         1: { cellWidth: 34.7 },
         2: { cellWidth: 34.7 },
@@ -446,26 +449,27 @@ export default function SchedulesCalendarPage() {
         if (data.section === 'body' && data.column.index > 0) {
           const text = Array.isArray(data.cell.text) ? data.cell.text.join('') : data.cell.text
           if (text === 'Day Off') {
-            data.cell.styles.textColor = [150, 150, 150]
+            data.cell.styles.textColor = [120, 120, 120]
             data.cell.styles.fontStyle = 'italic'
+            data.cell.styles.halign = 'center'
           }
         }
       },
       didDrawPage: () => {
-        const pageCount = doc.getNumberOfPages()
         const pageNum = doc.getCurrentPageInfo().pageNumber
-        const pageHeight = doc.internal.pageSize.getHeight()
-        doc.setFontSize(8)
-        doc.setTextColor(150)
+        const totalPages = doc.getNumberOfPages()
+        doc.setFontSize(7)
+        doc.setTextColor(120)
+        doc.setFont('helvetica', 'normal')
         doc.text(
-          `Page ${pageNum} of ${pageCount}`,
-          pageWidth - 14,
-          pageHeight - 8,
+          `Page ${pageNum} of ${totalPages}`,
+          pageWidth - 8,
+          pageHeight - 4,
           { align: 'right' }
         )
         doc.setTextColor(0)
       },
-      margin: { left: 8, right: 8, top: 26, bottom: 14 },
+      margin: { left: 8, right: 8, top: 13, bottom: 8 },
     })
 
     doc.save(`schedule-${isoDate(weekDates[0])}-to-${isoDate(weekDates[6])}.pdf`)
@@ -506,11 +510,18 @@ export default function SchedulesCalendarPage() {
           @page { size: A4 landscape; margin: 0.5cm; }
 
           .print-table-wrap { overflow: visible !important; }
-          .print-table-wrap table { width: 100% !important; table-layout: fixed !important; font-size: 8pt !important; }
+          .print-table-wrap table {
+            width: 100% !important;
+            table-layout: fixed !important;
+            font-size: 8pt !important;
+            border-collapse: collapse !important;
+          }
           .print-table-wrap th, .print-table-wrap td {
             min-width: 0 !important;
             padding: 3px 4px !important;
             word-break: break-word;
+            border: 1px solid #999 !important;
+            vertical-align: top !important;
           }
           .print-table-wrap th:first-child, .print-table-wrap td:first-child {
             width: 14% !important;
@@ -523,6 +534,35 @@ export default function SchedulesCalendarPage() {
             font-size: 7pt !important;
           }
           .print-table-wrap .sticky { position: static !important; }
+
+          /* Force single uniform column header style for print — kill the today/bh background */
+          .print-table-wrap thead th {
+            background: #f0f0f0 !important;
+            color: black !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+
+          /* Strip cell highlights so all rows look uniform */
+          .print-table-wrap tbody td {
+            background: white !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .print-table-wrap tbody td * {
+            background: transparent !important;
+            color: black !important;
+            border: none !important;
+            box-shadow: none !important;
+          }
+          /* Don't break a row across pages */
+          .print-table-wrap tr {
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+          /* Repeat header row on every printed page */
+          .print-table-wrap thead { display: table-header-group !important; }
+          .print-table-wrap tbody { display: table-row-group !important; }
         }
         .print-only { display: none; }
       `}</style>
@@ -540,11 +580,12 @@ export default function SchedulesCalendarPage() {
         </button>
       </div>
 
-      <div className="print-only px-6 py-4 border-b border-gray-300">
-        <h1 className="text-2xl font-bold text-gray-900">{company?.name}</h1>
-        <p className="text-sm text-gray-700">Schedule Calendar — {weekLabel}</p>
-        <div className="flex justify-between text-xs text-gray-600 mt-2">
-          <span>Generated: {printDate}</span>
+      {/* Print-only compact header */}
+      <div className="print-only px-2 py-1">
+        <div className="flex justify-between items-center text-xs">
+          <span>Printed at {printDate}</span>
+          <span className="font-bold">{company?.name} — {weekLabel}</span>
+          <span>&nbsp;</span>
         </div>
       </div>
 
@@ -592,7 +633,7 @@ export default function SchedulesCalendarPage() {
         )}
 
         {bankHolsInWeek.length > 0 && (
-          <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 flex items-center gap-3">
+          <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 flex items-center gap-3 no-print">
             <span className="text-xl">🎉</span>
             <div className="flex-1 text-sm text-orange-800">
               <span className="font-medium">Bank Holiday this week:</span>{' '}
@@ -742,7 +783,7 @@ export default function SchedulesCalendarPage() {
                             }`}
                           >
                             {hasConflict && (
-                              <div className="bg-red-100 border border-red-300 text-red-800 rounded px-2 py-1 text-[11px] font-semibold mb-1 flex items-center gap-1">
+                              <div className="bg-red-100 border border-red-300 text-red-800 rounded px-2 py-1 text-[11px] font-semibold mb-1 flex items-center gap-1 no-print">
                                 <span>⚠️</span>
                                 <span>Reassign needed</span>
                               </div>
@@ -778,7 +819,14 @@ export default function SchedulesCalendarPage() {
                                       'bg-blue-50 border border-blue-100 text-blue-900'
                                     }`}
                                   >
-                                    <p className="font-semibold truncate">{sched?.name || '(unknown schedule)'}</p>
+                                    <p className="font-semibold truncate">
+                                      {sched?.name || '(unknown schedule)'}
+                                      {sched && (
+                                        <span className="font-normal text-[10px] ml-1">
+                                          : {formatTime(sched.start_time)}-{formatTime(sched.end_time)}
+                                        </span>
+                                      )}
+                                    </p>
                                   </div>
                                 )
                               })}

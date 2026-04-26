@@ -91,28 +91,10 @@ export default function EmployeeSchedulePage() {
 
   const loadAll = useCallback(async (userId: string, companyId: string, weekFromISO: string, weekToISO: string) => {
     const [schedsRes, asgsRes, holsRes] = await Promise.all([
-      supabase
-        .from('schedules')
-        .select('*')
-        .eq('company_id', companyId),
-      supabase
-        .from('schedule_assignments')
-        .select('*')
-        .eq('company_id', companyId)
-        .eq('user_id', userId)
-        .eq('status', 'published')
-        .gte('assignment_date', weekFromISO)
-        .lte('assignment_date', weekToISO),
-      supabase
-        .from('holiday_requests')
-        .select('id, user_id, request_type, status, start_date, end_date, half_day_type, early_finish_time')
-        .eq('company_id', companyId)
-        .eq('user_id', userId)
-        .eq('status', 'approved')
-        .lte('start_date', weekToISO)
-        .gte('end_date', weekFromISO),
+      supabase.from('schedules').select('*').eq('company_id', companyId),
+      supabase.from('schedule_assignments').select('*').eq('company_id', companyId).eq('user_id', userId).eq('status', 'published').gte('assignment_date', weekFromISO).lte('assignment_date', weekToISO),
+      supabase.from('holiday_requests').select('id, user_id, request_type, status, start_date, end_date, half_day_type, early_finish_time').eq('company_id', companyId).eq('user_id', userId).eq('status', 'approved').lte('start_date', weekToISO).gte('end_date', weekFromISO),
     ])
-
     setSchedules(schedsRes.data || [])
     setAssignments(asgsRes.data || [])
     setHolidays(holsRes.data || [])
@@ -121,50 +103,21 @@ export default function EmployeeSchedulePage() {
   const init = useCallback(async () => {
     setLoading(true)
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      router.push('/login')
-      return
-    }
-    const { data: profile } = await supabase
-      .from('profiles').select('*').eq('id', user.id).single()
-    if (!profile) {
-      router.push('/login')
-      return
-    }
+    if (!user) { router.push('/login'); return }
+    const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
+    if (!profile) { router.push('/login'); return }
     setCurrentUser(profile)
+    if (!profile.company_id) { router.push('/employee'); return }
 
-    if (!profile.company_id) {
-      router.push('/employee')
-      return
-    }
-
-    const { data: companyData } = await supabase
-      .from('companies')
-      .select(`*, company_features (is_enabled, features (name))`)
-      .eq('id', profile.company_id)
-      .single()
+    const { data: companyData } = await supabase.from('companies').select(`*, company_features (is_enabled, features (name))`).eq('id', profile.company_id).single()
     setCompany(companyData)
 
-    const companyHasSchedules = companyData?.company_features?.some(
-      (cf: any) => cf.is_enabled && cf.features?.name === 'Schedules'
-    )
-    if (!companyHasSchedules) {
-      router.push('/employee')
-      return
-    }
+    const companyHasSchedules = companyData?.company_features?.some((cf: any) => cf.is_enabled && cf.features?.name === 'Schedules')
+    if (!companyHasSchedules) { router.push('/employee'); return }
 
-    const { data: userFeats } = await supabase
-      .from('user_features')
-      .select('is_enabled, features (name)')
-      .eq('user_id', user.id)
-      .eq('is_enabled', true)
-    const userHasSchedules = (userFeats as any[])?.some(
-      (uf: any) => uf.features?.name === 'Schedules'
-    )
-    if (!userHasSchedules) {
-      router.push('/employee')
-      return
-    }
+    const { data: userFeats } = await supabase.from('user_features').select('is_enabled, features (name)').eq('user_id', user.id).eq('is_enabled', true)
+    const userHasSchedules = (userFeats as any[])?.some((uf: any) => uf.features?.name === 'Schedules')
+    if (!userHasSchedules) { router.push('/employee'); return }
 
     const from = isoDate(weekStart)
     const to = isoDate(addDays(weekStart, 6))
@@ -172,10 +125,7 @@ export default function EmployeeSchedulePage() {
     setLoading(false)
   }, [router, weekStart, loadAll])
 
-  useEffect(() => {
-    init()
-    fetchBankHolidays()
-  }, [init])
+  useEffect(() => { init(); fetchBankHolidays() }, [init])
 
   useEffect(() => {
     if (!currentUser?.id || !currentUser?.company_id) return
@@ -186,26 +136,20 @@ export default function EmployeeSchedulePage() {
 
   useEffect(() => {
     if (!currentUser?.id || !currentUser?.company_id) return
-    const channel = supabase
-      .channel('employee-schedule-realtime')
+    const channel = supabase.channel('employee-schedule-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_assignments', filter: `user_id=eq.${currentUser.id}` }, () => {
-        const from = isoDate(weekStart)
-        const to = isoDate(addDays(weekStart, 6))
+        const from = isoDate(weekStart); const to = isoDate(addDays(weekStart, 6))
         loadAll(currentUser.id, currentUser.company_id, from, to)
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'holiday_requests', filter: `user_id=eq.${currentUser.id}` }, () => {
-        const from = isoDate(weekStart)
-        const to = isoDate(addDays(weekStart, 6))
+        const from = isoDate(weekStart); const to = isoDate(addDays(weekStart, 6))
         loadAll(currentUser.id, currentUser.company_id, from, to)
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [currentUser?.id, currentUser?.company_id, weekStart, loadAll])
 
-  const weekDates = useMemo(
-    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
-    [weekStart]
-  )
+  const weekDates = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart])
 
   const getSchedule = (id: string) => schedules.find(s => s.id === id)
 
@@ -221,9 +165,7 @@ export default function EmployeeSchedulePage() {
       .sort((a, b) => {
         const sa = getSchedule(a.schedule_id)
         const sb = getSchedule(b.schedule_id)
-        const ta = sa?.start_time || ''
-        const tb = sb?.start_time || ''
-        return ta.localeCompare(tb)
+        return (sa?.start_time || '').localeCompare(sb?.start_time || '')
       })
   }
 
@@ -235,58 +177,30 @@ export default function EmployeeSchedulePage() {
   const goToday = () => setWeekStart(startOfWeekMon(new Date()))
 
   const renderHolidayLabel = (h: any) => {
-    if (h.request_type === 'holiday') {
-      if (h.half_day_type) return `Holiday (${h.half_day_type})`
-      return 'Holiday'
-    }
+    if (h.request_type === 'holiday') return h.half_day_type ? `Holiday (${h.half_day_type})` : 'Holiday'
     if (h.request_type === 'keep_day_off') return 'Day Off'
     if (h.request_type === 'early_finish') return `Early Finish ${formatTime(h.early_finish_time || '')}`
     return 'Off'
   }
 
   const openScheduleModal = async (sched: any) => {
-    setOpenSchedule(sched)
-    setOpenDocs([])
-    setDocMessage('')
-    setDocsLoading(true)
-    const { data } = await supabase
-      .from('schedule_documents')
-      .select('*')
-      .eq('schedule_id', sched.id)
-      .order('uploaded_at', { ascending: false })
-    setOpenDocs(data || [])
-    setDocsLoading(false)
+    setOpenSchedule(sched); setOpenDocs([]); setDocMessage(''); setDocsLoading(true)
+    const { data } = await supabase.from('schedule_documents').select('*').eq('schedule_id', sched.id).order('uploaded_at', { ascending: false })
+    setOpenDocs(data || []); setDocsLoading(false)
   }
 
-  const closeModal = () => {
-    setOpenSchedule(null)
-    setOpenDocs([])
-    setDocMessage('')
-  }
+  const closeModal = () => { setOpenSchedule(null); setOpenDocs([]); setDocMessage('') }
 
   const handleDownload = async (doc: any) => {
     setDocMessage('')
-    const { data, error } = await supabase.storage
-      .from('schedule-documents')
-      .createSignedUrl(doc.storage_path, 60)
-
-    if (error || !data?.signedUrl) {
-      setDocMessage('Could not open file')
-      return
-    }
-
+    const { data, error } = await supabase.storage.from('schedule-documents').createSignedUrl(doc.storage_path, 60)
+    if (error || !data?.signedUrl) { setDocMessage('Could not open file'); return }
     window.location.href = data.signedUrl
   }
 
   const weekLabel = `${formatDateLong(weekDates[0])} – ${formatDateLong(weekDates[6])}`
 
-  if (loading) {
-    return (
-      <main className="min-h-screen flex items-center justify-center bg-gray-50">
-        <p className="text-gray-500">Loading...</p>
-      </main>
-    )
-  }
+  if (loading) return <main className="min-h-screen flex items-center justify-center bg-gray-50"><p className="text-gray-500">Loading...</p></main>
 
   const todayIso = isoDate(new Date())
 
@@ -296,12 +210,7 @@ export default function EmployeeSchedulePage() {
 
       <div className="bg-gradient-to-br from-blue-600 to-blue-800 text-white px-6 pt-10 pb-6 rounded-b-3xl shadow-lg">
         <div className="flex items-center justify-between">
-          <button
-            onClick={() => router.push('/employee')}
-            className="text-blue-100 text-sm hover:text-white"
-          >
-            ← Home
-          </button>
+          <button onClick={() => router.push('/employee')} className="text-blue-100 text-sm hover:text-white">← Home</button>
           <p className="text-blue-100 text-sm">{company?.name}</p>
         </div>
         <h1 className="text-2xl font-bold mt-2">📅 My Schedule</h1>
@@ -311,24 +220,9 @@ export default function EmployeeSchedulePage() {
       <div className="px-4 pt-4 space-y-3">
 
         <div className="flex items-center gap-2 bg-white rounded-xl shadow-sm p-2">
-          <button
-            onClick={goPrevWeek}
-            className="bg-gray-100 hover:bg-gray-200 text-gray-700 w-10 h-10 rounded-lg text-base font-medium flex-shrink-0"
-          >
-            ←
-          </button>
-          <button
-            onClick={goToday}
-            className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium"
-          >
-            This Week
-          </button>
-          <button
-            onClick={goNextWeek}
-            className="bg-gray-100 hover:bg-gray-200 text-gray-700 w-10 h-10 rounded-lg text-base font-medium flex-shrink-0"
-          >
-            →
-          </button>
+          <button onClick={goPrevWeek} className="bg-gray-100 hover:bg-gray-200 text-gray-700 w-10 h-10 rounded-lg text-base font-medium flex-shrink-0">←</button>
+          <button onClick={goToday} className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium">This Week</button>
+          <button onClick={goNextWeek} className="bg-gray-100 hover:bg-gray-200 text-gray-700 w-10 h-10 rounded-lg text-base font-medium flex-shrink-0">→</button>
         </div>
 
         <div className="space-y-2">
@@ -340,53 +234,22 @@ export default function EmployeeSchedulePage() {
             const isEmpty = dayAsgs.length === 0 && !hol
 
             return (
-              <div
-                key={idx}
-                className={`bg-white rounded-2xl shadow-sm border overflow-hidden ${
-                  isToday ? 'border-blue-400 ring-2 ring-blue-100' : 'border-gray-100'
-                }`}
-              >
-                <div className={`px-4 py-2 flex items-center justify-between ${
-                  isToday ? 'bg-blue-50' : bh ? 'bg-orange-50' : 'bg-gray-50'
-                }`}>
+              <div key={idx} className={`bg-white rounded-2xl shadow-sm border overflow-hidden ${isToday ? 'border-blue-400 ring-2 ring-blue-100' : 'border-gray-100'}`}>
+                <div className={`px-4 py-2 flex items-center justify-between ${isToday ? 'bg-blue-50' : bh ? 'bg-orange-50' : 'bg-gray-50'}`}>
                   <div className="flex items-center gap-2">
-                    <p className={`font-semibold text-sm ${isToday ? 'text-blue-800' : 'text-gray-800'}`}>
-                      {d.toLocaleDateString('en-GB', { weekday: 'long' })}
-                    </p>
-                    <span className={`text-xs ${isToday ? 'text-blue-700' : 'text-gray-500'}`}>
-                      {formatDateShort(d)}
-                    </span>
-                    {isToday && (
-                      <span className="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-full font-medium">
-                        TODAY
-                      </span>
-                    )}
+                    <p className={`font-semibold text-sm ${isToday ? 'text-blue-800' : 'text-gray-800'}`}>{d.toLocaleDateString('en-GB', { weekday: 'long' })}</p>
+                    <span className={`text-xs ${isToday ? 'text-blue-700' : 'text-gray-500'}`}>{formatDateShort(d)}</span>
+                    {isToday && <span className="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-full font-medium">TODAY</span>}
                   </div>
-                  {bh && (
-                    <span className="text-[10px] bg-orange-200 text-orange-800 px-2 py-0.5 rounded-full font-medium">
-                      🎉 {bh}
-                    </span>
-                  )}
+                  {bh && <span className="text-[10px] bg-orange-200 text-orange-800 px-2 py-0.5 rounded-full font-medium">🎉 {bh}</span>}
                 </div>
 
                 <div className="p-3 space-y-2">
                   {hol && (
-                    <div className={`p-3 rounded-lg ${
-                      hol.request_type === 'holiday' ? 'bg-red-50 border border-red-200' :
-                      hol.request_type === 'keep_day_off' ? 'bg-purple-50 border border-purple-200' :
-                      'bg-amber-50 border border-amber-200'
-                    }`}>
+                    <div className={`p-3 rounded-lg ${hol.request_type === 'holiday' ? 'bg-red-50 border border-red-200' : hol.request_type === 'keep_day_off' ? 'bg-purple-50 border border-purple-200' : 'bg-amber-50 border border-amber-200'}`}>
                       <div className="flex items-center gap-2">
-                        <span className="text-lg">
-                          {hol.request_type === 'holiday' ? '🏖️' : hol.request_type === 'keep_day_off' ? '🚫' : '🕓'}
-                        </span>
-                        <p className={`font-semibold text-sm ${
-                          hol.request_type === 'holiday' ? 'text-red-800' :
-                          hol.request_type === 'keep_day_off' ? 'text-purple-800' :
-                          'text-amber-800'
-                        }`}>
-                          {renderHolidayLabel(hol)}
-                        </p>
+                        <span className="text-lg">{hol.request_type === 'holiday' ? '🏖️' : hol.request_type === 'keep_day_off' ? '🚫' : '🕓'}</span>
+                        <p className={`font-semibold text-sm ${hol.request_type === 'holiday' ? 'text-red-800' : hol.request_type === 'keep_day_off' ? 'text-purple-800' : 'text-amber-800'}`}>{renderHolidayLabel(hol)}</p>
                       </div>
                     </div>
                   )}
@@ -395,17 +258,10 @@ export default function EmployeeSchedulePage() {
                     const sched = getSchedule(a.schedule_id)
                     if (!sched) return null
                     return (
-                      <button
-                        key={a.id}
-                        onClick={() => openScheduleModal(sched)}
-                        className="w-full text-left bg-blue-50 hover:bg-blue-100 active:bg-blue-200 border border-blue-200 rounded-lg p-3 transition"
-                      >
+                      <button key={a.id} onClick={() => openScheduleModal(sched)} className="w-full text-left bg-blue-50 hover:bg-blue-100 active:bg-blue-200 border border-blue-200 rounded-lg p-3 transition">
                         <div className="flex items-start gap-2">
                           <div className="flex-1 min-w-0">
                             <p className="font-semibold text-blue-900 text-sm">{sched.name}</p>
-                            <p className="text-xs text-blue-700 mt-0.5">
-                              {formatTime(sched.start_time)}–{formatTime(sched.end_time)}
-                            </p>
                           </div>
                           <span className="text-blue-400 text-sm flex-shrink-0">›</span>
                         </div>
@@ -413,11 +269,7 @@ export default function EmployeeSchedulePage() {
                     )
                   })}
 
-                  {isEmpty && (
-                    <div className="px-3 py-2 text-center text-gray-400 text-sm italic">
-                      Day Off
-                    </div>
-                  )}
+                  {isEmpty && <div className="px-3 py-2 text-center text-gray-400 text-sm italic">Day Off</div>}
                 </div>
               </div>
             )
@@ -426,35 +278,20 @@ export default function EmployeeSchedulePage() {
 
       </div>
 
-      {/* Schedule detail modal */}
       {openSchedule && (
-        <div
-          className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center sm:p-4"
-          onClick={closeModal}
-        >
-          <div
-            className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-lg max-h-[90vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center sm:p-4" onClick={closeModal}>
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="sticky top-0 bg-white border-b border-gray-100 px-5 py-4 flex justify-between items-start gap-3">
               <div className="min-w-0 flex-1">
                 <h2 className="text-lg font-bold text-gray-800 break-words">{openSchedule.name}</h2>
               </div>
-              <button
-                onClick={closeModal}
-                className="text-gray-400 hover:text-gray-700 text-2xl leading-none flex-shrink-0"
-              >
-                ×
-              </button>
+              <button onClick={closeModal} className="text-gray-400 hover:text-gray-700 text-2xl leading-none flex-shrink-0">×</button>
             </div>
 
             <div className="p-5 space-y-4">
-
               <div className="bg-gray-50 rounded-lg p-3">
                 <p className="text-xs text-gray-500 mb-1">Time</p>
-                <p className="font-medium text-gray-800">
-                  {formatTime(openSchedule.start_time)} – {formatTime(openSchedule.end_time)}
-                </p>
+                <p className="font-medium text-gray-800">{formatTime(openSchedule.start_time)} – {formatTime(openSchedule.end_time)}</p>
               </div>
 
               {openSchedule.schedule_type === 'one_off' && openSchedule.start_date && (
@@ -477,9 +314,7 @@ export default function EmployeeSchedulePage() {
 
               <div className="pt-3 border-t border-gray-100">
                 <p className="text-sm font-semibold text-gray-800 mb-2">Attachments</p>
-                {docMessage && (
-                  <p className="text-xs text-red-600 mb-2">{docMessage}</p>
-                )}
+                {docMessage && <p className="text-xs text-red-600 mb-2">{docMessage}</p>}
                 {docsLoading ? (
                   <p className="text-sm text-gray-400 italic">Loading attachments...</p>
                 ) : openDocs.length === 0 ? (
@@ -488,10 +323,7 @@ export default function EmployeeSchedulePage() {
                   <ul className="space-y-2">
                     {openDocs.map(doc => (
                       <li key={doc.id}>
-                        <button
-                          onClick={() => handleDownload(doc)}
-                          className="w-full flex items-center gap-3 bg-gray-50 hover:bg-gray-100 active:bg-gray-200 rounded-lg px-3 py-2 text-left transition"
-                        >
+                        <button onClick={() => handleDownload(doc)} className="w-full flex items-center gap-3 bg-gray-50 hover:bg-gray-100 active:bg-gray-200 rounded-lg px-3 py-2 text-left transition">
                           <span className="text-2xl flex-shrink-0">{getFileIcon(doc.mime_type)}</span>
                           <div className="min-w-0 flex-1">
                             <p className="text-sm font-medium text-gray-800 truncate">{doc.file_name}</p>
@@ -505,13 +337,7 @@ export default function EmployeeSchedulePage() {
                 )}
               </div>
 
-              <button
-                onClick={closeModal}
-                className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-lg font-medium transition"
-              >
-                Close
-              </button>
-
+              <button onClick={closeModal} className="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-lg font-medium transition">Close</button>
             </div>
           </div>
         </div>
@@ -519,17 +345,11 @@ export default function EmployeeSchedulePage() {
 
       <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
         <div className="flex justify-around items-center h-16 max-w-md mx-auto">
-          <button
-            onClick={() => router.push('/employee')}
-            className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-600"
-          >
+          <button onClick={() => router.push('/employee')} className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-600">
             <span className="text-xl">🏠</span>
             <span className="text-xs font-medium">Home</span>
           </button>
-          <button
-            onClick={() => router.push('/employee/profile')}
-            className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-600"
-          >
+          <button onClick={() => router.push('/employee/profile')} className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-600">
             <span className="text-xl">👤</span>
             <span className="text-xs font-medium">Profile</span>
           </button>
