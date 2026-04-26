@@ -346,22 +346,55 @@ export default function SchedulesCalendarPage() {
       startY: 26,
       head,
       body,
+      theme: 'grid',
+      tableLineColor: [180, 180, 180],
+      tableLineWidth: 0.2,
       headStyles: {
         fillColor: [29, 78, 216],
         textColor: 255,
         fontStyle: 'bold',
         fontSize: 8,
+        halign: 'center',
         valign: 'middle',
-        halign: 'left',
+        lineColor: [180, 180, 180],
+        lineWidth: 0.2,
+        cellPadding: 2,
       },
       bodyStyles: {
         fontSize: 7,
-        cellPadding: 1.5,
-        valign: 'top',
+        cellPadding: 2,
+        valign: 'middle',
+        halign: 'center',
+        lineColor: [220, 220, 220],
+        lineWidth: 0.1,
+        minCellHeight: 14,
       },
       alternateRowStyles: { fillColor: [248, 250, 252] },
       columnStyles: {
-        0: { cellWidth: 38, fontStyle: 'bold' },
+        0: {
+          cellWidth: 35,
+          fontStyle: 'bold',
+          halign: 'left',
+          valign: 'middle',
+          fillColor: [243, 244, 246],
+          textColor: [30, 30, 30],
+        },
+        1: { cellWidth: 'auto' },
+        2: { cellWidth: 'auto' },
+        3: { cellWidth: 'auto' },
+        4: { cellWidth: 'auto' },
+        5: { cellWidth: 'auto' },
+        6: { cellWidth: 'auto' },
+        7: { cellWidth: 'auto' },
+      },
+      didParseCell: (data) => {
+        if (data.section === 'body' && data.column.index > 0) {
+          const text = Array.isArray(data.cell.text) ? data.cell.text.join('') : data.cell.text
+          if (text === 'Day Off') {
+            data.cell.styles.textColor = [150, 150, 150]
+            data.cell.styles.fontStyle = 'italic'
+          }
+        }
       },
       didDrawPage: () => {
         const pageCount = doc.getNumberOfPages()
@@ -377,6 +410,7 @@ export default function SchedulesCalendarPage() {
         )
         doc.setTextColor(0)
       },
+      margin: { left: 8, right: 8, top: 26, bottom: 14 },
     })
 
     doc.save(`schedule-${isoDate(weekDates[0])}-to-${isoDate(weekDates[6])}.pdf`)
