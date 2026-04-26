@@ -33,6 +33,7 @@ export default function EmployeeHome() {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
   const [userFeatures, setUserFeatures] = useState<any[]>([])
+  const [assignedDefectsCount, setAssignedDefectsCount] = useState(0)
   const [loading, setLoading] = useState(true)
   const router = useRouter()
 
@@ -76,6 +77,18 @@ export default function EmployeeHome() {
       .eq('is_enabled', true)
 
     setUserFeatures(featuresData || [])
+
+    // Count open defects assigned to this user
+    if (profile.company_id) {
+      const { count } = await supabase
+        .from('vehicle_defects')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', profile.company_id)
+        .eq('status', 'open')
+        .eq('assigned_to', user.id)
+      setAssignedDefectsCount(count || 0)
+    }
+
     setLoading(false)
   }, [router])
 
@@ -119,11 +132,31 @@ export default function EmployeeHome() {
       )
       .subscribe()
 
+    let defectsChannel: any = null
+    if (currentUser.company_id) {
+      defectsChannel = supabase
+        .channel('employee-home-defects')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'vehicle_defects',
+            filter: `company_id=eq.${currentUser.company_id}`,
+          },
+          () => {
+            fetchData()
+          }
+        )
+        .subscribe()
+    }
+
     return () => {
       supabase.removeChannel(profileChannel)
       supabase.removeChannel(featuresChannel)
+      if (defectsChannel) supabase.removeChannel(defectsChannel)
     }
-  }, [currentUser?.id, fetchData])
+  }, [currentUser?.id, currentUser?.company_id, fetchData])
 
   const getGreeting = () => {
     const hour = new Date().getHours()
@@ -140,7 +173,6 @@ export default function EmployeeHome() {
 
   const getFeatureRoute = (name: string) => {
     if (FEATURE_ROUTES[name]) return FEATURE_ROUTES[name]
-    // Fallback: lowercased name with hyphen instead of space
     return `/employee/${name.toLowerCase().replace(/\s+/g, '-')}`
   }
 
@@ -164,6 +196,7 @@ export default function EmployeeHome() {
 
   const holidayBalance = currentUser?.holiday_entitlement
   const showHolidayBalance = hasFeature('Holidays') && holidayBalance !== null && holidayBalance !== undefined
+  const showAssignedDefectsBanner = hasFeature('Vehicle Checks') && assignedDefectsCount > 0
 
   return (
     <main className="min-h-screen bg-gray-50 pb-24">
@@ -184,6 +217,27 @@ export default function EmployeeHome() {
       </div>
 
       <div className="px-6 pt-6 space-y-6">
+
+        {showAssignedDefectsBanner && (
+          <button
+            onClick={() => router.push('/employee/vehicle-checks/defects?filter=mine')}
+            className="w-full bg-gradient-to-br from-purple-600 to-purple-800 hover:from-purple-700 hover:to-purple-900 active:from-purple-800 rounded-2xl shadow-lg p-5 text-white text-left transition"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3 flex-1 min-w-0">
+                <span className="text-4xl flex-shrink-0">🔧</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm opacity-90">You have</p>
+                  <p className="text-2xl font-bold">
+                    {assignedDefectsCount} defect{assignedDefectsCount > 1 ? 's' : ''} to repair
+                  </p>
+                  <p className="text-xs opacity-80 mt-1">Tap to view your assigned work</p>
+                </div>
+              </div>
+              <span className="text-2xl">›</span>
+            </div>
+          </button>
+        )}
 
         {showHolidayBalance && (
           <div className="bg-gradient-to-br from-yellow-400 to-orange-500 rounded-2xl shadow-lg p-5 text-white">
