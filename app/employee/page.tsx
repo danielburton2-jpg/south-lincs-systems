@@ -6,6 +6,29 @@ import { useRouter } from 'next/navigation'
 
 const supabase = createClient()
 
+// Map feature names to URL paths and icons
+const FEATURE_ROUTES: Record<string, string> = {
+  Holidays: '/employee/holidays',
+  Schedules: '/employee/schedules',
+  Timesheets: '/employee/timesheets',
+  Tasks: '/employee/tasks',
+  Reports: '/employee/reports',
+  Messaging: '/employee/messaging',
+  Documents: '/employee/documents',
+  'Vehicle Checks': '/employee/vehicle-checks',
+}
+
+const FEATURE_ICONS: Record<string, string> = {
+  Holidays: '🏖️',
+  Schedules: '📅',
+  Timesheets: '⏱️',
+  Tasks: '✅',
+  Reports: '📊',
+  Messaging: '💬',
+  Documents: '📄',
+  'Vehicle Checks': '🚛',
+}
+
 export default function EmployeeHome() {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
@@ -60,7 +83,7 @@ export default function EmployeeHome() {
     fetchData()
   }, [fetchData])
 
-  // Realtime: listen for profile updates (balance changes) and feature changes
+  // Realtime
   useEffect(() => {
     if (!currentUser?.id) return
 
@@ -113,17 +136,12 @@ export default function EmployeeHome() {
     return fullName?.split(' ')[0] || ''
   }
 
-  const getFeatureIcon = (name: string) => {
-    const icons: Record<string, string> = {
-      Holidays: '🏖️',
-      Schedules: '📅',
-      Timesheets: '⏱️',
-      Tasks: '✅',
-      Reports: '📊',
-      Messaging: '💬',
-      Documents: '📄',
-    }
-    return icons[name] || '📌'
+  const getFeatureIcon = (name: string) => FEATURE_ICONS[name] || '📌'
+
+  const getFeatureRoute = (name: string) => {
+    if (FEATURE_ROUTES[name]) return FEATURE_ROUTES[name]
+    // Fallback: lowercased name with hyphen instead of space
+    return `/employee/${name.toLowerCase().replace(/\s+/g, '-')}`
   }
 
   const hasFeature = (name: string) => {
@@ -201,7 +219,7 @@ export default function EmployeeHome() {
               {userFeatures.map((uf: any) => (
                 <button
                   key={uf.feature_id}
-                  onClick={() => router.push(`/employee/${uf.features.name.toLowerCase()}`)}
+                  onClick={() => router.push(getFeatureRoute(uf.features.name))}
                   className="bg-white hover:bg-gray-50 active:bg-gray-100 rounded-2xl shadow-sm p-5 border border-gray-100 text-left transition"
                 >
                   <div className="text-3xl mb-2">{getFeatureIcon(uf.features.name)}</div>

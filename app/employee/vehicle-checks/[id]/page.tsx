@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
 import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
@@ -34,20 +34,20 @@ export default function VehicleCheckFormPage() {
   const [check, setCheck] = useState<any>(null)
   const [vehicle, setVehicle] = useState<any>(null)
   const [items, setItems] = useState<any[]>([])
-  const [photos, setPhotos] = useState<Record<string, any[]>>({}) // by check_item_id
+  const [photos, setPhotos] = useState<Record<string, any[]>>({})
+  const [previousMileage, setPreviousMileage] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error'>('success')
 
-  const [openItemId, setOpenItemId] = useState<string | null>(null)
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set())
 
+  const [mileage, setMileage] = useState('')
   const [driverNotes, setDriverNotes] = useState('')
   const [driverSignature, setDriverSignature] = useState('')
 
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [photoUploadingFor, setPhotoUploadingFor] = useState<string | null>(null)
 
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
@@ -61,7 +61,6 @@ export default function VehicleCheckFormPage() {
   const loadAll = useCallback(async () => {
     if (!checkId) return
 
-    // Load check + vehicle
     const { data: checkData, error: checkErr } = await supabase
       .from('vehicle_checks')
       .select('*, vehicle:vehicles(*)')
@@ -77,6 +76,7 @@ export default function VehicleCheckFormPage() {
     setVehicle(checkData.vehicle)
     setDriverNotes(checkData.driver_notes || '')
     setDriverSignature(checkData.driver_signature || '')
+    setMileage(checkData.mileage != null ? String(checkData.mileage) : '')
 
     // Load items
     const { data: itemsData } = await supabase
@@ -102,6 +102,21 @@ export default function VehicleCheckFormPage() {
       })
       setPhotos(map)
     }
+
+    // Look up the previous check for this vehicle to get the previous mileage
+    const { data: prevChecks } = await supabase
+      .from('vehicle_checks')
+      .select('mileage, completed_at')
+      .eq('vehicle_id', checkData.vehicle.id)
+      .neq('id', checkId)
+      .not('mileage', 'is', null)
+      .not('driver_signature', 'is', null)
+      .order('completed_at', { ascending: false })
+      .limit(1)
+
+    if (prevChecks && prevChecks.length > 0 && prevChecks[0].mileage != null) {
+      setPreviousMileage(prevChecks[0].mileage)
+    }
   }, [checkId, router])
 
   const init = useCallback(async () => {
@@ -123,19 +138,19 @@ export default function VehicleCheckFormPage() {
 
   useEffect(() => { init() }, [init])
 
-  // Update item result
+  // Auto-fill signature with the user's name once both load
+  useEffect(() => {
+    if (currentUser?.full_name && !driverSignature) {
+      setDriverSignature(currentUser.full_name)
+    }
+  }, [currentUser?.full_name, driverSignature])
+
   const updateItemResult = async (itemId: string, result: 'pass' | 'fail' | 'na') => {
     setSaving(true)
 
-    // If switching from fail to pass/na, optionally clear note? Keep it for now (admin can see history).
-    const updates: any = { result }
-    if (result !== 'fail') {
-      // Don't clear the note — could be useful audit trail
-    }
-
     const { error } = await supabase
       .from('vehicle_check_items')
-      .update(updates)
+      .update({ result })
       .eq('id', itemId)
 
     setSaving(false)
@@ -145,18 +160,9 @@ export default function VehicleCheckFormPage() {
       return
     }
 
-    // Local update for instant UI
     setItems(prev => prev.map(i => i.id === itemId ? { ...i, result } : i))
-
-    // If they marked it as fail, auto-open the defect note expander
-    if (result === 'fail') {
-      setOpenItemId(itemId)
-    } else if (openItemId === itemId) {
-      setOpenItemId(null)
-    }
   }
 
-  // Update defect note (debounced via blur)
   const updateDefectNote = async (itemId: string, note: string) => {
     const { error } = await supabase
       .from('vehicle_check_items')
@@ -171,7 +177,6 @@ export default function VehicleCheckFormPage() {
     setItems(prev => prev.map(i => i.id === itemId ? { ...i, defect_note: note } : i))
   }
 
-  // Photo upload
   const handlePhotoSelect = async (itemId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -223,7 +228,6 @@ export default function VehicleCheckFormPage() {
       return
     }
 
-    // Update local state
     setPhotos(prev => ({
       ...prev,
       [itemId]: [...(prev[itemId] || []), photoRow],
@@ -247,19 +251,45 @@ export default function VehicleCheckFormPage() {
     })
   }
 
-  // Submit final check
   const handleSubmit = async () => {
-    // Find failed items needing notes
+    // Mileage required
+    const mileageNum = parseInt(mileage, 10)
+    if (!mileage.trim() || isNaN(mileageNum) || mileageNum < 0) {
+      showMessage('Please enter the current mileage', 'error')
+      return
+    }
+
+    // Mileage warning if it went down
+    if (previousMileage != null && mileageNum < previousMileage) {
+      const ok = confirm(
+        `⚠️ Warning — mileage entered (${mileageNum}) is LESS than the last recorded mileage (${previousMileage}).\n\nThis is unusual. Continue anyway?`
+      )
+      if (!ok) return
+    }
+
+    // Every item must have a result
+    const unanswered = items.filter(i => !i.result)
+    if (unanswered.length > 0) {
+      showMessage(`${unanswered.length} item${unanswered.length > 1 ? 's still need' : ' still needs'} answering`, 'error')
+      // Auto-expand any collapsed category that has unanswered items
+      const cats = new Set(unanswered.map(i => i.category))
+      setCollapsedCategories(prev => {
+        const copy = new Set(prev)
+        cats.forEach(c => copy.delete(c))
+        return copy
+      })
+      return
+    }
+
+    // Failed items need notes
     const failedNoNote = items.filter(i => i.result === 'fail' && !(i.defect_note || '').trim())
     if (failedNoNote.length > 0) {
-      showMessage(`${failedNoNote.length} failed item${failedNoNote.length > 1 ? 's need' : ' needs'} a defect note before submitting`, 'error')
-      // Auto-open first failing item
-      setOpenItemId(failedNoNote[0].id)
+      showMessage(`${failedNoNote.length} failed item${failedNoNote.length > 1 ? 's need' : ' needs'} a defect note`, 'error')
       return
     }
 
     if (!driverSignature.trim()) {
-      showMessage('Please type your name to sign off the check', 'error')
+      showMessage('Please type your name to sign off', 'error')
       return
     }
 
@@ -268,11 +298,11 @@ export default function VehicleCheckFormPage() {
     const failedItems = items.filter(i => i.result === 'fail')
     const hasDefects = failedItems.length > 0
 
-    // Update the check
     const { error: checkErr } = await supabase
       .from('vehicle_checks')
       .update({
         has_defects: hasDefects,
+        mileage: mileageNum,
         driver_signature: driverSignature.trim(),
         driver_notes: driverNotes.trim() || null,
         completed_at: new Date().toISOString(),
@@ -285,7 +315,7 @@ export default function VehicleCheckFormPage() {
       return
     }
 
-    // For each failed item, create a vehicle_defect row (only if not already exists for this check_item)
+    // Create defect rows for any failed items not already logged for this check
     if (hasDefects) {
       const { data: existingDefects } = await supabase
         .from('vehicle_defects')
@@ -350,7 +380,6 @@ export default function VehicleCheckFormPage() {
 
   if (!check || !vehicle) return null
 
-  // Group items by category
   const grouped: Record<string, any[]> = {}
   items.forEach(item => {
     if (!grouped[item.category]) grouped[item.category] = []
@@ -368,6 +397,7 @@ export default function VehicleCheckFormPage() {
   const passCount = items.filter(i => i.result === 'pass').length
   const failCount = items.filter(i => i.result === 'fail').length
   const naCount = items.filter(i => i.result === 'na').length
+  const unansweredCount = totalItems - passCount - failCount - naCount
 
   const isCompleted = !!check.driver_signature
 
@@ -412,13 +442,37 @@ export default function VehicleCheckFormPage() {
           </div>
         )}
 
+        {/* Mileage card */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
+          <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide mb-1">
+            Mileage <span className="text-red-500 normal-case">*</span>
+          </label>
+          <input
+            type="number"
+            inputMode="numeric"
+            value={mileage}
+            onChange={(e) => setMileage(e.target.value)}
+            disabled={isCompleted}
+            min={0}
+            placeholder={previousMileage != null ? `Previous: ${previousMileage}` : 'Current mileage'}
+            className="w-full border border-gray-300 rounded-lg px-3 py-3 text-lg font-mono text-gray-900 disabled:opacity-50"
+          />
+          {previousMileage != null && (
+            <p className="text-xs text-gray-500 mt-1">
+              Last recorded mileage on this vehicle: <span className="font-medium">{previousMileage}</span>
+            </p>
+          )}
+        </div>
+
         {/* Progress summary */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4">
           <div className="flex items-center justify-between mb-2">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Progress</p>
-            <p className="text-xs text-gray-500">{passCount + failCount + naCount} / {totalItems}</p>
+            <p className="text-xs text-gray-500">
+              {passCount + failCount + naCount} / {totalItems} answered
+            </p>
           </div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-4 gap-2">
             <div className="bg-green-50 border border-green-200 rounded-lg p-2 text-center">
               <p className="text-xl font-bold text-green-700">{passCount}</p>
               <p className="text-xs text-green-600 font-medium">Pass</p>
@@ -431,6 +485,10 @@ export default function VehicleCheckFormPage() {
               <p className="text-xl font-bold text-gray-700">{naCount}</p>
               <p className="text-xs text-gray-600 font-medium">N/A</p>
             </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-center">
+              <p className="text-xl font-bold text-amber-700">{unansweredCount}</p>
+              <p className="text-xs text-amber-600 font-medium">Pending</p>
+            </div>
           </div>
         </div>
 
@@ -439,6 +497,7 @@ export default function VehicleCheckFormPage() {
           const list = grouped[category] || []
           const collapsed = collapsedCategories.has(category)
           const catFails = list.filter(i => i.result === 'fail').length
+          const catPending = list.filter(i => !i.result).length
 
           return (
             <div key={category} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -446,9 +505,14 @@ export default function VehicleCheckFormPage() {
                 onClick={() => toggleCategory(category)}
                 className="w-full bg-gray-50 px-4 py-3 flex items-center justify-between hover:bg-gray-100 transition"
               >
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h3 className="font-semibold text-gray-800 text-sm uppercase tracking-wide">{category}</h3>
                   <span className="text-xs text-gray-500">({list.length})</span>
+                  {catPending > 0 && (
+                    <span className="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">
+                      {catPending} pending
+                    </span>
+                  )}
                   {catFails > 0 && (
                     <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium">
                       ⚠️ {catFails} fail
@@ -461,15 +525,18 @@ export default function VehicleCheckFormPage() {
               {!collapsed && (
                 <ul className="divide-y divide-gray-100">
                   {list.map(item => {
-                    const isOpen = openItemId === item.id
                     const itemPhotos = photos[item.id] || []
+                    const isUnanswered = !item.result
+
                     return (
-                      <li key={item.id} className="p-3">
+                      <li key={item.id} className={`p-3 ${isUnanswered ? 'bg-amber-50/30' : ''}`}>
                         <div className="flex items-start gap-2">
-                          <p className="flex-1 text-sm text-gray-800 leading-snug">{item.item_text}</p>
+                          <p className="flex-1 text-sm text-gray-800 leading-snug">
+                            {item.item_text}
+                            {isUnanswered && <span className="text-amber-600 ml-1">*</span>}
+                          </p>
                         </div>
 
-                        {/* Pass / Fail / N/A buttons */}
                         <div className="grid grid-cols-3 gap-2 mt-2">
                           <button
                             onClick={() => updateItemResult(item.id, 'pass')}
@@ -506,7 +573,6 @@ export default function VehicleCheckFormPage() {
                           </button>
                         </div>
 
-                        {/* Defect note + photos (only when failed) */}
                         {item.result === 'fail' && (
                           <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3 space-y-2">
                             <div>
@@ -523,7 +589,6 @@ export default function VehicleCheckFormPage() {
                               />
                             </div>
 
-                            {/* Photos */}
                             <div>
                               <p className="text-xs font-medium text-red-800 mb-1">
                                 Photos {itemPhotos.length > 0 && `(${itemPhotos.length})`}
@@ -596,14 +661,13 @@ export default function VehicleCheckFormPage() {
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Sign-off <span className="text-red-500">*</span>
-              <span className="text-gray-400 ml-1">(type your full name)</span>
             </label>
             <input
               type="text"
               value={driverSignature}
               onChange={(e) => setDriverSignature(e.target.value)}
               disabled={isCompleted}
-              placeholder="e.g. John Smith"
+              placeholder="Your full name"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 disabled:opacity-50"
             />
           </div>
@@ -622,6 +686,7 @@ export default function VehicleCheckFormPage() {
               } disabled:opacity-50`}
             >
               {submitting ? 'Submitting...' :
+                unansweredCount > 0 ? `${unansweredCount} item${unansweredCount > 1 ? 's' : ''} still pending` :
                 failCount > 0 ? `Submit with ${failCount} defect${failCount > 1 ? 's' : ''}` :
                 'Submit Check'}
             </button>

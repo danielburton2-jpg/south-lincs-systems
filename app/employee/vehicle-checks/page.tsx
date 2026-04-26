@@ -160,7 +160,6 @@ export default function EmployeeVehicleChecksHome() {
     setCreating(vehicle.id)
     setMessage('')
 
-    // Create the check row, then load template items into vehicle_check_items
     const { data: check, error: checkErr } = await supabase
       .from('vehicle_checks')
       .insert({
@@ -179,7 +178,6 @@ export default function EmployeeVehicleChecksHome() {
       return
     }
 
-    // Find the template for this vehicle type
     const { data: template } = await supabase
       .from('vehicle_check_templates')
       .select('id')
@@ -195,17 +193,14 @@ export default function EmployeeVehicleChecksHome() {
         .order('display_order', { ascending: true })
 
       if (items && items.length > 0) {
-        // Pre-fill check items as 'pass' so driver only changes failures (faster default)
-        // Actually: default to no result, force driver to mark each
-        // We'll insert with result='pass' as starting state, but driver must touch them
-        // Simpler: insert all as pass, driver toggles to fail/na as needed
+        // Insert with result = null — driver MUST answer each one
         await supabase.from('vehicle_check_items').insert(
           items.map((it: any) => ({
             check_id: check.id,
             template_item_id: it.id,
             category: it.category,
             item_text: it.item_text,
-            result: 'pass',
+            result: null,
             display_order: it.display_order,
           }))
         )
@@ -269,7 +264,9 @@ export default function EmployeeVehicleChecksHome() {
                     <div className="flex-1 min-w-0">
                       <p className="font-mono font-bold text-gray-800 text-sm">{c.vehicle?.registration}</p>
                       <p className="text-xs text-gray-600">
-                        {c.has_defects ? '⚠️ With defects' : '✅ All passed'} · {new Date(c.completed_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                        {c.driver_signature
+                          ? (c.has_defects ? '⚠️ With defects' : '✅ All passed')
+                          : '⏳ In progress'} · {new Date(c.completed_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
                       </p>
                     </div>
                     <span className="text-green-600 text-sm">›</span>
@@ -374,7 +371,9 @@ export default function EmployeeVehicleChecksHome() {
                     <p className="font-mono font-bold text-gray-800 text-sm">{c.vehicle?.registration}</p>
                     <p className="text-xs text-gray-500">
                       {new Date(c.check_date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' })}
-                      {c.has_defects ? ' · ⚠️ defects' : ' · ✅ all passed'}
+                      {c.driver_signature
+                        ? (c.has_defects ? ' · ⚠️ defects' : ' · ✅ all passed')
+                        : ' · ⏳ in progress'}
                     </p>
                   </div>
                   <span className="text-gray-400 text-sm">›</span>
