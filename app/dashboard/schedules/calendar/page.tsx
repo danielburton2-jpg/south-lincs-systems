@@ -31,7 +31,14 @@ const formatDateShort = (d: Date) =>
 const formatDateLong = (d: Date) =>
   d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
 
+const formatDateFull = (d: Date) =>
+  d.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })
+
 const formatTime = (t: string) => t?.slice(0, 5) || ''
+
+const DAY_LABELS: Record<string, string> = {
+  mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun'
+}
 
 export default function SchedulesCalendarPage() {
   const router = useRouter()
@@ -49,10 +56,14 @@ export default function SchedulesCalendarPage() {
   const [dayDate, setDayDate] = useState<Date>(() => new Date())
   const [justMe, setJustMe] = useState(false)
 
+  // Cell modal state
+  const [modalUserId, setModalUserId] = useState<string | null>(null)
+  const [modalDate, setModalDate] = useState<Date | null>(null)
+
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
   const loadAll = useCallback(async (companyId: string, weekFromISO: string, weekToISO: string) => {
-    const [profilesRes, schedsRes, asgsRes, holsRes] = await Promise.all([
+    const [profilesRes, schedsRes, asgsRes, holsRes, docsRes] = await Promise.all([
       supabase
         .from('profiles')
         .select(`id, full_name, role, job_title, display_order, is_frozen`)
@@ -77,26 +88,28 @@ export default function SchedulesCalendarPage() {
         .eq('status', 'approved')
         .lte('start_date', weekToISO)
         .gte('end_date', weekFromISO),
+      supabase
+        .from('schedule_documents')
+        .select('id, schedule_id')
+        .eq('company_id', companyId),
     ])
 
     const filteredUsers = (profilesRes.data || []).filter((p: any) => p.role !== 'superuser')
 
+    // Attach doc counts to schedules
+    const docsBySchedule: Record<string, number> = {}
+    ;(docsRes.data || []).forEach((d: any) => {
+      docsBySchedule[d.schedule_id] = (docsBySchedule[d.schedule_id] || 0) + 1
+    })
+    const schedsWithDocs = (schedsRes.data || []).map((s: any) => ({
+      ...s,
+      doc_count: docsBySchedule[s.id] || 0,
+    }))
+
     setUsers(filteredUsers)
-    setSchedules(schedsRes.data || [])
+    setSchedules(schedsWithDocs)
     setAssignments(asgsRes.data || [])
     setHolidays(holsRes.data || [])
-
-    // Debug — leave this for now so we can see what's loading
-    console.log('[Calendar] Loaded:', {
-      users: filteredUsers.length,
-      schedules: schedsRes.data?.length || 0,
-      assignments: asgsRes.data?.length || 0,
-      holidays: holsRes.data?.length || 0,
-      assignmentsErr: asgsRes.error,
-      schedulesErr: schedsRes.error,
-      profilesErr: profilesRes.error,
-      holidaysErr: holsRes.error,
-    })
   }, [])
 
   const init = useCallback(async () => {
@@ -195,10 +208,8 @@ export default function SchedulesCalendarPage() {
     return Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
   }, [weekStart])
 
-  // Look up the schedule for an assignment from the schedules array
   const getSchedule = (scheduleId: string) => schedules.find(s => s.id === scheduleId)
 
-  // Find approved holiday/keep-day-off/early-finish for a user on a date
   const holidayFor = (userId: string, d: Date): any | null => {
     const iso = isoDate(d)
     return holidays.find(h =>
@@ -208,8 +219,6 @@ export default function SchedulesCalendarPage() {
     ) || null
   }
 
-  // Get all assignments for this user on this date.
-  // Non-admins/managers only see published rows.
   const cellAssignments = (userId: string, d: Date): any[] => {
     const iso = isoDate(d)
     return assignments
@@ -244,6 +253,22 @@ export default function SchedulesCalendarPage() {
     if (h.request_type === 'early_finish') return `Early Finish ${formatTime(h.early_finish_time || '')}`
     return 'Off'
   }
+
+  const openCellModal = (userId: string, d: Date) => {
+    setModalUserId(userId)
+    setModalDate(new Date(d))
+  }
+
+  const closeCellModal = () => {
+    setModalUserId(null)
+    setModalDate(null)
+  }
+
+  // Modal-only helpers
+  const modalUser = modalUserId ? users.find(u => u.id === modalUserId) : null
+  const modalAsgs = modalUserId && modalDate ? cellAssignments(modalUserId, modalDate) : []
+  const modalHol = modalUserId && modalDate ? holidayFor(modalUserId, modalDate) : null
+  const modalHasAnything = modalAsgs.length > 0 || !!modalHol
 
   if (loading) {
     return (
@@ -414,7 +439,8 @@ export default function SchedulesCalendarPage() {
                         return (
                           <td
                             key={i}
-                            className={`px-2 py-2 align-top text-xs border-r border-gray-100 last:border-r-0 ${
+                            onClick={() => openCellModal(u.id, d)}
+                            className={`px-2 py-2 align-top text-xs border-r border-gray-100 last:border-r-0 cursor-pointer hover:bg-gray-50 transition ${
                               isToday ? 'bg-blue-50/30' : ''
                             } ${hasUnpublished ? 'bg-yellow-100/60' : ''}`}
                           >
@@ -449,9 +475,6 @@ export default function SchedulesCalendarPage() {
                                     }`}
                                   >
                                     <p className="font-semibold truncate">{sched?.name || '(unknown schedule)'}</p>
-                                    <p className="text-[10px] text-gray-600">
-                                      {formatTime(sched?.start_time)}–{formatTime(sched?.end_time)}
-                                    </p>
                                   </div>
                                 )
                               })}
@@ -482,7 +505,8 @@ export default function SchedulesCalendarPage() {
                   return (
                     <div
                       key={u.id}
-                      className={`p-4 flex gap-4 ${hasUnpublished ? 'bg-yellow-50' : ''}`}
+                      onClick={() => openCellModal(u.id, dayDate)}
+                      className={`p-4 flex gap-4 cursor-pointer hover:bg-gray-50 transition ${hasUnpublished ? 'bg-yellow-50' : ''}`}
                     >
                       <div className="w-40 flex-shrink-0">
                         <p className="font-semibold text-gray-800 text-sm">{u.full_name}</p>
@@ -519,9 +543,6 @@ export default function SchedulesCalendarPage() {
                               }`}
                             >
                               <p className="font-semibold">{sched?.name || '(unknown)'}</p>
-                              <p className="text-[10px] text-gray-600">
-                                {formatTime(sched?.start_time)}–{formatTime(sched?.end_time)}
-                              </p>
                             </div>
                           )
                         })}
@@ -557,8 +578,171 @@ export default function SchedulesCalendarPage() {
             <span className="w-3 h-3 rounded bg-purple-100 inline-block"></span>
             <span className="text-gray-600">Day Off</span>
           </span>
+          <span className="ml-auto text-gray-500 italic">Click any cell for details</span>
         </div>
       </div>
+
+      {/* Cell Modal */}
+      {modalUserId && modalDate && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={closeCellModal}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-6 space-y-4">
+              <div className="flex justify-between items-start gap-3">
+                <div>
+                  <h2 className="text-xl font-bold text-gray-800">{modalUser?.full_name}</h2>
+                  <p className="text-sm text-gray-500 mt-0.5">{formatDateFull(modalDate)}</p>
+                  {modalUser?.job_title && (
+                    <p className="text-xs text-gray-500 mt-0.5">{modalUser.job_title}</p>
+                  )}
+                </div>
+                <button
+                  onClick={closeCellModal}
+                  className="text-gray-400 hover:text-gray-700 text-2xl leading-none"
+                >
+                  ×
+                </button>
+              </div>
+
+              {!modalHasAnything && (
+                <div className="text-center py-8 text-gray-400 text-sm">
+                  Nothing assigned for this day.
+                </div>
+              )}
+
+              {/* Holiday block */}
+              {modalHol && (
+                <div className={`p-4 rounded-xl border ${
+                  modalHol.request_type === 'holiday'
+                    ? 'bg-red-50 border-red-200'
+                    : modalHol.request_type === 'keep_day_off'
+                    ? 'bg-purple-50 border-purple-200'
+                    : 'bg-amber-50 border-amber-200'
+                }`}>
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">
+                      {modalHol.request_type === 'holiday' ? '🏖️' : modalHol.request_type === 'keep_day_off' ? '🚫' : '🕓'}
+                    </span>
+                    <div className="flex-1">
+                      <p className={`font-semibold ${
+                        modalHol.request_type === 'holiday'
+                          ? 'text-red-800'
+                          : modalHol.request_type === 'keep_day_off'
+                          ? 'text-purple-800'
+                          : 'text-amber-800'
+                      }`}>
+                        {renderHolidayLabel(modalHol)}
+                      </p>
+                      <p className="text-xs text-gray-600 mt-0.5">
+                        {modalHol.start_date === modalHol.end_date
+                          ? formatDateLong(new Date(modalHol.start_date + 'T00:00:00'))
+                          : `${formatDateLong(new Date(modalHol.start_date + 'T00:00:00'))} → ${formatDateLong(new Date(modalHol.end_date + 'T00:00:00'))}`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Schedule list */}
+              {modalAsgs.length > 0 && (
+                <div className="space-y-2">
+                  {modalAsgs.map(a => {
+                    const sched = getSchedule(a.schedule_id)
+                    if (!sched) return null
+                    const statusClass = a.status === 'draft'
+                      ? 'border-amber-200 bg-amber-50'
+                      : a.is_changed
+                      ? 'border-yellow-300 bg-yellow-50'
+                      : 'border-gray-200 bg-white'
+
+                    const recurringDays = sched.recurring_days
+                      ? Object.entries(sched.recurring_days).filter(([_, v]) => v).map(([k]) => DAY_LABELS[k])
+                      : []
+
+                    return (
+                      <button
+                        key={a.id}
+                        onClick={() => router.push(`/dashboard/schedules/${sched.id}`)}
+                        className={`w-full text-left border rounded-xl p-4 hover:shadow-md transition ${statusClass}`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <span className="text-xl flex-shrink-0">
+                            {sched.schedule_type === 'recurring' ? '🔁' : '📅'}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-semibold text-gray-800">{sched.name}</p>
+                              {a.status === 'draft' && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">Draft</span>
+                              )}
+                              {a.is_changed && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-200 text-yellow-800 font-medium">Changed</span>
+                              )}
+                            </div>
+
+                            {sched.description && (
+                              <p className="text-xs text-gray-600 mt-1">{sched.description}</p>
+                            )}
+
+                            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-gray-700 mt-2">
+                              <span>🕐 {formatTime(sched.start_time)}–{formatTime(sched.end_time)}</span>
+                              {sched.schedule_type === 'one_off' && sched.start_date && (
+                                <span>
+                                  📆 {sched.start_date === sched.end_date
+                                    ? formatDateShort(new Date(sched.start_date + 'T00:00:00'))
+                                    : `${formatDateShort(new Date(sched.start_date + 'T00:00:00'))}–${formatDateShort(new Date(sched.end_date + 'T00:00:00'))}`}
+                                </span>
+                              )}
+                              {sched.doc_count > 0 && (
+                                <span>📎 {sched.doc_count}</span>
+                              )}
+                            </div>
+
+                            {sched.schedule_type === 'recurring' && recurringDays.length > 0 && (
+                              <div className="flex gap-1 flex-wrap mt-2">
+                                {recurringDays.map(d => (
+                                  <span key={d} className="text-[10px] bg-gray-100 text-gray-700 px-1.5 py-0.5 rounded">
+                                    {d}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+
+                            <p className="text-[10px] text-gray-400 mt-2">Click to open schedule details →</p>
+                          </div>
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+
+              {/* Footer actions */}
+              <div className="flex gap-2 pt-3 border-t border-gray-100">
+                {canEdit && (
+                  <button
+                    onClick={() => router.push('/dashboard/schedules/assign')}
+                    className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
+                  >
+                    ✏️ Go to Assign Page
+                  </button>
+                )}
+                <button
+                  onClick={closeCellModal}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
