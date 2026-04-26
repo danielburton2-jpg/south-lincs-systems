@@ -7,83 +7,47 @@ import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
 
 const supabase = createClient()
 
-const DAYS_OF_WEEK = [
-  { key: 'mon', label: 'Mon' },
-  { key: 'tue', label: 'Tue' },
-  { key: 'wed', label: 'Wed' },
-  { key: 'thu', label: 'Thu' },
-  { key: 'fri', label: 'Fri' },
-  { key: 'sat', label: 'Sat' },
-  { key: 'sun', label: 'Sun' },
-]
+const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+const DAY_LABELS: Record<string, string> = {
+  sun: 'Sun', mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat'
+}
 
 const DEFAULT_WORKING_DAYS = {
   sun: false, mon: true, tue: true, wed: true, thu: true, fri: true, sat: false
 }
 
-const calculateProRata = (
-  fullEntitlement: number,
-  startDate: string,
-  holidayYearStart: string
-): number => {
-  if (!fullEntitlement || !startDate || !holidayYearStart) return 0
-
-  const start = new Date(startDate)
-  const yearStartMonth = new Date(holidayYearStart).getMonth()
-  const yearStartDay = new Date(holidayYearStart).getDate()
-
-  let yearStart = new Date(start.getFullYear(), yearStartMonth, yearStartDay)
-  if (yearStart > start) {
-    yearStart = new Date(start.getFullYear() - 1, yearStartMonth, yearStartDay)
-  }
-
-  const yearEnd = new Date(yearStart.getFullYear() + 1, yearStartMonth, yearStartDay)
-  yearEnd.setDate(yearEnd.getDate() - 1)
-
-  const totalDaysInYear = Math.ceil((yearEnd.getTime() - yearStart.getTime()) / (1000 * 60 * 60 * 24)) + 1
-  const remainingDays = Math.ceil((yearEnd.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1
-
-  if (remainingDays <= 0) return 0
-
-  const proRata = (fullEntitlement * remainingDays) / totalDaysInYear
-  return Math.round(proRata * 2) / 2
-}
-
-export default function DashboardUsersPage() {
+export default function DashboardUsers() {
   const [currentUser, setCurrentUser] = useState<any>(null)
-  const [company, setCompany] = useState<any>(null)
-  const [companyFeatures, setCompanyFeatures] = useState<string[]>([])
-  const [features, setFeatures] = useState<any[]>([])
   const [users, setUsers] = useState<any[]>([])
+  const [features, setFeatures] = useState<any[]>([])
+  const [companyFeatures, setCompanyFeatures] = useState<any[]>([])
+  const [company, setCompany] = useState<any>(null)
   const [managerTitles, setManagerTitles] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
-  const [showAddForm, setShowAddForm] = useState(false)
-  const [editingUser, setEditingUser] = useState<any>(null)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error'>('success')
 
-  const [newName, setNewName] = useState('')
-  const [newEmail, setNewEmail] = useState('')
-  const [newPassword, setNewPassword] = useState('')
-  const [newRole, setNewRole] = useState('user')
-  const [newJobTitle, setNewJobTitle] = useState('')
-  const [newUserFeatures, setNewUserFeatures] = useState<Record<string, boolean>>({})
-  const [newManagerTitles, setNewManagerTitles] = useState<string[]>([])
-  const [newEmploymentStart, setNewEmploymentStart] = useState('')
-  const [newFullEntitlement, setNewFullEntitlement] = useState('')
-  const [newCalculatedEntitlement, setNewCalculatedEntitlement] = useState('')
-  const [newOverrideEntitlement, setNewOverrideEntitlement] = useState('')
-  const [newWorkingDays, setNewWorkingDays] = useState(DEFAULT_WORKING_DAYS)
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [editingUser, setEditingUser] = useState<any>(null)
+  const [submitting, setSubmitting] = useState(false)
 
-  const [editName, setEditName] = useState('')
-  const [editEmail, setEditEmail] = useState('')
-  const [editRole, setEditRole] = useState('')
-  const [editJobTitle, setEditJobTitle] = useState('')
-  const [editUserFeatures, setEditUserFeatures] = useState<Record<string, boolean>>({})
-  const [editManagerTitles, setEditManagerTitles] = useState<string[]>([])
-  const [editEmploymentStart, setEditEmploymentStart] = useState('')
-  const [editEntitlement, setEditEntitlement] = useState('')
-  const [editWorkingDays, setEditWorkingDays] = useState(DEFAULT_WORKING_DAYS)
+  // Form state
+  const [fullName, setFullName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [role, setRole] = useState('user')
+  const [jobTitle, setJobTitle] = useState('')
+  const [employmentStartDate, setEmploymentStartDate] = useState('')
+  const [holidayEntitlement, setHolidayEntitlement] = useState('')
+  const [workingDays, setWorkingDays] = useState<any>(DEFAULT_WORKING_DAYS)
+  const [selectedFeatures, setSelectedFeatures] = useState<string[]>([])
+  const [selectedManagerTitles, setSelectedManagerTitles] = useState<string[]>([])
+
+  // Change password modal state
+  const [changePasswordUser, setChangePasswordUser] = useState<any>(null)
+  const [newAdminPassword, setNewAdminPassword] = useState('')
+  const [confirmAdminPassword, setConfirmAdminPassword] = useState('')
+  const [submittingPassword, setSubmittingPassword] = useState(false)
 
   const router = useRouter()
   const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
@@ -119,30 +83,14 @@ export default function DashboardUsersPage() {
     if (profile.company_id) {
       const { data: companyData } = await supabase
         .from('companies')
-        .select(`
-          *,
-          company_features (
-            is_enabled,
-            feature_id
-          )
-        `)
+        .select(`*, company_features(is_enabled, feature_id, features(id, name))`)
         .eq('id', profile.company_id)
         .single()
-      if (companyData) {
-        setCompany(companyData)
-        const enabledFeatureIds = companyData.company_features
-          ?.filter((cf: any) => cf.is_enabled)
-          .map((cf: any) => cf.feature_id) || []
-        setCompanyFeatures(enabledFeatureIds)
-        const defaults: Record<string, boolean> = {}
-        enabledFeatureIds.forEach((id: string) => { defaults[id] = false })
-        setNewUserFeatures(defaults)
-      }
-    }
+      setCompany(companyData)
 
-    const featRes = await fetch('/api/get-features')
-    const featResult = await featRes.json()
-    if (featResult.features) setFeatures(featResult.features)
+      const enabled = companyData?.company_features?.filter((cf: any) => cf.is_enabled) || []
+      setCompanyFeatures(enabled)
+    }
 
     if (profile.role === 'manager') {
       const { data: titles } = await supabase
@@ -151,6 +99,10 @@ export default function DashboardUsersPage() {
         .eq('manager_id', user.id)
       setManagerTitles(titles?.map((t: any) => t.job_title) || [])
     }
+
+    const featuresRes = await fetch('/api/get-features')
+    const featuresResult = await featuresRes.json()
+    if (featuresResult.features) setFeatures(featuresResult.features)
 
     const usersRes = await fetch('/api/get-company-users', {
       method: 'POST',
@@ -167,369 +119,253 @@ export default function DashboardUsersPage() {
     fetchData()
   }, [fetchData])
 
+  // Realtime
   useEffect(() => {
-    if (newFullEntitlement && newEmploymentStart && company?.holiday_year_start) {
-      const calculated = calculateProRata(
-        parseFloat(newFullEntitlement),
-        newEmploymentStart,
-        company.holiday_year_start
-      )
-      setNewCalculatedEntitlement(calculated.toString())
-    } else {
-      setNewCalculatedEntitlement('')
-    }
-  }, [newFullEntitlement, newEmploymentStart, company])
+    if (!currentUser?.company_id) return
 
-  const visibleUsers = currentUser?.role === 'admin'
-    ? users
-    : currentUser?.role === 'manager'
-    ? users.filter(u => u.job_title && managerTitles.includes(u.job_title))
+    const channel = supabase
+      .channel('dashboard-users-page')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'profiles',
+          filter: `company_id=eq.${currentUser.company_id}`,
+        },
+        () => fetchData()
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [currentUser?.company_id, fetchData])
+
+  const isAdmin = currentUser?.role === 'admin'
+  const isManager = currentUser?.role === 'manager'
+
+  const visibleUsers = isAdmin
+    ? users.filter(u => !u.is_deleted)
+    : isManager
+    ? users.filter(u => !u.is_deleted && u.job_title && managerTitles.includes(u.job_title))
     : []
 
-  const jobTitles = [...new Set(
-    users
-      .filter(u => u.role !== 'admin')
-      .map(u => u.job_title)
-      .filter(Boolean)
-  )] as string[]
+  const allJobTitles = Array.from(new Set(
+    users.filter(u => u.job_title && !u.is_deleted).map(u => u.job_title)
+  )).sort()
 
-  const allJobTitles = [...new Set(users.map(u => u.job_title).filter(Boolean))] as string[]
-
-  const toggleNewManagerTitle = (title: string) => {
-    if (newManagerTitles.includes(title)) {
-      setNewManagerTitles(newManagerTitles.filter(t => t !== title))
-    } else {
-      setNewManagerTitles([...newManagerTitles, title])
-    }
+  const resetForm = () => {
+    setFullName('')
+    setEmail('')
+    setPassword('')
+    setRole('user')
+    setJobTitle('')
+    setEmploymentStartDate('')
+    setHolidayEntitlement('')
+    setWorkingDays(DEFAULT_WORKING_DAYS)
+    setSelectedFeatures([])
+    setSelectedManagerTitles([])
   }
 
-  const toggleEditManagerTitle = (title: string) => {
-    if (editManagerTitles.includes(title)) {
-      setEditManagerTitles(editManagerTitles.filter(t => t !== title))
-    } else {
-      setEditManagerTitles([...editManagerTitles, title])
-    }
+  const handleStartEdit = (user: any) => {
+    setEditingUser(user)
+    setFullName(user.full_name || '')
+    setEmail(user.email || '')
+    setRole(user.role || 'user')
+    setJobTitle(user.job_title || '')
+    setEmploymentStartDate(user.employment_start_date || '')
+    setHolidayEntitlement(user.holiday_entitlement?.toString() || '')
+    setWorkingDays(user.working_days || DEFAULT_WORKING_DAYS)
+    setSelectedFeatures(
+      user.user_features?.filter((uf: any) => uf.is_enabled).map((uf: any) => uf.feature_id) || []
+    )
+    setShowAddForm(true)
   }
 
-  const userHasHolidaysFeature = (featuresState: Record<string, boolean>) => {
-    const holidaysFeature = features.find(f => f.name === 'Holidays')
-    if (!holidaysFeature) return false
-    return featuresState[holidaysFeature.id] === true
-  }
-
-  const companyHasHolidaysFeature = () => {
-    const holidaysFeature = features.find(f => f.name === 'Holidays')
-    if (!holidaysFeature) return false
-    return companyFeatures.includes(holidaysFeature.id)
-  }
-
-  const handleAddUser = async (e: React.FormEvent) => {
+  const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault()
-
-    const finalEntitlement = newOverrideEntitlement
-      ? parseFloat(newOverrideEntitlement)
-      : newCalculatedEntitlement
-      ? parseFloat(newCalculatedEntitlement)
-      : null
+    setSubmitting(true)
 
     const res = await fetch('/api/create-user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: newEmail,
-        password: newPassword,
-        full_name: newName,
-        role: newRole,
-        job_title: newJobTitle,
-        company_id: currentUser?.company_id,
-        employment_start_date: newEmploymentStart || null,
-        holiday_entitlement: finalEntitlement,
-        working_days: newWorkingDays,
-        user_features: newRole === 'admin'
-          ? companyFeatures.map(id => ({ feature_id: id, is_enabled: true }))
-          : companyFeatures.map(id => ({ feature_id: id, is_enabled: newUserFeatures[id] || false })),
-        manager_titles: newRole === 'manager' ? newManagerTitles : [],
-        actor_id: currentUser?.id,
-        actor_email: currentUser?.email,
-        actor_role: currentUser?.role,
+        full_name: fullName,
+        email,
+        password,
+        role,
+        company_id: currentUser.company_id,
+        job_title: jobTitle,
+        employment_start_date: employmentStartDate || null,
+        holiday_entitlement: holidayEntitlement ? parseFloat(holidayEntitlement) : null,
+        working_days: workingDays,
+        feature_ids: selectedFeatures,
+        manager_job_titles: role === 'manager' ? selectedManagerTitles : [],
+        actor_id: currentUser.id,
+        actor_email: currentUser.email,
+        actor_role: currentUser.role,
       }),
     })
 
     const result = await res.json()
+    setSubmitting(false)
 
     if (!res.ok) {
-      showMessage('Error creating user: ' + result.error, 'error')
+      showMessage('Error: ' + result.error, 'error')
       return
     }
 
-    showMessage('User created successfully!', 'success')
-    setNewName('')
-    setNewEmail('')
-    setNewPassword('')
-    setNewRole('user')
-    setNewJobTitle('')
-    setNewManagerTitles([])
-    setNewEmploymentStart('')
-    setNewFullEntitlement('')
-    setNewCalculatedEntitlement('')
-    setNewOverrideEntitlement('')
-    setNewWorkingDays(DEFAULT_WORKING_DAYS)
-    const defaults: Record<string, boolean> = {}
-    companyFeatures.forEach(id => { defaults[id] = false })
-    setNewUserFeatures(defaults)
+    showMessage('User created!', 'success')
     setShowAddForm(false)
-    fetchData()
+    resetForm()
   }
 
-  const handleEditUser = async (user: any) => {
-    setEditingUser(user)
-    setEditName(user.full_name)
-    setEditEmail(user.email)
-    setEditRole(user.role)
-    setEditJobTitle(user.job_title || '')
-    setEditEmploymentStart(user.employment_start_date || '')
-    setEditEntitlement(user.holiday_entitlement?.toString() || '')
-    setEditWorkingDays(user.working_days || DEFAULT_WORKING_DAYS)
-
-    const featureState: Record<string, boolean> = {}
-    companyFeatures.forEach(id => { featureState[id] = false })
-    user.user_features?.forEach((uf: any) => {
-      featureState[uf.feature_id] = uf.is_enabled
-    })
-    setEditUserFeatures(featureState)
-
-    const { data: titles } = await supabase
-      .from('manager_job_titles')
-      .select('job_title')
-      .eq('manager_id', user.id)
-    setEditManagerTitles(titles?.map((m: any) => m.job_title) || [])
-  }
-
-  const handleSaveEdit = async (e: React.FormEvent) => {
+  const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault()
+    setSubmitting(true)
 
     const res = await fetch('/api/update-user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user_id: editingUser.id,
-        full_name: editName,
-        email: editEmail,
-        role: editRole,
-        job_title: editJobTitle,
-        employment_start_date: editEmploymentStart || null,
-        holiday_entitlement: editEntitlement ? parseFloat(editEntitlement) : null,
-        working_days: editWorkingDays,
-        user_features: editRole === 'admin'
-          ? companyFeatures.map(id => ({ feature_id: id, is_enabled: true }))
-          : companyFeatures.map(id => ({ feature_id: id, is_enabled: editUserFeatures[id] || false })),
-        manager_titles: editRole === 'manager' ? editManagerTitles : [],
-        actor_id: currentUser?.id,
-        actor_email: currentUser?.email,
-        actor_role: currentUser?.role,
-        company_name: company?.name,
+        full_name: fullName,
+        role,
+        job_title: jobTitle,
+        employment_start_date: employmentStartDate || null,
+        holiday_entitlement: holidayEntitlement ? parseFloat(holidayEntitlement) : null,
+        working_days: workingDays,
+        feature_ids: selectedFeatures,
+        manager_job_titles: role === 'manager' ? selectedManagerTitles : [],
+        actor_id: currentUser.id,
+        actor_email: currentUser.email,
+        actor_role: currentUser.role,
       }),
     })
 
     const result = await res.json()
+    setSubmitting(false)
 
     if (!res.ok) {
-      showMessage('Error updating user: ' + result.error, 'error')
+      showMessage('Error: ' + result.error, 'error')
       return
     }
 
-    showMessage('User updated successfully!', 'success')
+    showMessage('User updated!', 'success')
     setEditingUser(null)
-    fetchData()
+    setShowAddForm(false)
+    resetForm()
   }
 
-  const handleFreeze = async (user: any) => {
-    const { error } = await supabase
-      .from('profiles')
-      .update({ is_frozen: !user.is_frozen })
-      .eq('id', user.id)
-
-    if (error) {
-      showMessage('Error updating user', 'error')
-      return
-    }
-
-    await fetch('/api/audit', {
+  const handleToggleFreeze = async (user: any) => {
+    const res = await fetch('/api/update-user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        user_id: currentUser?.id,
-        user_email: currentUser?.email,
-        user_role: currentUser?.role,
-        action: user.is_frozen ? 'UNFREEZE_COMPANY_USER' : 'FREEZE_COMPANY_USER',
-        entity: 'profile',
-        entity_id: user.id,
-        details: { company_id: currentUser?.company_id, company_name: company?.name, email: user.email },
+        user_id: user.id,
+        toggle_freeze: !user.is_frozen,
+        actor_id: currentUser.id,
+        actor_email: currentUser.email,
+        actor_role: currentUser.role,
       }),
     })
 
+    if (!res.ok) {
+      showMessage('Error toggling freeze', 'error')
+      return
+    }
     showMessage(user.is_frozen ? 'User unfrozen' : 'User frozen', 'success')
-    fetchData()
   }
 
-  const handleSoftDelete = async (user: any) => {
-    const confirmed = confirm(`Remove ${user.full_name} from ${company?.name}?`)
-    if (!confirmed) return
+  const handleDelete = async (user: any) => {
+    if (!confirm(`Are you sure you want to delete ${user.full_name}? This cannot be undone.`)) return
 
-    const { error } = await supabase
-      .from('profiles')
-      .update({ is_deleted: true })
-      .eq('id', user.id)
-
-    if (error) {
-      showMessage('Error removing user', 'error')
-      return
-    }
-
-    await fetch('/api/audit', {
+    const res = await fetch('/api/update-user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        user_id: currentUser?.id,
-        user_email: currentUser?.email,
-        user_role: currentUser?.role,
-        action: 'REMOVE_COMPANY_USER',
-        entity: 'profile',
-        entity_id: user.id,
-        details: { company_id: currentUser?.company_id, company_name: company?.name, email: user.email },
+        user_id: user.id,
+        delete: true,
+        actor_id: currentUser.id,
+        actor_email: currentUser.email,
+        actor_role: currentUser.role,
       }),
     })
 
-    showMessage('User removed successfully', 'success')
-    fetchData()
+    if (!res.ok) {
+      showMessage('Error deleting user', 'error')
+      return
+    }
+    showMessage('User deleted', 'success')
   }
 
-  const getRoleBadgeColor = (role: string) => {
-    switch (role) {
+  const handleChangeUserPassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (newAdminPassword.length < 6) {
+      showMessage('Password must be at least 6 characters', 'error')
+      return
+    }
+
+    if (newAdminPassword !== confirmAdminPassword) {
+      showMessage('Passwords do not match', 'error')
+      return
+    }
+
+    setSubmittingPassword(true)
+
+    const res = await fetch('/api/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'admin_change',
+        target_user_id: changePasswordUser.id,
+        new_password: newAdminPassword,
+        actor_id: currentUser.id,
+        actor_email: currentUser.email,
+        actor_role: currentUser.role,
+      }),
+    })
+
+    const result = await res.json()
+    setSubmittingPassword(false)
+
+    if (!res.ok) {
+      showMessage('Error: ' + (result.error || 'Failed to change password'), 'error')
+      return
+    }
+
+    showMessage(`Password changed for ${changePasswordUser.full_name}`, 'success')
+    setChangePasswordUser(null)
+    setNewAdminPassword('')
+    setConfirmAdminPassword('')
+  }
+
+  const toggleWorkingDay = (day: string) => {
+    setWorkingDays({ ...workingDays, [day]: !workingDays[day] })
+  }
+
+  const toggleFeature = (featureId: string) => {
+    setSelectedFeatures(prev =>
+      prev.includes(featureId) ? prev.filter(f => f !== featureId) : [...prev, featureId]
+    )
+  }
+
+  const toggleManagerTitle = (title: string) => {
+    setSelectedManagerTitles(prev =>
+      prev.includes(title) ? prev.filter(t => t !== title) : [...prev, title]
+    )
+  }
+
+  const getRoleBadgeColor = (r: string) => {
+    switch (r) {
       case 'admin': return 'bg-purple-100 text-purple-700'
       case 'manager': return 'bg-blue-100 text-blue-700'
       case 'user': return 'bg-gray-100 text-gray-700'
       default: return 'bg-gray-100 text-gray-700'
     }
   }
-
-  const getFeatureName = (featureId: string) => {
-    return features.find(f => f.id === featureId)?.name || featureId
-  }
-
-  const isAdmin = currentUser?.role === 'admin'
-  const isManager = currentUser?.role === 'manager'
-
-  const renderFeatureSelector = (
-    role: string,
-    userFeatures: Record<string, boolean>,
-    setUserFeatures: (f: Record<string, boolean>) => void
-  ) => {
-    if (companyFeatures.length === 0) {
-      return <p className="text-sm text-gray-400">No features enabled for this company.</p>
-    }
-
-    if (role === 'admin') {
-      return (
-        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
-          <p className="text-sm text-purple-700 font-medium">
-            ✓ Admins automatically get access to all company features
-          </p>
-        </div>
-      )
-    }
-
-    return (
-      <div className="grid grid-cols-2 gap-2">
-        {companyFeatures.map(id => (
-          <label
-            key={id}
-            className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition ${
-              userFeatures[id]
-                ? 'border-blue-400 bg-blue-50'
-                : 'border-gray-200 hover:border-gray-300'
-            }`}
-          >
-            <input
-              type="checkbox"
-              checked={userFeatures[id] || false}
-              onChange={(e) => setUserFeatures({ ...userFeatures, [id]: e.target.checked })}
-              className="w-4 h-4 text-blue-600"
-            />
-            <p className="text-sm font-medium text-gray-800">{getFeatureName(id)}</p>
-          </label>
-        ))}
-      </div>
-    )
-  }
-
-  const renderManagerTitles = (
-    selectedTitles: string[],
-    toggleTitle: (s: string) => void
-  ) => (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-2">
-        Can manage staff with these job titles
-      </label>
-      {jobTitles.length === 0 ? (
-        <p className="text-sm text-gray-500 italic">
-          No job titles exist yet. Create users with job titles first.
-        </p>
-      ) : (
-        <div className="grid grid-cols-2 gap-2">
-          {jobTitles.map(title => (
-            <label
-              key={title}
-              className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition ${
-                selectedTitles.includes(title)
-                  ? 'border-blue-400 bg-blue-100'
-                  : 'border-gray-200 bg-white hover:border-gray-300'
-              }`}
-            >
-              <input
-                type="checkbox"
-                checked={selectedTitles.includes(title)}
-                onChange={() => toggleTitle(title)}
-                className="w-4 h-4 text-blue-600"
-              />
-              <p className="text-sm font-medium text-gray-800">{title}</p>
-            </label>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-
-  const renderWorkingDays = (
-    workingDays: any,
-    setWorkingDays: (d: any) => void
-  ) => (
-    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-3">
-      <h4 className="font-semibold text-blue-800 text-sm">📅 Working Days</h4>
-      <p className="text-xs text-blue-700">
-        Tick the days this employee normally works. Holidays will only deduct on these days.
-      </p>
-      <div className="flex gap-2 flex-wrap">
-        {DAYS_OF_WEEK.map(day => (
-          <button
-            key={day.key}
-            type="button"
-            onClick={() => setWorkingDays({ ...workingDays, [day.key]: !workingDays[day.key] })}
-            className={`px-4 py-2 rounded-lg border-2 font-medium text-sm transition ${
-              workingDays[day.key]
-                ? 'bg-blue-500 border-blue-500 text-white'
-                : 'bg-white border-gray-300 text-gray-600'
-            }`}
-          >
-            {day.label}
-          </button>
-        ))}
-      </div>
-      <p className="text-xs text-blue-700">
-        Working {Object.values(workingDays).filter(Boolean).length} days per week
-      </p>
-    </div>
-  )
 
   if (loading) {
     return (
@@ -539,8 +375,8 @@ export default function DashboardUsersPage() {
     )
   }
 
-  const showHolidayFields = companyHasHolidaysFeature() && (newRole === 'admin' || userHasHolidaysFeature(newUserFeatures))
-  const showEditHolidayFields = companyHasHolidaysFeature() && (editRole === 'admin' || userHasHolidaysFeature(editUserFeatures))
+  const showHolidayFields = companyFeatures.some((cf: any) => cf.features?.name === 'Holidays')
+    && selectedFeatures.includes(features.find(f => f.name === 'Holidays')?.id)
 
   return (
     <main className="min-h-screen bg-gray-100">
@@ -549,31 +385,17 @@ export default function DashboardUsersPage() {
       <div className="bg-blue-700 text-white px-6 py-4 flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold">{company?.name}</h1>
-          <p className="text-blue-200 text-sm">South Lincs Systems</p>
+          <p className="text-blue-200 text-sm">{isAdmin ? 'Manage Users' : 'Your Team'}</p>
         </div>
         <button
           onClick={() => router.push('/dashboard')}
           className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm"
         >
-          ← Back to Dashboard
+          ← Back
         </button>
       </div>
 
-      <div className="max-w-5xl mx-auto p-6 space-y-6">
-
-        <div className="flex justify-between items-center">
-          <h2 className="text-2xl font-bold text-gray-800">
-            {isAdmin ? 'User Management' : 'Your Team'}
-          </h2>
-          {isAdmin && (
-            <button
-              onClick={() => setShowAddForm(!showAddForm)}
-              className="bg-blue-600 text-white px-5 py-2 rounded-lg hover:bg-blue-700 transition"
-            >
-              {showAddForm ? 'Cancel' : '+ Add User'}
-            </button>
-          )}
-        </div>
+      <div className="max-w-6xl mx-auto p-6 space-y-6">
 
         {message && (
           <div className={`p-4 rounded-lg text-sm font-medium ${
@@ -583,306 +405,199 @@ export default function DashboardUsersPage() {
           </div>
         )}
 
-        {isManager && managerTitles.length === 0 && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4">
-            <p className="text-yellow-800 text-sm">
-              No job titles have been assigned to you yet. Ask your admin to assign you some.
-            </p>
-          </div>
+        {isAdmin && !showAddForm && (
+          <button
+            onClick={() => {
+              setShowAddForm(true)
+              setEditingUser(null)
+              resetForm()
+            }}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition"
+          >
+            + Add User
+          </button>
         )}
 
-        {isManager && managerTitles.length > 0 && (
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-            <p className="text-blue-800 text-sm">
-              You manage staff with these job titles:{' '}
-              <span className="font-medium">{managerTitles.join(', ')}</span>
-            </p>
-          </div>
-        )}
-
-        {isAdmin && showAddForm && (
+        {/* Add/Edit form */}
+        {showAddForm && isAdmin && (
           <div className="bg-white rounded-xl shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">New User</h3>
-            <form onSubmit={handleAddUser} className="space-y-4" autoComplete="off">
-              <div className="grid grid-cols-2 gap-4">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-semibold">{editingUser ? 'Edit User' : 'Add New User'}</h2>
+              <button
+                onClick={() => {
+                  setShowAddForm(false)
+                  setEditingUser(null)
+                  resetForm()
+                }}
+                className="text-gray-400 text-xl"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={editingUser ? handleUpdate : handleAdd} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
                   <input
                     type="text"
-                    value={newName}
-                    onChange={(e) => setNewName(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    autoComplete="off"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
                     required
                   />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                    required
+                    disabled={!!editingUser}
+                  />
+                </div>
+              </div>
+
+              {!editingUser && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                  <input
+                    type="text"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                    required
+                    minLength={6}
+                  />
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 bg-white"
+                  >
+                    <option value="user">User</option>
+                    <option value="manager">Manager</option>
+                    <option value="admin">Admin</option>
+                  </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Job Title</label>
                   <input
                     type="text"
-                    value={newJobTitle}
-                    onChange={(e) => setNewJobTitle(e.target.value)}
-                    placeholder="e.g. Driver, Cleaner"
-                    list="add-job-titles"
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    autoComplete="off"
+                    value={jobTitle}
+                    onChange={(e) => setJobTitle(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
                   />
-                  {allJobTitles.length > 0 && (
-                    <datalist id="add-job-titles">
-                      {allJobTitles.map(t => <option key={t} value={t} />)}
-                    </datalist>
-                  )}
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                <input
-                  type="email"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  autoComplete="off"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  autoComplete="new-password"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Employment Start Date</label>
-                <input
-                  type="date"
-                  value={newEmploymentStart}
-                  onChange={(e) => setNewEmploymentStart(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-                <select
-                  value={newRole}
-                  onChange={(e) => {
-                    setNewRole(e.target.value)
-                    setNewManagerTitles([])
-                  }}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="admin">Admin</option>
-                  <option value="manager">Manager</option>
-                  <option value="user">User</option>
-                </select>
-              </div>
-
-              {newRole === 'manager' && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  {renderManagerTitles(newManagerTitles, toggleNewManagerTitle)}
+              {role === 'manager' && allJobTitles.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Job Titles This Manager Oversees</label>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    {allJobTitles.map(title => (
+                      <label key={title} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedManagerTitles.includes(title)}
+                          onChange={() => toggleManagerTitle(title)}
+                          className="w-4 h-4"
+                        />
+                        <span className="text-sm text-gray-700">{title}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               )}
 
+              {/* Features */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Feature Access</label>
-                {renderFeatureSelector(newRole, newUserFeatures, setNewUserFeatures)}
+                <label className="block text-sm font-medium text-gray-700 mb-2">Features</label>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  {features
+                    .filter(f => companyFeatures.some((cf: any) => cf.feature_id === f.id))
+                    .map(feature => (
+                    <label key={feature.id} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedFeatures.includes(feature.id)}
+                        onChange={() => toggleFeature(feature.id)}
+                        className="w-4 h-4"
+                      />
+                      <span className="text-sm text-gray-700">{feature.name}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
 
-              {renderWorkingDays(newWorkingDays, setNewWorkingDays)}
-
+              {/* Holiday-specific fields */}
               {showHolidayFields && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 space-y-4">
-                  <h4 className="font-semibold text-yellow-800">🏖️ Holiday Entitlement</h4>
-
-                  {!company?.holiday_year_start && (
-                    <p className="text-sm text-yellow-700 italic">
-                      ⚠️ Set the company holiday year start date first to enable auto-calculation.
-                    </p>
-                  )}
-
-                  <div className="grid grid-cols-2 gap-4">
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t border-gray-200">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Annual Entitlement
-                        <span className="ml-1 text-xs text-gray-400">(full year days)</span>
-                      </label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Employment Start Date</label>
+                      <input
+                        type="date"
+                        value={employmentStartDate}
+                        onChange={(e) => setEmploymentStartDate(e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Holiday Entitlement (days)</label>
                       <input
                         type="number"
                         step="0.5"
-                        min="0"
-                        value={newFullEntitlement}
-                        onChange={(e) => setNewFullEntitlement(e.target.value)}
-                        placeholder="e.g. 25"
-                        className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Pro-Rata This Year
-                        <span className="ml-1 text-xs text-gray-400">(auto-calculated)</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={newCalculatedEntitlement ? `${newCalculatedEntitlement} days` : ''}
-                        disabled
-                        placeholder="—"
-                        className="w-full border border-gray-200 rounded-lg px-4 py-2 bg-gray-50 text-gray-700 font-medium"
+                        value={holidayEntitlement}
+                        onChange={(e) => setHolidayEntitlement(e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                        placeholder="e.g. 28"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Override Pro-Rata
-                      <span className="ml-1 text-xs text-gray-400">(optional - leave blank to use calculated amount)</span>
-                    </label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      value={newOverrideEntitlement}
-                      onChange={(e) => setNewOverrideEntitlement(e.target.value)}
-                      placeholder="Leave blank to use calculated amount"
-                      className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Working Days</label>
+                    <div className="grid grid-cols-7 gap-2">
+                      {DAY_KEYS.map(day => (
+                        <label key={day} className="flex flex-col items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={workingDays[day]}
+                            onChange={() => toggleWorkingDay(day)}
+                            className="w-4 h-4 mb-1"
+                          />
+                          <span className="text-xs text-gray-600">{DAY_LABELS[day]}</span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                </>
               )}
 
-              <button
-                type="submit"
-                className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 transition font-medium"
-              >
-                Create User
-              </button>
-            </form>
-          </div>
-        )}
-
-        {isAdmin && editingUser && (
-          <div className="bg-white rounded-xl shadow p-6 border-l-4 border-blue-500">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">Edit — {editingUser.full_name}</h3>
-            <form onSubmit={handleSaveEdit} className="space-y-4" autoComplete="off">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-                  <input
-                    type="text"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    autoComplete="off"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Job Title</label>
-                  <input
-                    type="text"
-                    value={editJobTitle}
-                    onChange={(e) => setEditJobTitle(e.target.value)}
-                    list="edit-job-titles"
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    autoComplete="off"
-                  />
-                  {allJobTitles.length > 0 && (
-                    <datalist id="edit-job-titles">
-                      {allJobTitles.map(t => <option key={t} value={t} />)}
-                    </datalist>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                <input
-                  type="email"
-                  value={editEmail}
-                  onChange={(e) => setEditEmail(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  autoComplete="off"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Employment Start Date</label>
-                <input
-                  type="date"
-                  value={editEmploymentStart}
-                  onChange={(e) => setEditEmploymentStart(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-                <select
-                  value={editRole}
-                  onChange={(e) => {
-                    setEditRole(e.target.value)
-                    setEditManagerTitles([])
-                  }}
-                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="admin">Admin</option>
-                  <option value="manager">Manager</option>
-                  <option value="user">User</option>
-                </select>
-              </div>
-
-              {editRole === 'manager' && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                  {renderManagerTitles(editManagerTitles, toggleEditManagerTitle)}
-                </div>
-              )}
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Feature Access</label>
-                {renderFeatureSelector(editRole, editUserFeatures, setEditUserFeatures)}
-              </div>
-
-              {renderWorkingDays(editWorkingDays, setEditWorkingDays)}
-
-              {showEditHolidayFields && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                  <h4 className="font-semibold text-yellow-800 mb-3">🏖️ Holiday Entitlement</h4>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Days Remaining This Year
-                    </label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      min="0"
-                      value={editEntitlement}
-                      onChange={(e) => setEditEntitlement(e.target.value)}
-                      placeholder="e.g. 12.5"
-                      className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="flex gap-3">
+              <div className="flex gap-3 pt-2">
                 <button
                   type="submit"
-                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 transition"
+                  disabled={submitting}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-lg font-medium transition disabled:opacity-50"
                 >
-                  Save Changes
+                  {submitting ? 'Saving...' : (editingUser ? 'Update User' : 'Create User')}
                 </button>
                 <button
                   type="button"
-                  onClick={() => setEditingUser(null)}
-                  className="flex-1 bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300 transition"
+                  onClick={() => {
+                    setShowAddForm(false)
+                    setEditingUser(null)
+                    resetForm()
+                  }}
+                  className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-6 py-3 rounded-lg font-medium transition"
                 >
                   Cancel
                 </button>
@@ -891,23 +606,25 @@ export default function DashboardUsersPage() {
           </div>
         )}
 
+        {/* User list */}
         <div className="bg-white rounded-xl shadow p-6">
-          <h3 className="text-lg font-semibold text-gray-800 mb-4">
-            {isAdmin ? `All Users (${visibleUsers.length})` : `Your Team (${visibleUsers.length})`}
-          </h3>
+          <h2 className="text-xl font-semibold text-gray-800 mb-4">
+            {isAdmin ? 'All Users' : 'Your Team'} ({visibleUsers.length})
+          </h2>
+
           {visibleUsers.length === 0 ? (
-            <p className="text-gray-400">No users to display.</p>
+            <p className="text-gray-400 text-sm">No users to display.</p>
           ) : (
-            <ul className="space-y-3">
+            <ul className="space-y-2">
               {visibleUsers.map((user) => (
                 <li
                   key={user.id}
-                  className={`border rounded-xl p-4 ${
+                  className={`border rounded-lg p-4 ${
                     user.is_frozen ? 'border-orange-300 bg-orange-50' : 'border-gray-200'
                   }`}
                 >
-                  <div className="flex justify-between items-start">
-                    <div>
+                  <div className="flex justify-between items-start gap-3">
+                    <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-medium text-gray-800">{user.full_name}</p>
                         <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${getRoleBadgeColor(user.role)}`}>
@@ -918,61 +635,45 @@ export default function DashboardUsersPage() {
                             {user.job_title}
                           </span>
                         )}
-                        {user.holiday_entitlement !== null && user.holiday_entitlement !== undefined && (
-                          <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full">
-                            🏖️ {user.holiday_entitlement} days
-                          </span>
-                        )}
                         {user.is_frozen && (
                           <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full">Frozen</span>
                         )}
-                        {user.id === currentUser?.id && (
-                          <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">You</span>
-                        )}
                       </div>
-                      <p className="text-sm text-gray-500 mt-0.5">{user.email}</p>
-                      {user.user_features && user.user_features.length > 0 && (
-                        <div className="mt-2 flex flex-wrap gap-1">
-                          {user.role === 'admin' ? (
-                            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
-                              All features
-                            </span>
-                          ) : (
-                            user.user_features
-                              .filter((uf: any) => uf.is_enabled)
-                              .map((uf: any) => (
-                                <span key={uf.feature_id} className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
-                                  {getFeatureName(uf.feature_id)}
-                                </span>
-                              ))
-                          )}
-                        </div>
+                      <p className="text-sm text-gray-500 mt-1">{user.email}</p>
+                      {user.holiday_entitlement !== null && user.holiday_entitlement !== undefined && (
+                        <p className="text-xs text-gray-500 mt-1">🏖️ {user.holiday_entitlement} days</p>
                       )}
                     </div>
 
-                    {isAdmin && user.id !== currentUser?.id && (
-                      <div className="flex gap-2 ml-4 flex-shrink-0">
+                    {isAdmin && user.id !== currentUser.id && (
+                      <div className="flex flex-wrap gap-2 flex-shrink-0">
                         <button
-                          onClick={() => handleEditUser(user)}
-                          className="text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg transition"
+                          onClick={() => handleStartEdit(user)}
+                          className="text-sm bg-blue-100 hover:bg-blue-200 text-blue-700 px-3 py-1 rounded transition"
                         >
                           Edit
                         </button>
                         <button
-                          onClick={() => handleFreeze(user)}
-                          className={`text-sm px-3 py-1.5 rounded-lg transition ${
-                            user.is_frozen
-                              ? 'bg-green-100 hover:bg-green-200 text-green-700'
-                              : 'bg-orange-100 hover:bg-orange-200 text-orange-700'
-                          }`}
+                          onClick={() => {
+                            setChangePasswordUser(user)
+                            setNewAdminPassword('')
+                            setConfirmAdminPassword('')
+                          }}
+                          className="text-sm bg-yellow-100 hover:bg-yellow-200 text-yellow-700 px-3 py-1 rounded transition"
+                        >
+                          🔒 Password
+                        </button>
+                        <button
+                          onClick={() => handleToggleFreeze(user)}
+                          className="text-sm bg-orange-100 hover:bg-orange-200 text-orange-700 px-3 py-1 rounded transition"
                         >
                           {user.is_frozen ? 'Unfreeze' : 'Freeze'}
                         </button>
                         <button
-                          onClick={() => handleSoftDelete(user)}
-                          className="text-sm bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1.5 rounded-lg transition"
+                          onClick={() => handleDelete(user)}
+                          className="text-sm bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1 rounded transition"
                         >
-                          Remove
+                          Delete
                         </button>
                       </div>
                     )}
@@ -982,6 +683,87 @@ export default function DashboardUsersPage() {
             </ul>
           )}
         </div>
+
+        {/* Change password modal */}
+        {changePasswordUser && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+              <div className="p-6 space-y-4">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h2 className="text-xl font-bold text-gray-800">Change Password</h2>
+                    <p className="text-sm text-gray-500 mt-1">For {changePasswordUser.full_name}</p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setChangePasswordUser(null)
+                      setNewAdminPassword('')
+                      setConfirmAdminPassword('')
+                    }}
+                    className="text-gray-400 text-2xl leading-none"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700">
+                  ⚠️ This will immediately change their password. Make sure to communicate it securely to the user.
+                </div>
+
+                <form onSubmit={handleChangeUserPassword} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
+                    <input
+                      type="text"
+                      value={newAdminPassword}
+                      onChange={(e) => setNewAdminPassword(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                      required
+                      minLength={6}
+                      autoComplete="new-password"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">At least 6 characters</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
+                    <input
+                      type="text"
+                      value={confirmAdminPassword}
+                      onChange={(e) => setConfirmAdminPassword(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                      required
+                      minLength={6}
+                      autoComplete="new-password"
+                    />
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setChangePasswordUser(null)
+                        setNewAdminPassword('')
+                        setConfirmAdminPassword('')
+                      }}
+                      className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-lg font-medium transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={submittingPassword}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-lg font-medium transition disabled:opacity-50"
+                    >
+                      {submittingPassword ? 'Changing...' : 'Change Password'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        )}
+
       </div>
     </main>
   )

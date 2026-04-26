@@ -3,10 +3,11 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
 
 const supabase = createClient()
 
-export default function EmployeeProfile() {
+export default function DashboardProfile() {
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -17,7 +18,9 @@ export default function EmployeeProfile() {
   const [submittingPassword, setSubmittingPassword] = useState(false)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error'>('success')
+
   const router = useRouter()
+  const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
 
   const showMessage = (msg: string, type: 'success' | 'error') => {
     setMessage(msg)
@@ -38,16 +41,25 @@ export default function EmployeeProfile() {
       .eq('id', user.id)
       .single()
 
-    if (profile) {
-      setCurrentUser(profile)
-      if (profile.company_id) {
-        const { data: companyData } = await supabase
-          .from('companies')
-          .select('name')
-          .eq('id', profile.company_id)
-          .single()
-        setCompany(companyData)
-      }
+    if (!profile) {
+      router.push('/login')
+      return
+    }
+
+    if (profile.role !== 'admin' && profile.role !== 'manager') {
+      router.push('/employee/profile')
+      return
+    }
+
+    setCurrentUser(profile)
+
+    if (profile.company_id) {
+      const { data: companyData } = await supabase
+        .from('companies')
+        .select('name')
+        .eq('id', profile.company_id)
+        .single()
+      setCompany(companyData)
     }
 
     setLoading(false)
@@ -56,23 +68,6 @@ export default function EmployeeProfile() {
   useEffect(() => {
     fetchData()
   }, [fetchData])
-
-  const handleSignOut = async () => {
-    await fetch('/api/audit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        user_id: currentUser?.id,
-        user_email: currentUser?.email,
-        user_role: currentUser?.role,
-        action: 'LOGOUT',
-        entity: 'auth',
-        details: { email: currentUser?.email },
-      }),
-    })
-    await supabase.auth.signOut()
-    router.push('/login')
-  }
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -125,67 +120,76 @@ export default function EmployeeProfile() {
 
   if (loading) {
     return (
-      <main className="min-h-screen flex items-center justify-center bg-gray-50">
+      <main className="min-h-screen flex items-center justify-center bg-gray-100">
         <p className="text-gray-500">Loading...</p>
       </main>
     )
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 pb-24">
-      <div className="bg-gradient-to-br from-blue-600 to-blue-800 text-white px-6 pt-10 pb-20 rounded-b-3xl shadow-lg">
-        <div className="flex items-center mb-4">
-          <button
-            onClick={() => router.push('/employee')}
-            className="text-white text-sm"
-          >
-            ← Back
-          </button>
+    <main className="min-h-screen bg-gray-100">
+      <IdleWarningModal show={showWarning} secondsLeft={secondsLeft} onStay={stayLoggedIn} />
+
+      <div className="bg-blue-700 text-white px-6 py-4 flex justify-between items-center">
+        <div>
+          <h1 className="text-2xl font-bold">{company?.name}</h1>
+          <p className="text-blue-200 text-sm">My Profile</p>
         </div>
-        <div className="flex flex-col items-center">
-          <div className="w-24 h-24 bg-white/20 rounded-full flex items-center justify-center text-4xl font-bold mb-3">
-            {currentUser?.full_name?.charAt(0)}
-          </div>
-          <h1 className="text-2xl font-bold">{currentUser?.full_name}</h1>
-          <p className="text-blue-100 text-sm">{currentUser?.job_title || 'Employee'}</p>
-        </div>
+        <button
+          onClick={() => router.push('/dashboard')}
+          className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm"
+        >
+          ← Back
+        </button>
       </div>
 
-      <div className="px-6 -mt-10 space-y-4">
+      <div className="max-w-3xl mx-auto p-6 space-y-4">
 
         {message && (
-          <div className={`p-4 rounded-xl text-sm font-medium ${
+          <div className={`p-4 rounded-lg text-sm font-medium ${
             messageType === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
           }`}>
             {message}
           </div>
         )}
 
-        <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100 space-y-4">
-          <div>
-            <p className="text-xs text-gray-500 uppercase tracking-wide">Email</p>
-            <p className="text-gray-800 mt-1">{currentUser?.email}</p>
+        <div className="bg-white rounded-xl shadow p-6">
+          <div className="flex items-center gap-4 mb-6">
+            <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center text-2xl font-bold text-blue-700">
+              {currentUser?.full_name?.charAt(0)}
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-800">{currentUser?.full_name}</h2>
+              <p className="text-gray-500 text-sm capitalize">{currentUser?.role}</p>
+            </div>
           </div>
-          <div className="border-t border-gray-100 pt-4">
-            <p className="text-xs text-gray-500 uppercase tracking-wide">Company</p>
-            <p className="text-gray-800 mt-1">{company?.name || '—'}</p>
-          </div>
-          <div className="border-t border-gray-100 pt-4">
-            <p className="text-xs text-gray-500 uppercase tracking-wide">Job Title</p>
-            <p className="text-gray-800 mt-1">{currentUser?.job_title || '—'}</p>
+
+          <div className="space-y-3">
+            <div className="border-t border-gray-100 pt-3">
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Email</p>
+              <p className="text-gray-800 mt-1">{currentUser?.email}</p>
+            </div>
+            <div className="border-t border-gray-100 pt-3">
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Job Title</p>
+              <p className="text-gray-800 mt-1">{currentUser?.job_title || '—'}</p>
+            </div>
+            <div className="border-t border-gray-100 pt-3">
+              <p className="text-xs text-gray-500 uppercase tracking-wide">Company</p>
+              <p className="text-gray-800 mt-1">{company?.name || '—'}</p>
+            </div>
           </div>
         </div>
 
-        {/* Change Password section */}
+        {/* Change Password */}
         {!showPasswordForm ? (
           <button
             onClick={() => setShowPasswordForm(true)}
-            className="w-full bg-white hover:bg-gray-50 active:bg-gray-100 border border-gray-200 text-gray-800 py-4 rounded-2xl font-medium transition flex items-center justify-center gap-2"
+            className="w-full bg-white hover:bg-gray-50 border border-gray-200 text-gray-800 py-4 rounded-xl font-medium transition flex items-center justify-center gap-2"
           >
             🔒 Change Password
           </button>
         ) : (
-          <div className="bg-white rounded-2xl shadow-sm p-5 border border-gray-100">
+          <div className="bg-white rounded-xl shadow p-6">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-gray-800">Change Password</h2>
               <button
@@ -252,32 +256,7 @@ export default function EmployeeProfile() {
           </div>
         )}
 
-        <button
-          onClick={handleSignOut}
-          className="w-full bg-white hover:bg-red-50 active:bg-red-100 border border-red-200 text-red-600 py-4 rounded-2xl font-medium transition"
-        >
-          Sign Out
-        </button>
       </div>
-
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg">
-        <div className="flex justify-around items-center h-16 max-w-md mx-auto">
-          <button
-            onClick={() => router.push('/employee')}
-            className="flex flex-col items-center gap-0.5 text-gray-400 hover:text-gray-600"
-          >
-            <span className="text-xl">🏠</span>
-            <span className="text-xs font-medium">Home</span>
-          </button>
-          <button
-            onClick={() => router.push('/employee/profile')}
-            className="flex flex-col items-center gap-0.5 text-blue-600"
-          >
-            <span className="text-xl">👤</span>
-            <span className="text-xs font-medium">Profile</span>
-          </button>
-        </div>
-      </nav>
     </main>
   )
 }
