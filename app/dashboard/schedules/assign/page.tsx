@@ -83,7 +83,7 @@ export default function SchedulesAssignPage() {
     const [usersRes, schedsRes, asgsRes, holsRes] = await Promise.all([
       supabase
         .from('profiles')
-        .select(`id, full_name, role, job_title, display_order, is_frozen, user_features (is_enabled, features (name))`)
+        .select(`id, full_name, role, job_title, display_order, is_frozen`)
         .eq('company_id', companyId)
         .eq('is_deleted', false)
         .order('display_order', { ascending: true, nullsFirst: false })
@@ -108,13 +108,9 @@ export default function SchedulesAssignPage() {
         .or(`and(start_date.lte.${weekToISO},end_date.gte.${weekFromISO})`),
     ])
 
-    // Filter users: admin always, plus anyone with the Schedules feature enabled
-    const filteredUsers = (usersRes.data || []).filter((p: any) => {
-      if (p.role === 'admin') return true
-      return (p.user_features || []).some(
-        (uf: any) => uf.is_enabled && uf.features?.name === 'Schedules'
-      )
-    })
+    // Anyone in the company who isn't a superuser can be assigned to a schedule.
+    // The Schedules feature gate is for *viewing* the calendar — not for being assignable.
+    const filteredUsers = (usersRes.data || []).filter((p: any) => p.role !== 'superuser')
 
     setUsers(filteredUsers)
     setSchedules(schedsRes.data || [])
