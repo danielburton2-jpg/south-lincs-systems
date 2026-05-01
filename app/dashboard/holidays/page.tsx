@@ -20,6 +20,7 @@ import { createClient } from '@/lib/supabase'
 import { getUKBankHolidays } from '@/lib/bankHolidays'
 import { holidayYearForDate, isCurrentHolidayYear } from '@/lib/holidayYear'
 import HolidayRequestForm from '@/components/HolidayRequestForm'
+import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh'
 
 const supabase = createClient()
 
@@ -210,6 +211,18 @@ export default function DashboardHolidaysPage() {
       setTab(canReview ? 'pending' : (hasHolidayAccess ? 'mine' : 'pending'))
     }
   }, [loading, canReview, isAdmin, hasHolidayAccess, tab])
+
+  // Realtime: refetch when anything relevant changes for this company.
+  useRealtimeRefresh(
+    'holidays-page',
+    [
+      { table: 'holiday_requests',    companyId: company?.id || null },
+      { table: 'balance_adjustments', companyId: company?.id || null },
+      { table: 'profiles',            companyId: company?.id || null },
+    ],
+    load,
+    !!company?.id,
+  )
 
   const visibleRequests = useMemo(() => {
     if (!me) return []

@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh'
 
 const supabase = createClient()
 
@@ -136,26 +137,16 @@ export default function SchedulesReportsPage() {
     fetchData()
   }, [fetchData])
 
-  // Realtime
-  useEffect(() => {
-    if (!currentUser?.company_id) return
-    const channel = supabase
-      .channel('schedule-reports-realtime')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'schedules',
-          filter: `company_id=eq.${currentUser.company_id}`,
-        },
-        () => fetchData()
-      )
-      .subscribe()
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [currentUser?.company_id, fetchData])
+  // Realtime: refetch when schedules or assignments change for this company.
+  useRealtimeRefresh(
+    'schedule-reports-realtime',
+    [
+      { table: 'schedules',            companyId: currentUser?.company_id || null },
+      { table: 'schedule_assignments', companyId: currentUser?.company_id || null },
+    ],
+    fetchData,
+    !!currentUser?.company_id,
+  )
 
   // Tick every minute so isCompleted() catches up
   useEffect(() => {

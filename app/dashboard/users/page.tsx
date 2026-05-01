@@ -15,6 +15,8 @@ import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import ReorderUsersModal from '@/components/ReorderUsersModal'
+import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh'
 
 const supabase = createClient()
 
@@ -41,6 +43,7 @@ export default function DashboardUsersPage() {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error'>('success')
+  const [showReorder, setShowReorder] = useState(false)
 
   const showMessage = (msg: string, type: 'success' | 'error') => {
     setMessage(msg)
@@ -91,6 +94,19 @@ export default function DashboardUsersPage() {
   }, [router])
 
   useEffect(() => { load() }, [load])
+
+  // Realtime: refetch when profiles or features change for this company.
+  // showReorder modal won't be impacted because it manages its own local state.
+  useRealtimeRefresh(
+    'users-list-realtime',
+    [
+      { table: 'profiles',           companyId: currentUser?.company_id || null },
+      { table: 'user_features',      companyId: null },  // no company_id column
+      { table: 'manager_job_titles', companyId: null },  // no company_id column
+    ],
+    load,
+    !!currentUser?.company_id,
+  )
 
   const featureById = (id: string) => features.find(f => f.id === id)
 
@@ -186,10 +202,18 @@ export default function DashboardUsersPage() {
             <span className="text-sm font-normal text-orange-500 ml-2">({frozenCount} frozen)</span>
           )}
         </h3>
-        <Link href="/dashboard/users/add"
-          className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-5 py-2 rounded-lg transition">
-          + Add User
-        </Link>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowReorder(true)}
+            className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-medium px-4 py-2 rounded-lg transition"
+          >
+            ⇅ Reorder Users
+          </button>
+          <Link href="/dashboard/users/add"
+            className="bg-blue-600 hover:bg-blue-700 text-white font-medium px-5 py-2 rounded-lg transition">
+            + Add User
+          </Link>
+        </div>
       </div>
 
       {message && (
@@ -281,6 +305,27 @@ export default function DashboardUsersPage() {
           </ul>
         )}
       </div>
+
+      {showReorder && (
+        <ReorderUsersModal
+          users={users
+            .filter(u => !u.is_frozen)
+            .map(u => ({
+              id: u.id,
+              full_name: u.full_name,
+              email: u.email,
+              role: u.role,
+              job_title: u.job_title,
+              display_order: (u as any).display_order,
+            }))}
+          onClose={() => setShowReorder(false)}
+          onSaved={() => {
+            setShowReorder(false)
+            showMessage('User order saved', 'success')
+            load()
+          }}
+        />
+      )}
     </div>
   )
 }

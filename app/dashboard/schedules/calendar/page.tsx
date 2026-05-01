@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh'
 
 const supabase = createClient()
 
@@ -83,10 +84,10 @@ export default function SchedulesCalendarPage() {
   }
 
   const loadAll = useCallback(async (companyId: string, weekFromISO: string, weekToISO: string) => {
-    const [profilesRes, schedsRes, asgsRes, holsRes, docsRes, conflictsRes] = await Promise.all([
+    const [profilesRes, schedsRes, asgsRes, holsRes, docsRes] = await Promise.all([
       supabase
         .from('profiles')
-        .select(`id, full_name, role, job_title, employee_number, display_order, is_frozen`)
+        .select(`id, full_name, role, job_title, employee_number, is_frozen, display_order`)
         .eq('company_id', companyId)
         .eq('is_deleted', false)
         .order('display_order', { ascending: true, nullsFirst: false })
@@ -112,11 +113,18 @@ export default function SchedulesCalendarPage() {
         .from('schedule_documents')
         .select('id, schedule_id')
         .eq('company_id', companyId),
-      supabase
-        .from('schedule_conflict_acknowledgements')
-        .select('id, assignment_id, holiday_request_id, acknowledged_at, details')
-        .eq('company_id', companyId),
     ])
+
+    // Surface load errors instead of silently showing empty data
+    if (profilesRes.error) console.error('[calendar] profiles load error:', profilesRes.error)
+    if (schedsRes.error)   console.error('[calendar] schedules load error:', schedsRes.error)
+    if (asgsRes.error)     console.error('[calendar] assignments load error:', asgsRes.error)
+    if (holsRes.error)     console.error('[calendar] holidays load error:', holsRes.error)
+    if (docsRes.error)     console.error('[calendar] documents load error:', docsRes.error)
+
+    // schedule_conflict_acknowledgements table isn't in the current schema.
+    // Treat all conflicts as unacknowledged for now — the page falls back gracefully.
+    const conflictsRes: { data: any[] } = { data: [] }
 
     const filteredUsers = (profilesRes.data || []).filter((p: any) => p.role !== 'superuser')
 
@@ -204,25 +212,27 @@ export default function SchedulesCalendarPage() {
     loadAll(currentUser.company_id, from, to)
   }, [weekStart, currentUser?.company_id, loadAll])
 
-  useEffect(() => {
+  // Realtime — refetch when any relevant table changes for this company.
+  // Wraps the parameterised loadAll into a no-arg refetch.
+  const reloadCurrentWeek = useCallback(() => {
     if (!currentUser?.company_id) return
-    const channel = supabase
-      .channel('schedules-calendar-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_assignments', filter: `company_id=eq.${currentUser.company_id}` }, () => {
-        const from = isoDate(weekStart)
-        const to = isoDate(addDays(weekStart, 6))
-        loadAll(currentUser.company_id, from, to)
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_conflict_acknowledgements', filter: `company_id=eq.${currentUser.company_id}` }, () => {
-        const from = isoDate(weekStart)
-        const to = isoDate(addDays(weekStart, 6))
-        loadAll(currentUser.company_id, from, to)
-      })
-      .subscribe()
-    return () => {
-      supabase.removeChannel(channel)
-    }
+    const from = isoDate(weekStart)
+    const to = isoDate(addDays(weekStart, 6))
+    loadAll(currentUser.company_id, from, to)
   }, [currentUser?.company_id, weekStart, loadAll])
+
+  useRealtimeRefresh(
+    'schedules-calendar-realtime',
+    [
+      { table: 'schedule_assignments', companyId: currentUser?.company_id || null },
+      { table: 'schedules',            companyId: currentUser?.company_id || null },
+      { table: 'schedule_documents',   companyId: currentUser?.company_id || null },
+      { table: 'holiday_requests',     companyId: currentUser?.company_id || null },
+      { table: 'profiles',             companyId: currentUser?.company_id || null },
+    ],
+    reloadCurrentWeek,
+    !!currentUser?.company_id,
+  )
 
   const isAdmin = currentUser?.role === 'admin'
   const isManager = currentUser?.role === 'manager'
@@ -493,17 +503,17 @@ export default function SchedulesCalendarPage() {
   const userName = (id: string) => users.find(u => u.id === id)?.full_name || '(unknown)'
 
   return (
-    <div className="p-8 max-w-7xl">
+    <div className="p-6 max-w-[1600px]">
 
-      <div className="mb-6 no-print">
+      <div className="mb-4 no-print">
         <button
           onClick={() => router.push('/dashboard/schedules')}
-          className="text-sm text-slate-500 hover:text-slate-700 mb-3 inline-flex items-center gap-1"
+          className="text-xs text-slate-500 hover:text-slate-700 mb-2 inline-flex items-center gap-1"
         >
           ← Back to schedules
         </button>
-        <h1 className="text-2xl font-bold text-slate-900 mb-1">Schedules Calendar</h1>
-        <p className="text-sm text-slate-500">{company?.name}</p>
+        <h1 className="text-xl font-bold text-slate-900 mb-0.5">Schedules Calendar</h1>
+        <p className="text-xs text-slate-500">{company?.name}</p>
       </div>
 
 
@@ -584,7 +594,7 @@ export default function SchedulesCalendarPage() {
         </div>
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-3">
 
         {canEdit && unresolvedConflictsInWeek.length > 0 && (
           <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 no-print">
@@ -642,11 +652,11 @@ export default function SchedulesCalendarPage() {
           </div>
         )}
 
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 flex flex-wrap items-center gap-3 no-print">
-          <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-2 flex flex-wrap items-center gap-2 no-print">
+          <div className="flex gap-0.5 bg-slate-100 rounded-md p-0.5">
             <button
               onClick={() => setView('week')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+              className={`px-2 py-1 rounded text-xs font-medium transition ${
                 view === 'week' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -654,7 +664,7 @@ export default function SchedulesCalendarPage() {
             </button>
             <button
               onClick={() => setView('day')}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+              className={`px-2 py-1 rounded text-xs font-medium transition ${
                 view === 'day' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
               }`}
             >
@@ -663,51 +673,51 @@ export default function SchedulesCalendarPage() {
           </div>
 
           {view === 'week' ? (
-            <div className="flex items-center gap-1">
-              <button onClick={goPrevWeek} className="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-lg text-sm font-medium">←</button>
-              <div className="px-3 py-1.5 font-medium text-slate-800 text-sm whitespace-nowrap">{weekLabel}</div>
-              <button onClick={goNextWeek} className="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-lg text-sm font-medium">→</button>
+            <div className="flex items-center gap-0.5">
+              <button onClick={goPrevWeek} className="bg-slate-100 hover:bg-slate-200 text-slate-700 w-7 h-7 rounded-md text-xs font-medium">←</button>
+              <div className="px-2 py-1 font-medium text-slate-800 text-xs whitespace-nowrap">{weekLabel}</div>
+              <button onClick={goNextWeek} className="bg-slate-100 hover:bg-slate-200 text-slate-700 w-7 h-7 rounded-md text-xs font-medium">→</button>
             </div>
           ) : (
-            <div className="flex items-center gap-1">
-              <button onClick={goPrevDay} className="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-lg text-sm font-medium">←</button>
-              <div className="px-3 py-1.5 font-medium text-slate-800 text-sm whitespace-nowrap">
+            <div className="flex items-center gap-0.5">
+              <button onClick={goPrevDay} className="bg-slate-100 hover:bg-slate-200 text-slate-700 w-7 h-7 rounded-md text-xs font-medium">←</button>
+              <div className="px-2 py-1 font-medium text-slate-800 text-xs whitespace-nowrap">
                 {dayDate.toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' })}
               </div>
-              <button onClick={goNextDay} className="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-lg text-sm font-medium">→</button>
+              <button onClick={goNextDay} className="bg-slate-100 hover:bg-slate-200 text-slate-700 w-7 h-7 rounded-md text-xs font-medium">→</button>
             </div>
           )}
 
-          <button onClick={goToday} className="bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium">
+          <button onClick={goToday} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-xs font-medium">
             Today
           </button>
 
           <div className="flex-1" />
 
-          <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
-            <input type="checkbox" checked={justMe} onChange={(e) => setJustMe(e.target.checked)} className="w-4 h-4" />
+          <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+            <input type="checkbox" checked={justMe} onChange={(e) => setJustMe(e.target.checked)} className="w-3.5 h-3.5" />
             Just me
           </label>
 
           {view === 'week' && (
             <>
-              <button onClick={exportPDF} disabled={visibleUsers.length === 0} className="bg-red-600 hover:bg-red-700 disabled:bg-slate-300 text-white px-3 py-1.5 rounded-lg text-xs font-medium">⬇ PDF</button>
-              <button onClick={handlePrint} disabled={visibleUsers.length === 0} className="bg-gray-700 hover:bg-gray-800 disabled:bg-slate-300 text-white px-3 py-1.5 rounded-lg text-xs font-medium">🖨 Print</button>
+              <button onClick={exportPDF} disabled={visibleUsers.length === 0} className="bg-red-600 hover:bg-red-700 disabled:bg-slate-300 text-white px-2.5 py-1 rounded-md text-xs font-medium">⬇ PDF</button>
+              <button onClick={handlePrint} disabled={visibleUsers.length === 0} className="bg-slate-700 hover:bg-slate-800 disabled:bg-slate-300 text-white px-2.5 py-1 rounded-md text-xs font-medium">🖨 Print</button>
             </>
           )}
 
           {canEdit && (
-            <button onClick={() => router.push('/dashboard/schedules/assign')} className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium">✏️ Assign</button>
+            <button onClick={() => router.push('/dashboard/schedules/assign')} className="bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1 rounded-md text-xs font-medium">✏️ Assign</button>
           )}
         </div>
 
         {view === 'week' && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden print-shrink">
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden print-shrink">
             <div className="overflow-x-auto print-table-wrap">
               <table className="w-full border-collapse">
                 <thead className="bg-slate-50">
                   <tr>
-                    <th className="text-left px-3 py-3 text-xs font-semibold text-slate-600 uppercase border-b border-slate-200 sticky left-0 bg-slate-50 z-10 min-w-[160px]">
+                    <th className="text-left px-2 py-1.5 text-[10px] font-semibold text-slate-600 uppercase border-b border-slate-200 sticky left-0 bg-slate-50 z-10 min-w-[140px]">
                       Name
                     </th>
                     {weekDates.map((d, i) => {
@@ -716,21 +726,21 @@ export default function SchedulesCalendarPage() {
                       return (
                         <th
                           key={i}
-                          className={`text-left px-3 py-3 text-xs font-semibold uppercase border-b border-slate-200 min-w-[140px] text-slate-600 ${bh ? 'bg-orange-50' : ''}`}
+                          className={`text-center px-1.5 py-1.5 text-[10px] font-semibold uppercase border-b border-slate-200 min-w-[110px] text-slate-600 ${bh ? 'bg-orange-50' : ''}`}
                           title={bh || ''}
                         >
-                          <div>{d.toLocaleDateString('en-GB', { weekday: 'short' })}</div>
-                          <div className="mt-0.5">
+                          <div className="flex items-baseline justify-center gap-1">
+                            <span>{d.toLocaleDateString('en-GB', { weekday: 'short' })}</span>
                             {isToday ? (
-                              <span className="inline-block bg-blue-600 text-white text-sm font-bold normal-case px-2 py-0.5 rounded-full">
+                              <span className="inline-block bg-blue-600 text-white text-[10px] font-bold normal-case px-1.5 py-0 rounded-full">
                                 {formatDateShort(d)}
                               </span>
                             ) : (
-                              <span className="text-sm font-bold normal-case">{formatDateShort(d)}</span>
+                              <span className="text-xs font-bold normal-case">{formatDateShort(d)}</span>
                             )}
                           </div>
                           {bh && (
-                            <div className="text-[10px] text-orange-700 normal-case font-medium mt-1 truncate" title={bh}>
+                            <div className="text-[9px] text-orange-700 normal-case font-medium mt-0.5 truncate" title={bh}>
                               🎉 {bh}
                             </div>
                           )}
@@ -742,16 +752,16 @@ export default function SchedulesCalendarPage() {
                 <tbody>
                   {visibleUsers.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="text-center text-slate-400 py-12 text-sm">
+                      <td colSpan={8} className="text-center text-slate-400 py-8 text-xs">
                         No users to show
                       </td>
                     </tr>
                   )}
                   {visibleUsers.map((u) => (
                     <tr key={u.id} className="border-b border-slate-100 last:border-b-0">
-                      <td className="px-3 py-3 align-top sticky left-0 bg-white z-10 border-r border-slate-100">
-                        <p className="font-semibold text-slate-800 text-sm leading-tight">{u.full_name}</p>
-                        {u.employee_number && (<p className="text-[11px] text-slate-500 mt-0.5">{u.employee_number}</p>)}
+                      <td className="px-2 py-1.5 align-top sticky left-0 bg-white z-10 border-r border-slate-100">
+                        <p className="font-semibold text-slate-800 text-xs leading-tight">{u.full_name}</p>
+                        {u.employee_number && (<p className="text-[10px] text-slate-500 mt-0.5">{u.employee_number}</p>)}
                         {u.is_frozen && (<p className="text-[10px] text-amber-700 font-medium mt-0.5">Frozen</p>)}
                       </td>
                       {weekDates.map((d, i) => {
@@ -770,7 +780,7 @@ export default function SchedulesCalendarPage() {
                           <td
                             key={i}
                             onClick={() => openCellModal(u.id, d)}
-                            className={`px-2 py-2 align-top text-xs border-r border-slate-100 last:border-r-0 cursor-pointer hover:bg-slate-50 transition ${
+                            className={`px-1 py-1 align-top text-xs border-r border-slate-100 last:border-r-0 cursor-pointer hover:bg-slate-50 transition ${
                               hasConflict ? 'bg-red-50 ring-2 ring-red-300 ring-inset' :
                               hasUnpublished ? 'bg-yellow-100/70' :
                               wasReassigned ? 'bg-yellow-50/70' :
@@ -778,14 +788,14 @@ export default function SchedulesCalendarPage() {
                             }`}
                           >
                             {hasConflict && (
-                              <div className="bg-red-100 border border-red-300 text-red-800 rounded px-2 py-1 text-[11px] font-semibold mb-1 flex items-center gap-1 no-print">
+                              <div className="bg-red-100 border border-red-300 text-red-800 rounded px-1.5 py-0.5 text-[10px] font-semibold mb-0.5 flex items-center gap-1 no-print">
                                 <span>⚠️</span>
-                                <span>Reassign needed</span>
+                                <span>Reassign</span>
                               </div>
                             )}
 
                             {hol ? (
-                              <div className={`px-2 py-1 rounded font-medium text-[11px] mb-1 ${
+                              <div className={`px-1.5 py-0.5 rounded font-medium text-[10px] mb-0.5 ${
                                 hol.request_type === 'holiday' ? 'bg-red-100 text-red-700' :
                                 hol.request_type === 'keep_day_off' ? 'bg-purple-100 text-purple-700' :
                                 'bg-amber-100 text-amber-700'
@@ -795,19 +805,19 @@ export default function SchedulesCalendarPage() {
                             ) : null}
 
                             {isEmpty && !hasConflict && (
-                              <div className="px-2 py-1 rounded text-[11px] leading-tight bg-slate-50 border border-slate-200 text-slate-500 italic text-center">
+                              <div className="px-1.5 py-0.5 rounded text-[10px] leading-tight bg-slate-50 border border-slate-200 text-slate-400 italic text-center">
                                 Day Off
                               </div>
                             )}
 
-                            <div className="space-y-1">
+                            <div className="space-y-0.5">
                               {cellAsgs.map(a => {
                                 const sched = getSchedule(a.schedule_id)
                                 const reassigned = a.first_user_id && a.user_id && a.first_user_id !== a.user_id
                                 return (
                                   <div
                                     key={a.id}
-                                    className={`px-2 py-1 rounded text-[11px] leading-tight ${
+                                    className={`px-1.5 py-0.5 rounded text-[10px] leading-tight ${
                                       a.status === 'draft' ? 'bg-amber-50 border border-amber-200 text-amber-800' :
                                       a.is_changed ? 'bg-yellow-100 border border-yellow-300 text-yellow-900' :
                                       reassigned ? 'bg-yellow-50 border border-yellow-200 text-yellow-900' :
@@ -817,8 +827,8 @@ export default function SchedulesCalendarPage() {
                                     <p className="font-semibold truncate">
                                       {sched?.name || '(unknown schedule)'}
                                       {sched && (
-                                        <span className="font-normal text-[10px] ml-1">
-                                          : {formatTime(sched.start_time)}-{formatTime(sched.end_time)}
+                                        <span className="font-normal text-[9px] ml-1">
+                                          {formatTime(sched.start_time)}-{formatTime(sched.end_time)}
                                         </span>
                                       )}
                                     </p>

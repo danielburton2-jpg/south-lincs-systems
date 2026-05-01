@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
-import { logAuditClient } from '@/lib/audit'
+import { logAuditClient } from '@/lib/auditClient'
+import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh'
 
 const supabase = createClient()
 
@@ -145,6 +146,24 @@ export default function ScheduleDetailPage() {
   useEffect(() => {
     loadSchedule()
   }, [loadSchedule])
+
+  // Realtime: refetch when this schedule's data changes elsewhere.
+  // Skip refetch while user is editing — don't blow away their form.
+  const safeReload = useCallback(() => {
+    if (editing) return
+    loadSchedule()
+  }, [editing, loadSchedule])
+
+  useRealtimeRefresh(
+    `schedule-detail-${scheduleId}`,
+    [
+      { table: 'schedules',          companyId: currentUser?.company_id || null },
+      { table: 'schedule_documents', companyId: currentUser?.company_id || null },
+      { table: 'schedule_assignments', companyId: currentUser?.company_id || null },
+    ],
+    safeReload,
+    !!currentUser?.company_id && !!scheduleId,
+  )
 
   const isAdmin = currentUser?.role === 'admin'
   const canManage = isAdmin

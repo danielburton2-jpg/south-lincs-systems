@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh'
 
 const supabase = createClient()
 
@@ -108,27 +109,15 @@ export default function SchedulesPage() {
     fetchData()
   }, [fetchData])
 
-  useEffect(() => {
-    if (!currentUser?.company_id) return
-
-    const channel = supabase
-      .channel('schedules-realtime')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'schedules',
-          filter: `company_id=eq.${currentUser.company_id}`,
-        },
-        () => fetchData()
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [currentUser?.company_id, fetchData])
+  useRealtimeRefresh(
+    'schedules-list-realtime',
+    [
+      { table: 'schedules',          companyId: currentUser?.company_id || null },
+      { table: 'schedule_documents', companyId: currentUser?.company_id || null },
+    ],
+    fetchData,
+    !!currentUser?.company_id,
+  )
 
   useEffect(() => {
     const interval = setInterval(() => setTick(t => t + 1), 60_000)

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { logAuditClient } from '@/lib/auditClient'
+import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh'
 
 const supabase = createClient()
 
@@ -82,7 +83,7 @@ export default function SchedulesAssignPage() {
     const [usersRes, schedsRes, asgsRes, holsRes] = await Promise.all([
       supabase
         .from('profiles')
-        .select(`id, full_name, role, job_title, display_order, is_frozen`)
+        .select(`id, full_name, role, job_title, is_frozen, display_order`)
         .eq('company_id', companyId)
         .eq('is_deleted', false)
         .order('display_order', { ascending: true, nullsFirst: false })
@@ -107,6 +108,12 @@ export default function SchedulesAssignPage() {
         .lte('start_date', weekToISO)
         .gte('end_date', weekFromISO),
     ])
+
+    // Surface load errors instead of silently showing empty data
+    if (usersRes.error)  console.error('[assign] users load error:', usersRes.error)
+    if (schedsRes.error) console.error('[assign] schedules load error:', schedsRes.error)
+    if (asgsRes.error)   console.error('[assign] assignments load error:', asgsRes.error)
+    if (holsRes.error)   console.error('[assign] holidays load error:', holsRes.error)
 
     const filteredUsers = (usersRes.data || []).filter((p: any) => p.role !== 'superuser')
 
@@ -187,6 +194,30 @@ export default function SchedulesAssignPage() {
     const to = isoDate(addDays(weekStart, 6))
     loadAll(currentUser.company_id, from, to)
   }, [weekStart, currentUser?.company_id, loadAll])
+
+  // Realtime: refetch when relevant tables change for this company.
+  // CRITICAL: skip the refetch if the user has unsaved local edits — we
+  // don't want to silently overwrite their work-in-progress assignments.
+  // They'll see the new data after they save or navigate.
+  const reloadCurrentWeek = useCallback(() => {
+    if (!currentUser?.company_id) return
+    if (hasUnsaved) return
+    const from = isoDate(weekStart)
+    const to = isoDate(addDays(weekStart, 6))
+    loadAll(currentUser.company_id, from, to)
+  }, [currentUser?.company_id, weekStart, loadAll, hasUnsaved])
+
+  useRealtimeRefresh(
+    'schedules-assign-realtime',
+    [
+      { table: 'schedule_assignments', companyId: currentUser?.company_id || null },
+      { table: 'schedules',            companyId: currentUser?.company_id || null },
+      { table: 'profiles',             companyId: currentUser?.company_id || null },
+      { table: 'holiday_requests',     companyId: currentUser?.company_id || null },
+    ],
+    reloadCurrentWeek,
+    !!currentUser?.company_id,
+  )
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -456,33 +487,33 @@ export default function SchedulesAssignPage() {
   }
 
   return (
-    <div className="p-8 max-w-7xl">
+    <div className="p-6 max-w-[1600px]">
 
-      <div className="mb-6">
+      <div className="mb-4">
         <button
           onClick={() => router.push('/dashboard/schedules')}
-          className="text-sm text-slate-500 hover:text-slate-700 mb-3 inline-flex items-center gap-1"
+          className="text-xs text-slate-500 hover:text-slate-700 mb-2 inline-flex items-center gap-1"
         >
           ← Back to schedules
         </button>
         <div className="flex items-start justify-between gap-3 flex-wrap">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900 mb-1">Assign Schedules</h1>
-            <p className="text-sm text-slate-500">{company?.name}</p>
+            <h1 className="text-xl font-bold text-slate-900 mb-0.5">Assign Schedules</h1>
+            <p className="text-xs text-slate-500">{company?.name}</p>
           </div>
           <button
             onClick={() => router.push('/dashboard/schedules/calendar')}
-            className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 px-4 py-2 rounded-xl text-sm font-medium transition"
+            className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium transition"
           >
             📆 View Calendar
           </button>
         </div>
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-3">
 
         {message && (
-          <div className={`p-4 rounded-lg text-sm font-medium ${
+          <div className={`p-2.5 rounded-lg text-xs font-medium ${
             messageType === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
           }`}>
             {message}
@@ -490,35 +521,30 @@ export default function SchedulesAssignPage() {
         )}
 
         {unpublishedCount > 0 && (
-          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 flex items-center gap-3">
-            <span className="text-2xl">⚠️</span>
-            <div className="flex-1">
-              <p className="font-medium text-yellow-800">
-                {unpublishedCount} assignment{unpublishedCount === 1 ? '' : 's'} not yet published this week
-              </p>
-              <p className="text-xs text-yellow-700 mt-0.5">
-                Employees won&apos;t see these on the calendar until you click Publish.
-              </p>
-            </div>
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-2 flex items-center gap-2 text-xs">
+            <span className="text-base">⚠️</span>
+            <p className="text-yellow-800 flex-1">
+              <strong>{unpublishedCount}</strong> assignment{unpublishedCount === 1 ? '' : 's'} not yet published — employees won&apos;t see them until you click Publish.
+            </p>
           </div>
         )}
 
         {/* Toolbar */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-1">
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-2 flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-0.5">
             <button
               onClick={goPrevWeek}
-              className="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-lg text-sm font-medium"
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 w-7 h-7 rounded-md text-xs font-medium"
               title="Previous week"
             >
               ←
             </button>
-            <div className="px-3 py-1.5 font-medium text-slate-800 text-sm whitespace-nowrap">
+            <div className="px-2 py-1 font-medium text-slate-800 text-xs whitespace-nowrap">
               {weekLabel}
             </div>
             <button
               onClick={goNextWeek}
-              className="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-lg text-sm font-medium"
+              className="bg-slate-100 hover:bg-slate-200 text-slate-700 w-7 h-7 rounded-md text-xs font-medium"
               title="Next week"
             >
               →
@@ -527,7 +553,7 @@ export default function SchedulesAssignPage() {
 
           <button
             onClick={goToday}
-            className="bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 px-3 py-1.5 rounded-lg text-xs font-medium"
+            className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 px-2 py-1 rounded-md text-xs font-medium"
           >
             Today
           </button>
@@ -535,33 +561,33 @@ export default function SchedulesAssignPage() {
           <div className="flex-1" />
 
           {hasUnsaved && (
-            <span className="text-xs text-amber-700 font-medium">Unsaved changes</span>
+            <span className="text-xs text-amber-700 font-medium">Unsaved</span>
           )}
 
           <button
             onClick={handleSaveDraft}
             disabled={!hasUnsaved || saving || publishing}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium"
+            className="bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-2.5 py-1 rounded-md text-xs font-medium"
           >
-            {saving ? 'Saving...' : '💾 Save Draft'}
+            {saving ? 'Saving…' : '💾 Save'}
           </button>
 
           <button
             onClick={handlePublish}
             disabled={publishing || saving || (unpublishedCount === 0 && !hasUnsaved)}
-            className="bg-green-600 hover:bg-green-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium"
+            className="bg-green-600 hover:bg-green-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white px-2.5 py-1 rounded-md text-xs font-medium"
           >
-            {publishing ? 'Publishing...' : `✓ Publish${unpublishedCount > 0 ? ` (${unpublishedCount})` : ''}`}
+            {publishing ? 'Publishing…' : `✓ Publish${unpublishedCount > 0 ? ` (${unpublishedCount})` : ''}`}
           </button>
         </div>
 
         {/* Grid */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
               <thead className="bg-slate-50">
                 <tr>
-                  <th className="text-left px-3 py-3 text-xs font-semibold text-slate-600 uppercase border-b border-slate-200 sticky left-0 bg-slate-50 z-10 min-w-[220px]">
+                  <th className="text-left px-2 py-1.5 text-[10px] font-semibold text-slate-600 uppercase border-b border-slate-200 sticky left-0 bg-slate-50 z-10 min-w-[160px]">
                     Schedule
                   </th>
                   {weekDates.map((d, i) => {
@@ -569,12 +595,14 @@ export default function SchedulesAssignPage() {
                     return (
                       <th
                         key={i}
-                        className={`text-left px-2 py-3 text-xs font-semibold uppercase border-b border-slate-200 min-w-[160px] ${
+                        className={`text-center px-1.5 py-1.5 text-[10px] font-semibold uppercase border-b border-slate-200 min-w-[110px] ${
                           isToday ? 'bg-blue-50 text-blue-800' : 'text-slate-600'
                         }`}
                       >
-                        <div>{d.toLocaleDateString('en-GB', { weekday: 'short' })}</div>
-                        <div className="text-sm font-bold normal-case mt-0.5">{formatDateShort(d)}</div>
+                        <div className="flex items-baseline justify-center gap-1">
+                          <span>{d.toLocaleDateString('en-GB', { weekday: 'short' })}</span>
+                          <span className="text-xs font-bold normal-case">{formatDateShort(d)}</span>
+                        </div>
                       </th>
                     )
                   })}
@@ -583,21 +611,21 @@ export default function SchedulesAssignPage() {
               <tbody>
                 {visibleSchedules.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="text-center text-slate-400 py-12 text-sm">
+                    <td colSpan={8} className="text-center text-slate-400 py-8 text-xs">
                       No active schedules running this week.
                     </td>
                   </tr>
                 )}
                 {visibleSchedules.map((s) => (
                   <tr key={s.id} className="border-b border-slate-100 last:border-b-0">
-                    <td className="px-3 py-3 align-top sticky left-0 bg-white z-10 border-r border-slate-100">
-                      <div className="flex items-start gap-2">
-                        <span className="text-lg flex-shrink-0">
+                    <td className="px-2 py-1.5 align-top sticky left-0 bg-white z-10 border-r border-slate-100">
+                      <div className="flex items-start gap-1.5">
+                        <span className="text-sm flex-shrink-0 leading-none mt-0.5">
                           {s.schedule_type === 'recurring' ? '🔁' : '📅'}
                         </span>
                         <div className="min-w-0">
-                          <p className="font-semibold text-slate-800 text-sm leading-tight">{s.name}</p>
-                          <p className="text-[11px] text-slate-500 mt-0.5">
+                          <p className="font-semibold text-slate-800 text-xs leading-tight">{s.name}</p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">
                             {formatTime(s.start_time)}–{formatTime(s.end_time)}
                           </p>
                         </div>
@@ -622,9 +650,9 @@ export default function SchedulesAssignPage() {
                         return (
                           <td
                             key={i}
-                            className="px-2 py-3 align-top text-center bg-slate-50 border-r border-slate-100 last:border-r-0"
+                            className="px-1 py-1 align-top text-center bg-slate-50 border-r border-slate-100 last:border-r-0"
                           >
-                            <span className="text-slate-300 text-xs">—</span>
+                            <span className="text-slate-300 text-[10px]">—</span>
                           </td>
                         )
                       }
@@ -643,14 +671,14 @@ export default function SchedulesAssignPage() {
                       return (
                         <td
                           key={i}
-                          className={`px-2 py-2 align-top text-xs border-r border-slate-100 last:border-r-0 ${
+                          className={`px-1 py-1 align-top text-xs border-r border-slate-100 last:border-r-0 ${
                             isToday ? 'bg-blue-50/30' : ''
                           } ${yellowHighlight ? 'bg-yellow-100/70' : softYellow ? 'bg-yellow-50/70' : amberTint ? 'bg-amber-50/60' : ''}`}
                         >
                           <select
                             value={value}
                             onChange={(e) => setCellUser(s, d, e.target.value)}
-                            className={`w-full border rounded px-2 py-1 text-xs bg-white ${
+                            className={`w-full border rounded px-1.5 py-0.5 text-[11px] bg-white ${
                               !currentUserStillAvailable
                                 ? 'border-red-400 text-red-700'
                                 : yellowHighlight
@@ -694,14 +722,12 @@ export default function SchedulesAssignPage() {
         </div>
 
         {/* Help text */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-3 text-xs text-slate-600 space-y-1">
-          <p>📋 <strong>How it works:</strong> Pick a user from each dropdown. Days where the schedule doesn&apos;t run show &quot;—&quot;. Users on holiday, day-off, or with an early finish before the schedule starts are hidden.</p>
-          <p>💾 <strong>Save Draft</strong> stores changes silently. <strong>Publish</strong> makes them live for employees on the calendar.</p>
-          <p className="flex flex-wrap gap-3 pt-1">
-            <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 bg-amber-100 border border-amber-300 rounded" /> Draft</span>
-            <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 bg-yellow-200 border border-yellow-500 rounded" /> Unpublished change</span>
-            <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 bg-yellow-50 border border-yellow-300 rounded" /> Reassigned (since first added)</span>
-          </p>
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 px-3 py-2 text-[11px] text-slate-600 flex flex-wrap items-center gap-x-4 gap-y-1">
+          <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2 h-2 bg-amber-100 border border-amber-300 rounded-sm" /> Draft</span>
+          <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2 h-2 bg-yellow-200 border border-yellow-500 rounded-sm" /> Unpublished change</span>
+          <span className="inline-flex items-center gap-1.5"><span className="inline-block w-2 h-2 bg-yellow-50 border border-yellow-300 rounded-sm" /> Reassigned</span>
+          <span className="text-slate-400">•</span>
+          <span><strong>Save</strong> stores silently. <strong>Publish</strong> makes live for employees.</span>
         </div>
       </div>
     </div>
