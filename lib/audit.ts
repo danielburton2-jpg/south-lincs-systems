@@ -7,6 +7,13 @@
  * Verbose mode for now — every call logs to the terminal so we can
  * confirm audit is firing. Once trust is established that audit is
  * working, the [audit] log lines can be quieted.
+ *
+ * NOTE on types: Supabase's TS client types tables as `never` when no
+ * generated database types are configured. Without that, .insert() on
+ * any table fails type-checking. We pin a local row type and cast the
+ * client through `any` so this single helper compiles cleanly. If/when
+ * we generate full DB types via `supabase gen types`, this can revert
+ * to a fully-typed call.
  */
 
 import { createClient } from '@supabase/supabase-js'
@@ -20,6 +27,18 @@ type AuditPayload = {
   entity_id?: string
   details?: Record<string, any>
   ip_address?: string
+}
+
+// Shape of an audit_logs row insert. Matches the table schema.
+type AuditLogRow = {
+  user_id: string | null
+  user_email: string | null
+  user_role: string | null
+  action: string
+  entity: string | null
+  entity_id: string | null
+  details: Record<string, any> | null
+  ip_address: string | null
 }
 
 let cached: ReturnType<typeof createClient> | null = null
@@ -37,7 +56,7 @@ function svc() {
 export async function logAudit(p: AuditPayload): Promise<void> {
   console.log('[audit]', p.action, '— entity:', p.entity ?? '-', 'user:', p.user_email ?? '-')
   try {
-    const result = await svc().from('audit_logs').insert({
+    const row: AuditLogRow = {
       user_id: p.user_id ?? null,
       user_email: p.user_email ?? null,
       user_role: p.user_role ?? null,
@@ -46,7 +65,11 @@ export async function logAudit(p: AuditPayload): Promise<void> {
       entity_id: p.entity_id ?? null,
       details: p.details ?? null,
       ip_address: p.ip_address ?? null,
-    })
+    }
+    // Cast through `any` because the Supabase client has no generated
+    // schema types here — without that, every `.from()` returns `never`
+    // and `.insert()` fails type-checking.
+    const result = await (svc().from('audit_logs') as any).insert(row)
     if (result.error) {
       console.error('[audit] INSERT FAILED:', result.error.message)
     }
