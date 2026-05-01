@@ -35,6 +35,7 @@ export default function EditCompanyByIdPage() {
           contact_email: c.contact_email,
           notes: c.notes,
           enabled_feature_ids: data.enabled_feature_ids || [],
+          vehicle_types: c.vehicle_types || [],
         })
       } catch (e: any) {
         if (!cancelled) setError(e.message || 'Failed to load')

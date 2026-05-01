@@ -24,6 +24,7 @@ export async function POST(request: Request) {
       contact_email,
       notes,
       enabled_feature_ids,
+      vehicle_types,
     } = body
 
     if (!name || typeof name !== 'string' || !name.trim()) {
@@ -52,6 +53,7 @@ export async function POST(request: Request) {
         contact_phone: contact_phone || null,
         contact_email: contact_email || null,
         notes: notes || null,
+        vehicle_types: Array.isArray(vehicle_types) ? vehicle_types : null,
       })
       .select()
       .single()

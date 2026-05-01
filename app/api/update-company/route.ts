@@ -26,6 +26,7 @@ export async function POST(request: Request) {
       contact_email,
       notes,
       enabled_feature_ids,
+      vehicle_types,
     } = body
 
     if (!id) {
@@ -50,6 +51,7 @@ export async function POST(request: Request) {
     if (contact_phone !== undefined)     updatePayload.contact_phone     = contact_phone || null
     if (contact_email !== undefined)     updatePayload.contact_email     = contact_email || null
     if (notes !== undefined)             updatePayload.notes             = notes || null
+    if (vehicle_types !== undefined)     updatePayload.vehicle_types     = Array.isArray(vehicle_types) ? vehicle_types : null
 
     // Recompute end_date if either of its inputs were sent.
     // To do that we need the current values from the DB for whichever

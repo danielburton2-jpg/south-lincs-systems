@@ -57,6 +57,11 @@ export default async function DashboardLayout({
   let schedulesCanViewAll = profile.role === 'admin'
   let hasSchedulesAccess = profile.role === 'admin'
 
+  // Vehicles: admin-only feature for now. We just need to know whether
+  // the company has Vehicle Checks enabled at the company level — there's
+  // no per-user tier yet because the page is admin-only.
+  let hasVehiclesAccess = false
+
   if (profile.role !== 'admin') {
     // Look up Holidays
     const { data: holidaysFeature } = await supabase
@@ -86,6 +91,21 @@ export default async function DashboardLayout({
       schedulesCanViewAll = !!uf?.can_view_all
       hasSchedulesAccess = !!(uf?.is_enabled || uf?.can_view || uf?.can_edit)
     }
+  } else {
+    // For admins, check whether Vehicle Checks is enabled for the company.
+    if (profile.company_id) {
+      const { data: vehiclesFeature } = await supabase
+        .from('features').select('id').eq('slug', 'vehicle_checks').single()
+      if (vehiclesFeature) {
+        const { data: cf } = await supabase
+          .from('company_features')
+          .select('is_enabled')
+          .eq('company_id', profile.company_id)
+          .eq('feature_id', vehiclesFeature.id)
+          .maybeSingle()
+        hasVehiclesAccess = !!cf?.is_enabled
+      }
+    }
   }
 
   return (
@@ -102,6 +122,7 @@ export default async function DashboardLayout({
         schedulesCanEdit={schedulesCanEdit}
         schedulesCanViewAll={schedulesCanViewAll}
         hasSchedulesAccess={hasSchedulesAccess}
+        hasVehiclesAccess={hasVehiclesAccess}
       />
       <main className="flex-1 overflow-x-auto">
         {children}
