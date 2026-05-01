@@ -199,6 +199,12 @@ export default function NewVehicleCheckPickerPage() {
             template_item_id: it.id,
             category: it.category,
             item_text: it.item_text,
+            // Snapshot the question shape so the [id] page renders
+            // the right input control (pass/fail vs toggle vs text vs
+            // number) and so historic checks survive template edits.
+            answer_type: it.answer_type || 'pass_fail',
+            expected_answer: it.expected_answer || null,
+            unit: it.unit || null,
             result: null,
             display_order: it.display_order,
           }))

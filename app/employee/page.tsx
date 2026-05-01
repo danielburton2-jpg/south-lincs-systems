@@ -262,7 +262,16 @@ export default function EmployeeHome() {
                 return (
                   <button
                     key={f.id}
-                    onClick={() => router.push(`/employee/${f.slug.replace(/_/g, '-')}`)}
+                    onClick={() => {
+                      // Most slugs map cleanly to URLs (slug.replace(/_/g, '-')),
+                      // but some have a different page name for historical
+                      // reasons. Hard-code overrides here.
+                      const SLUG_TO_ROUTE: Record<string, string> = {
+                        services_mot: 'services',  // page lives at /employee/services not /services-mot
+                      }
+                      const segment = SLUG_TO_ROUTE[f.slug] || f.slug.replace(/_/g, '-')
+                      router.push(`/employee/${segment}`)
+                    }}
                     className={`relative ${t.bg} ring-1 ${t.ring} hover:ring-2 active:scale-[0.98] rounded-2xl p-4 text-left transition shadow-sm`}
                   >
                     <div className={`w-12 h-12 rounded-xl ${t.iconBg} flex items-center justify-center mb-3 text-2xl`}>
