@@ -54,6 +54,7 @@ export default async function DashboardLayout({
   let holidaysCanEdit = profile.role === 'admin'
   let hasHolidayAccess = profile.role === 'admin'
   let schedulesCanEdit = profile.role === 'admin'
+  let schedulesCanViewAll = profile.role === 'admin'
   let hasSchedulesAccess = profile.role === 'admin'
 
   if (profile.role !== 'admin') {
@@ -77,12 +78,13 @@ export default async function DashboardLayout({
     if (schedulesFeature) {
       const { data: uf } = await supabase
         .from('user_features')
-        .select('is_enabled, can_view, can_edit')
+        .select('is_enabled, can_view, can_view_all, can_edit')
         .eq('user_id', user.id)
         .eq('feature_id', schedulesFeature.id)
         .maybeSingle()
       schedulesCanEdit = !!uf?.can_edit
-      hasSchedulesAccess = !!(uf?.can_view || uf?.can_edit || uf?.is_enabled)
+      schedulesCanViewAll = !!uf?.can_view_all
+      hasSchedulesAccess = !!(uf?.is_enabled || uf?.can_view || uf?.can_edit)
     }
   }
 
@@ -98,6 +100,7 @@ export default async function DashboardLayout({
         holidaysCanEdit={holidaysCanEdit}
         hasHolidayAccess={hasHolidayAccess}
         schedulesCanEdit={schedulesCanEdit}
+        schedulesCanViewAll={schedulesCanViewAll}
         hasSchedulesAccess={hasSchedulesAccess}
       />
       <main className="flex-1 overflow-x-auto">

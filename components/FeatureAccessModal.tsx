@@ -7,12 +7,20 @@
  * Layout: a list of bordered "feature boxes". Each box's title is the
  * feature name. The contents depend on the feature:
  *
- *   • holidays  — three radios: Off / Read / Edit
- *                 Off  = no access (no tile, can't open page)
- *                 Read = can submit own requests, see own balance
- *                 Edit = can also approve/reject, see calendar, see
- *                        Manage Employee tools (admin gates stay)
- *                        Edit also unlocks reports when those ship.
+ *   • holidays   — three radios: Off / Read / Edit
+ *                  Off  = no access (no tile, can't open page)
+ *                  Read = can submit own requests, see own balance
+ *                  Edit = can also approve/reject, see calendar, see
+ *                         Manage Employee tools (admin gates stay)
+ *                         Edit also unlocks reports when those ship.
+ *
+ *   • schedules  — Enabled checkbox + two granular sub-toggles:
+ *                  Enabled         = sees Schedules in sidebar, sees
+ *                                    their own assignments
+ *                  View everyone   = unlocks the company-wide calendar
+ *                  Assign          = unlocks the Assign page + Reports
+ *                  All three are independent. Schedule create/edit
+ *                  remains admin-only regardless.
  *
  *   • all other features — single "Enabled" checkbox for now. Other
  *     features will get their own granular options later when the
@@ -39,6 +47,7 @@ export type UserFeatureRow = {
   feature_id: string
   is_enabled: boolean
   can_view?: boolean
+  can_view_all?: boolean
   can_edit?: boolean
   can_view_reports?: boolean
 }
@@ -55,6 +64,7 @@ type Props = {
 }
 
 const HOLIDAYS_SLUG = 'holidays'
+const SCHEDULES_SLUG = 'schedules'
 
 /**
  * Convert a UserFeatureRow into a level for the holidays radio.
@@ -72,13 +82,13 @@ function levelFor(row: UserFeatureRow | undefined): FeatureLevel {
  */
 function rowFromLevel(featureId: string, level: FeatureLevel): UserFeatureRow {
   if (level === 'off') {
-    return { feature_id: featureId, is_enabled: false, can_view: false, can_edit: false, can_view_reports: false }
+    return { feature_id: featureId, is_enabled: false, can_view: false, can_view_all: false, can_edit: false, can_view_reports: false }
   }
   if (level === 'read') {
-    return { feature_id: featureId, is_enabled: true, can_view: true, can_edit: false, can_view_reports: false }
+    return { feature_id: featureId, is_enabled: true, can_view: true, can_view_all: false, can_edit: false, can_view_reports: false }
   }
-  // edit — implies view, and (later) reports
-  return { feature_id: featureId, is_enabled: true, can_view: true, can_edit: true, can_view_reports: true }
+  // edit — implies view, view_all, and reports
+  return { feature_id: featureId, is_enabled: true, can_view: true, can_view_all: true, can_edit: true, can_view_reports: true }
 }
 
 /**
@@ -89,6 +99,7 @@ function rowFromChecked(featureId: string, checked: boolean): UserFeatureRow {
     feature_id: featureId,
     is_enabled: checked,
     can_view: checked,
+    can_view_all: false,
     can_edit: checked,
     can_view_reports: false,
   }
@@ -108,7 +119,7 @@ export default function FeatureAccessModal({
       const existing = initial.find(r => r.feature_id === f.id)
       next[f.id] = existing
         ? { ...existing }
-        : { feature_id: f.id, is_enabled: false, can_view: false, can_edit: false, can_view_reports: false }
+        : { feature_id: f.id, is_enabled: false, can_view: false, can_view_all: false, can_edit: false, can_view_reports: false }
     }
     setWorking(next)
   }, [open, features, initial])
@@ -121,6 +132,59 @@ export default function FeatureAccessModal({
 
   const setEnabled = (featureId: string, checked: boolean) => {
     setWorking(prev => ({ ...prev, [featureId]: rowFromChecked(featureId, checked) }))
+  }
+
+  // Schedules has three independent toggles. Setting "enabled" on
+  // initialises the row with view_all=false and edit=false. Toggling
+  // view_all / assign just flips the corresponding flag.
+  const setSchedulesEnabled = (featureId: string, checked: boolean) => {
+    setWorking(prev => {
+      const existing = prev[featureId] || {
+        feature_id: featureId, is_enabled: false, can_view: false, can_view_all: false, can_edit: false,
+      }
+      if (!checked) {
+        // Disabling clears everything
+        return { ...prev, [featureId]: {
+          feature_id: featureId,
+          is_enabled: false,
+          can_view: false,
+          can_view_all: false,
+          can_edit: false,
+          can_view_reports: false,
+        } }
+      }
+      // Enabling preserves the granular flags as-is. They only get
+      // touched by their own checkboxes.
+      return { ...prev, [featureId]: {
+        ...existing,
+        is_enabled: true,
+        can_view: true,            // implicit: enabled means view-own
+        can_view_reports: !!existing.can_edit,  // reports tracks assign
+      } }
+    })
+  }
+
+  const setSchedulesViewAll = (featureId: string, checked: boolean) => {
+    setWorking(prev => {
+      const existing = prev[featureId]
+      if (!existing) return prev
+      return { ...prev, [featureId]: {
+        ...existing,
+        can_view_all: checked,
+      } }
+    })
+  }
+
+  const setSchedulesAssign = (featureId: string, checked: boolean) => {
+    setWorking(prev => {
+      const existing = prev[featureId]
+      if (!existing) return prev
+      return { ...prev, [featureId]: {
+        ...existing,
+        can_edit: checked,
+        can_view_reports: checked,    // reports tracks assign
+      } }
+    })
   }
 
   const handleSave = () => {
@@ -191,6 +255,73 @@ export default function FeatureAccessModal({
                 )
               }
 
+              if (f.slug === SCHEDULES_SLUG) {
+                const enabled = !!row.is_enabled
+                const viewAll = !!row.can_view_all
+                const canAssign = !!row.can_edit
+                const showAssignWarning = canAssign && !viewAll
+                return (
+                  <div key={f.id} className="border border-slate-200 rounded-xl p-4">
+                    <h3 className="font-semibold text-slate-800 mb-1">{f.name}</h3>
+                    {f.description && <p className="text-xs text-slate-500 mb-3">{f.description}</p>}
+
+                    {/* Master enable */}
+                    <label className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition border mb-2 ${
+                      enabled ? 'border-blue-400 bg-blue-50' : 'border-slate-200'
+                    }`}>
+                      <input type="checkbox" className="w-4 h-4 mt-0.5"
+                        checked={enabled}
+                        onChange={e => setSchedulesEnabled(f.id, e.target.checked)} />
+                      <div className="text-sm">
+                        <p className="font-medium text-slate-800">Enabled</p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          User sees Schedules in the sidebar and can view their own assignments.
+                        </p>
+                      </div>
+                    </label>
+
+                    {/* Sub-toggles only meaningful when enabled */}
+                    <div className={`pl-6 space-y-2 ${enabled ? '' : 'opacity-40 pointer-events-none'}`}>
+                      <label className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition border ${
+                        viewAll ? 'border-blue-400 bg-blue-50' : 'border-slate-200'
+                      }`}>
+                        <input type="checkbox" className="w-4 h-4 mt-0.5"
+                          checked={viewAll}
+                          disabled={!enabled}
+                          onChange={e => setSchedulesViewAll(f.id, e.target.checked)} />
+                        <div className="text-sm">
+                          <p className="font-medium text-slate-800">View everyone&apos;s calendar</p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Unlocks the company-wide calendar showing all employees&apos; assignments.
+                          </p>
+                        </div>
+                      </label>
+
+                      <label className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition border ${
+                        canAssign ? 'border-blue-400 bg-blue-50' : 'border-slate-200'
+                      }`}>
+                        <input type="checkbox" className="w-4 h-4 mt-0.5"
+                          checked={canAssign}
+                          disabled={!enabled}
+                          onChange={e => setSchedulesAssign(f.id, e.target.checked)} />
+                        <div className="text-sm">
+                          <p className="font-medium text-slate-800">Assign schedules</p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            Unlocks the Assign page (drag people onto schedules) and Reports. Creating, editing, and deleting schedules remains admin-only.
+                          </p>
+                        </div>
+                      </label>
+
+                      {showAssignWarning && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-xs text-amber-800">
+                          ⚠ This user can assign people to schedules but can&apos;t see the company-wide calendar to verify their work. Consider also ticking &quot;View everyone&apos;s calendar&quot; above.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              }
+
               // Other features — single "Enabled" checkbox for now
               return (
                 <div key={f.id} className="border border-slate-200 rounded-xl p-4">
@@ -215,6 +346,11 @@ export default function FeatureAccessModal({
           )}
         </div>
 
+        <div className="px-6 py-3 border-t border-slate-200 bg-slate-50">
+          <p className="text-xs text-slate-500">
+            Click <strong>Done</strong> below, then <strong>Save Changes</strong> on the user form to commit these settings to the database.
+          </p>
+        </div>
         <div className="px-6 py-4 border-t border-slate-200 flex gap-3">
           <button onClick={onClose}
             className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-2.5 rounded-lg">
@@ -222,7 +358,7 @@ export default function FeatureAccessModal({
           </button>
           <button onClick={handleSave}
             className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg">
-            Apply
+            Done
           </button>
         </div>
       </div>

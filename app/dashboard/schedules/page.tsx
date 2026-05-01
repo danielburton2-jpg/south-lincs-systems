@@ -35,6 +35,9 @@ const isCompleted = (s: any) => {
 
 export default function SchedulesPage() {
   const [currentUser, setCurrentUser] = useState<any>(null)
+  // Permission flags. Admins implicitly have everything.
+  const [canViewAll, setCanViewAll] = useState(false)
+  const [canAssign, setCanAssign] = useState(false)
   const [company, setCompany] = useState<any>(null)
   const [schedules, setSchedules] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -80,18 +83,30 @@ export default function SchedulesPage() {
     }
 
     if (profile.role !== 'admin') {
-      const { data: userFeats } = await supabase
-        .from('user_features')
-        .select('is_enabled, features (name)')
-        .eq('user_id', user.id)
-        .eq('is_enabled', true)
-      const userHasSchedules = (userFeats as any[])?.some(
-        (uf: any) => uf.features?.name === 'Schedules'
-      )
-      if (!userHasSchedules) {
+      const { data: schedulesFeature } = await supabase
+        .from('features').select('id').eq('slug', 'schedules').single()
+
+      let isEnabled = false
+      if (schedulesFeature) {
+        const { data: uf } = await supabase
+          .from('user_features')
+          .select('is_enabled, can_view_all, can_edit')
+          .eq('user_id', user.id)
+          .eq('feature_id', schedulesFeature.id)
+          .maybeSingle()
+        isEnabled = !!uf?.is_enabled
+        setCanViewAll(!!uf?.can_view_all)
+        setCanAssign(!!uf?.can_edit)
+      }
+
+      if (!isEnabled) {
         router.push('/dashboard')
         return
       }
+    } else {
+      // Admin gets everything
+      setCanViewAll(true)
+      setCanAssign(true)
     }
 
     const { data: schedulesData } = await supabase
@@ -178,7 +193,7 @@ export default function SchedulesPage() {
             >
               📆 Calendar
             </button>
-            {(isAdmin || isManager) && (
+            {(isAdmin || canAssign) && (
               <button
                 onClick={() => router.push('/dashboard/schedules/assign')}
                 className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 px-4 py-2 rounded-xl text-sm font-medium transition"
@@ -186,12 +201,14 @@ export default function SchedulesPage() {
                 ✏️ Assign
               </button>
             )}
-            <button
-              onClick={() => router.push('/dashboard/schedules/reports')}
-              className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 px-4 py-2 rounded-xl text-sm font-medium transition"
-            >
-              📊 Reports
-            </button>
+            {(isAdmin || canAssign) && (
+              <button
+                onClick={() => router.push('/dashboard/schedules/reports')}
+                className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 px-4 py-2 rounded-xl text-sm font-medium transition"
+              >
+                📊 Reports
+              </button>
+            )}
             {canManage && (
               <button
                 onClick={() => router.push('/dashboard/schedules/create')}

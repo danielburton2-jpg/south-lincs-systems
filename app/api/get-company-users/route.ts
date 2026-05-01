@@ -39,7 +39,7 @@ export async function POST(request: Request) {
         const [{ data: features }, { data: titles }] = await Promise.all([
           supabase
             .from('user_features')
-            .select('feature_id, is_enabled, can_view, can_edit, can_view_reports')
+            .select('feature_id, is_enabled, can_view, can_view_all, can_edit, can_view_reports')
             .eq('user_id', u.id),
           supabase
             .from('manager_job_titles')

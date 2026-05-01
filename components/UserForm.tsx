@@ -121,6 +121,9 @@ export default function UserForm({ mode, initial, userId }: Props) {
   )
   const [userFeatures, setUserFeatures] = useState<UserFeatureRow[]>(initial?.user_features || [])
   const [showFeatureModal, setShowFeatureModal] = useState(false)
+  // True after admin clicks Apply on the modal — until they click Save Changes.
+  // Surfaces a banner to remind admins the feature changes aren't saved yet.
+  const [featureChangesPending, setFeatureChangesPending] = useState(false)
   const [managerTitles, setManagerTitlesState] = useState<string[]>(initial?.manager_titles || [])
   const [extraFields, setExtraFields] = useState<Record<string, any>>(initial?.extra_fields || {})
 
@@ -245,13 +248,13 @@ export default function UserForm({ mode, initial, userId }: Props) {
       // Admins always get full access
       return enabledFeatures.map(f => ({
         feature_id: f.id, is_enabled: true,
-        can_view: true, can_edit: true, can_view_reports: true,
+        can_view: true, can_view_all: true, can_edit: true, can_view_reports: true,
       }))
     }
     return enabledFeatures.map(f => {
       const existing = userFeatures.find(r => r.feature_id === f.id)
       if (existing) return existing
-      return { feature_id: f.id, is_enabled: false, can_view: false, can_edit: false, can_view_reports: false }
+      return { feature_id: f.id, is_enabled: false, can_view: false, can_view_all: false, can_edit: false, can_view_reports: false }
     })
   }
 
@@ -297,6 +300,7 @@ export default function UserForm({ mode, initial, userId }: Props) {
           showMessage('Error creating user: ' + (data.error || 'unknown'), 'error')
           setSubmitting(false); return
         }
+        setFeatureChangesPending(false)
         router.push('/dashboard/users')
       } else {
         const res = await fetch('/api/update-user', {
@@ -324,6 +328,7 @@ export default function UserForm({ mode, initial, userId }: Props) {
           showMessage('Error updating user: ' + (data.error || 'unknown'), 'error')
           setSubmitting(false); return
         }
+        setFeatureChangesPending(false)
         router.push('/dashboard/users')
       }
     } catch (err: any) {
@@ -555,6 +560,12 @@ export default function UserForm({ mode, initial, userId }: Props) {
           </div>
         )}
 
+        {featureChangesPending && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+            <strong>Feature access changes aren&apos;t saved yet.</strong> Click <strong>Save Changes</strong> below to commit them to the database.
+          </div>
+        )}
+
         <div className="flex gap-3">
           <button type="submit" disabled={submitting}
             className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-lg disabled:opacity-50">
@@ -578,6 +589,7 @@ export default function UserForm({ mode, initial, userId }: Props) {
         onClose={() => setShowFeatureModal(false)}
         onSave={(rows) => {
           setUserFeatures(rows)
+          setFeatureChangesPending(true)
           setShowFeatureModal(false)
         }}
       />

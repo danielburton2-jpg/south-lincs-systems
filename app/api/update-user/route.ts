@@ -6,10 +6,15 @@ import { logAudit } from '@/lib/audit'
  * POST /api/update-user
  *
  * Multi-purpose: full edit, freeze toggle, soft delete.
- * Now also accepts extra_fields (jsonb) for HR custom field values.
  *
- * Action flags (toggle_freeze, delete) take priority — if either is set,
- * other fields are ignored.
+ * Body shapes:
+ *   • Freeze:       { user_id, toggle_freeze: bool, actor_*, company_name }
+ *   • Soft delete:  { user_id, delete: true, actor_*, company_name }
+ *   • Full edit:    { user_id, full_name, email, role, ...all the fields, actor_*, company_name }
+ *
+ * Action flags (toggle_freeze, delete) take priority — if either is
+ * set, the request is treated as a state-change-only and the other
+ * fields are ignored.
  */
 export async function POST(request: Request) {
   try {
@@ -27,8 +32,7 @@ export async function POST(request: Request) {
       working_days,
       user_features,
       manager_titles,
-      extra_fields,
-      // Action flags
+      // Action-only flags
       toggle_freeze,
       delete: shouldDelete,
       // Audit
@@ -56,9 +60,12 @@ export async function POST(request: Request) {
       if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
       await logAudit({
-        user_id: actor_id, user_email: actor_email, user_role: actor_role,
+        user_id: actor_id,
+        user_email: actor_email,
+        user_role: actor_role,
         action: toggle_freeze ? 'FREEZE_USER' : 'UNFREEZE_USER',
-        entity: 'profile', entity_id: user_id,
+        entity: 'profile',
+        entity_id: user_id,
         details: { company_name },
         ip_address: request.headers.get('x-forwarded-for') || undefined,
       })
@@ -75,9 +82,12 @@ export async function POST(request: Request) {
       if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
       await logAudit({
-        user_id: actor_id, user_email: actor_email, user_role: actor_role,
+        user_id: actor_id,
+        user_email: actor_email,
+        user_role: actor_role,
         action: 'SOFT_DELETE_USER',
-        entity: 'profile', entity_id: user_id,
+        entity: 'profile',
+        entity_id: user_id,
         details: { company_name },
         ip_address: request.headers.get('x-forwarded-for') || undefined,
       })
@@ -96,11 +106,6 @@ export async function POST(request: Request) {
     if (holiday_entitlement !== undefined)   profilePayload.holiday_entitlement = holiday_entitlement ?? null
     if (full_year_entitlement !== undefined) profilePayload.full_year_entitlement = full_year_entitlement ?? null
     if (working_days !== undefined)          profilePayload.working_days = working_days || null
-    // HR custom fields — only set if provided. NOT NULL column so coerce
-    // anything other than an object into {}.
-    if (extra_fields !== undefined) {
-      profilePayload.extra_fields = (extra_fields && typeof extra_fields === 'object') ? extra_fields : {}
-    }
 
     if (Object.keys(profilePayload).length > 0) {
       const { error } = await supabase
@@ -110,6 +115,7 @@ export async function POST(request: Request) {
       if (error) return NextResponse.json({ error: error.message }, { status: 400 })
     }
 
+    // If email changed, also update auth.users
     if (email) {
       try {
         await supabase.auth.admin.updateUserById(user_id, { email })
@@ -118,6 +124,7 @@ export async function POST(request: Request) {
       }
     }
 
+    // Sync user_features (delete-and-insert)
     if (Array.isArray(user_features)) {
       await supabase.from('user_features').delete().eq('user_id', user_id)
       if (user_features.length > 0) {
@@ -126,6 +133,7 @@ export async function POST(request: Request) {
           feature_id: f.feature_id,
           is_enabled: !!f.is_enabled,
           can_view: f.can_view ?? !!f.is_enabled,
+          can_view_all: f.can_view_all ?? false,
           can_edit: f.can_edit ?? !!f.is_enabled,
           can_view_reports: f.can_view_reports ?? false,
         }))
@@ -134,6 +142,7 @@ export async function POST(request: Request) {
       }
     }
 
+    // Sync manager_job_titles (delete-and-insert)
     if (Array.isArray(manager_titles)) {
       await supabase.from('manager_job_titles').delete().eq('manager_id', user_id)
       if (manager_titles.length > 0) {
@@ -147,9 +156,12 @@ export async function POST(request: Request) {
     }
 
     await logAudit({
-      user_id: actor_id, user_email: actor_email, user_role: actor_role,
+      user_id: actor_id,
+      user_email: actor_email,
+      user_role: actor_role,
       action: 'UPDATE_USER',
-      entity: 'profile', entity_id: user_id,
+      entity: 'profile',
+      entity_id: user_id,
       details: { company_name, email, role },
       ip_address: request.headers.get('x-forwarded-for') || undefined,
     })

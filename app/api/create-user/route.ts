@@ -6,8 +6,7 @@ import { logAudit } from '@/lib/audit'
  * POST /api/create-user
  *
  * Creates an auth user, a profile, plus user_features rows and
- * manager_job_titles rows if applicable. Now also accepts extra_fields
- * (jsonb) for HR custom field values.
+ * manager_job_titles rows if applicable.
  *
  * If the auth user is created but the profile insert fails, we roll
  * back the auth user to avoid orphans.
@@ -29,7 +28,6 @@ export async function POST(request: Request) {
       working_days,
       user_features,
       manager_titles,
-      extra_fields,
       actor_id,
       actor_email,
       actor_role,
@@ -47,6 +45,7 @@ export async function POST(request: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
     )
 
+    // 1. Create the auth user
     const { data: created, error: createErr } = await supabase.auth.admin.createUser({
       email: email.trim(),
       password,
@@ -59,6 +58,8 @@ export async function POST(request: Request) {
       )
     }
 
+    // 2. Insert the profile (the on_auth_user_created trigger created
+    //    a default profile, so this is an UPDATE not an INSERT).
     const profileFields: any = {
       email: email.trim(),
       full_name,
@@ -69,11 +70,9 @@ export async function POST(request: Request) {
       employment_start_date: employment_start_date || null,
       holiday_entitlement: holiday_entitlement ?? null,
       full_year_entitlement: full_year_entitlement ?? null,
-      working_days: working_days || undefined,
-      // HR custom fields — stored as jsonb. Default to {} so the column
-      // (which is NOT NULL) gets a valid value.
-      extra_fields: (extra_fields && typeof extra_fields === 'object') ? extra_fields : {},
+      working_days: working_days || undefined, // keeps DB default if not provided
     }
+    // Strip undefined so DB defaults apply
     Object.keys(profileFields).forEach((k) => {
       if (profileFields[k] === undefined) delete profileFields[k]
     })
@@ -84,16 +83,19 @@ export async function POST(request: Request) {
       .eq('id', created.user.id)
 
     if (profileErr) {
+      // Roll back the auth user — don't leave orphans
       await supabase.auth.admin.deleteUser(created.user.id).catch(() => {})
       return NextResponse.json({ error: profileErr.message }, { status: 400 })
     }
 
+    // 3. Insert user_features rows
     if (Array.isArray(user_features) && user_features.length > 0) {
       const rows = user_features.map((f: any) => ({
         user_id: created.user.id,
         feature_id: f.feature_id,
         is_enabled: !!f.is_enabled,
         can_view: f.can_view ?? !!f.is_enabled,
+        can_view_all: f.can_view_all ?? false,
         can_edit: f.can_edit ?? !!f.is_enabled,
         can_view_reports: f.can_view_reports ?? false,
       }))
@@ -101,6 +103,7 @@ export async function POST(request: Request) {
       if (ufErr) console.error('user_features insert failed:', ufErr)
     }
 
+    // 4. Insert manager_job_titles rows
     if (Array.isArray(manager_titles) && manager_titles.length > 0) {
       const rows = manager_titles.map((title: string) => ({
         manager_id: created.user.id,

@@ -37,6 +37,7 @@ type Props = {
   holidaysCanEdit?: boolean
   hasHolidayAccess?: boolean
   schedulesCanEdit?: boolean
+  schedulesCanViewAll?: boolean
   hasSchedulesAccess?: boolean
 }
 
@@ -56,7 +57,7 @@ async function recordAudit(payload: any) {
 export default function DashboardSidebar({
   user,
   holidaysCanEdit, hasHolidayAccess,
-  schedulesCanEdit, hasSchedulesAccess,
+  schedulesCanEdit, schedulesCanViewAll, hasSchedulesAccess,
 }: Props) {
   const pathname = usePathname() || ''
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
@@ -114,11 +115,18 @@ export default function DashboardSidebar({
   // Schedules
   const showSchedules = user.role === 'admin' || hasSchedulesAccess
   if (showSchedules) {
+    const isAdmin = user.role === 'admin'
     const subItems: SubItem[] = [
+      // Always show Schedules list — admins see all, non-admins see their own
       { label: 'Schedules', href: '/dashboard/schedules' },
-      { label: 'Calendar',  href: '/dashboard/schedules/calendar' },
     ]
-    if (user.role === 'admin' || schedulesCanEdit) {
+    // Calendar shown to admins, OR users with view-all (or with edit, since
+    // edit implies they need to see who they're assigning).
+    if (isAdmin || schedulesCanViewAll || schedulesCanEdit) {
+      subItems.push({ label: 'Calendar', href: '/dashboard/schedules/calendar' })
+    }
+    // Assign + Reports unlocked by edit (or admin).
+    if (isAdmin || schedulesCanEdit) {
       subItems.push({ label: 'Assign',  href: '/dashboard/schedules/assign' })
       subItems.push({ label: 'Reports', href: '/dashboard/schedules/reports' })
     }
@@ -128,7 +136,7 @@ export default function DashboardSidebar({
   }
 
   return (
-    <aside className="w-52 bg-slate-900 text-slate-100 flex flex-col flex-shrink-0">
+    <aside className="w-52 bg-slate-900 text-slate-100 flex flex-col flex-shrink-0 print:hidden">
       <div className="px-4 py-4 border-b border-slate-800">
         <h1 className="text-sm font-bold tracking-tight text-white leading-tight">South Lincs Systems</h1>
         <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-wide">{user.role}</p>

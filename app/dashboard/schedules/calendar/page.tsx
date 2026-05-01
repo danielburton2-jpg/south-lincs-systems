@@ -46,6 +46,9 @@ export default function SchedulesCalendarPage() {
   const router = useRouter()
 
   const [currentUser, setCurrentUser] = useState<any>(null)
+  // Permission flags for the current user. Admins implicitly have everything.
+  const [canViewAll, setCanViewAll] = useState(false)
+  const [canAssign, setCanAssign] = useState(false)
   const [company, setCompany] = useState<any>(null)
   const [users, setUsers] = useState<any[]>([])
   const [schedules, setSchedules] = useState<any[]>([])
@@ -180,18 +183,33 @@ export default function SchedulesCalendarPage() {
     }
 
     if (profile.role !== 'admin') {
-      const { data: userFeats } = await supabase
-        .from('user_features')
-        .select('is_enabled, features (name)')
-        .eq('user_id', user.id)
-        .eq('is_enabled', true)
-      const userHasSchedules = (userFeats as any[])?.some(
-        (uf: any) => uf.features?.name === 'Schedules'
-      )
-      if (!userHasSchedules) {
+      // Look up the schedules feature row for this user. We need
+      // is_enabled (gate to the feature at all), can_view_all (calendar
+      // tab toggle), and can_edit (assign/print/PDF).
+      const { data: schedulesFeature } = await supabase
+        .from('features').select('id').eq('slug', 'schedules').single()
+
+      let isEnabled = false
+      if (schedulesFeature) {
+        const { data: uf } = await supabase
+          .from('user_features')
+          .select('is_enabled, can_view_all, can_edit')
+          .eq('user_id', user.id)
+          .eq('feature_id', schedulesFeature.id)
+          .maybeSingle()
+        isEnabled = !!uf?.is_enabled
+        setCanViewAll(!!uf?.can_view_all)
+        setCanAssign(!!uf?.can_edit)
+      }
+
+      if (!isEnabled) {
         router.push('/dashboard')
         return
       }
+    } else {
+      // Admin gets everything
+      setCanViewAll(true)
+      setCanAssign(true)
     }
 
     const from = isoDate(weekStart)
@@ -236,7 +254,16 @@ export default function SchedulesCalendarPage() {
 
   const isAdmin = currentUser?.role === 'admin'
   const isManager = currentUser?.role === 'manager'
-  const canEdit = isAdmin || isManager
+  // Permission-based, not role-based. Manager doesn't imply edit.
+  const canEdit = isAdmin || canAssign
+
+  // If the user can't view everyone, force the calendar to "just me".
+  // This runs once after permissions resolve.
+  useEffect(() => {
+    if (!loading && !canViewAll && !canEdit) {
+      setJustMe(true)
+    }
+  }, [loading, canViewAll, canEdit])
 
   const visibleUsers = useMemo(() => {
     if (justMe && currentUser) return users.filter(u => u.id === currentUser.id)
@@ -694,12 +721,14 @@ export default function SchedulesCalendarPage() {
 
           <div className="flex-1" />
 
-          <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
-            <input type="checkbox" checked={justMe} onChange={(e) => setJustMe(e.target.checked)} className="w-3.5 h-3.5" />
-            Just me
-          </label>
+          {(canViewAll || canEdit) && (
+            <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={justMe} onChange={(e) => setJustMe(e.target.checked)} className="w-3.5 h-3.5" />
+              Just me
+            </label>
+          )}
 
-          {view === 'week' && (
+          {view === 'week' && canEdit && (
             <>
               <button onClick={exportPDF} disabled={visibleUsers.length === 0} className="bg-red-600 hover:bg-red-700 disabled:bg-slate-300 text-white px-2.5 py-1 rounded-md text-xs font-medium">⬇ PDF</button>
               <button onClick={handlePrint} disabled={visibleUsers.length === 0} className="bg-slate-700 hover:bg-slate-800 disabled:bg-slate-300 text-white px-2.5 py-1 rounded-md text-xs font-medium">🖨 Print</button>
