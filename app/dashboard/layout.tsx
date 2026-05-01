@@ -13,11 +13,15 @@ import IdleTimeoutGuard from '@/components/IdleTimeoutGuard'
  *     to use for each.
  *   • Mounts <IdleTimeoutGuard /> for silent auto-logout after inactivity.
  *
- * Each feature exposes two flags to the sidebar:
+ * Each feature exposes flags to the sidebar:
  *   • <feature>CanEdit       — true if user has Edit on that feature
  *   • has<Feature>Access     — true if user has any access (read or edit)
  *
  * Admins always have both. Other roles read from user_features.
+ *
+ * Vehicles is a special case: the page is admin-only, so we just need
+ * to know whether the company has Vehicle Checks enabled — no per-user
+ * tier yet.
  */
 
 export default async function DashboardLayout({
@@ -42,7 +46,7 @@ export default async function DashboardLayout({
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('id, full_name, email, role')
+    .select('id, full_name, email, role, company_id')
     .eq('id', user.id)
     .single()
 
@@ -50,18 +54,20 @@ export default async function DashboardLayout({
     redirect('/login')
   }
 
-  // Permission flags. Admins always full.
-  let holidaysCanEdit = profile.role === 'admin'
-  let hasHolidayAccess = profile.role === 'admin'
-  let schedulesCanEdit = profile.role === 'admin'
-  let schedulesCanViewAll = profile.role === 'admin'
-  let hasSchedulesAccess = profile.role === 'admin'
+  // ── Permission flags ───────────────────────────────────────
+  // Admins always full.
+  let holidaysCanEdit       = profile.role === 'admin'
+  let hasHolidayAccess      = profile.role === 'admin'
+  let schedulesCanEdit      = profile.role === 'admin'
+  let schedulesCanViewAll   = profile.role === 'admin'
+  let hasSchedulesAccess    = profile.role === 'admin'
 
-  // Vehicles: admin-only feature for now. We just need to know whether
-  // the company has Vehicle Checks enabled at the company level — there's
-  // no per-user tier yet because the page is admin-only.
-  let hasVehiclesAccess = false
+  // Vehicles starts off for everyone — gets enabled below if the
+  // company has the feature ticked. The sidebar still requires admin
+  // role on top of this.
+  let hasVehiclesAccess     = false
 
+  // ── Non-admin: look up per-user feature toggles ─────────────
   if (profile.role !== 'admin') {
     // Look up Holidays
     const { data: holidaysFeature } = await supabase
@@ -91,22 +97,45 @@ export default async function DashboardLayout({
       schedulesCanViewAll = !!uf?.can_view_all
       hasSchedulesAccess = !!(uf?.is_enabled || uf?.can_view || uf?.can_edit)
     }
-  } else {
-    // For admins, check whether Vehicle Checks is enabled for the company.
-    if (profile.company_id) {
-      const { data: vehiclesFeature } = await supabase
-        .from('features').select('id').eq('slug', 'vehicle_checks').single()
-      if (vehiclesFeature) {
-        const { data: cf } = await supabase
-          .from('company_features')
-          .select('is_enabled')
-          .eq('company_id', profile.company_id)
-          .eq('feature_id', vehiclesFeature.id)
-          .maybeSingle()
-        hasVehiclesAccess = !!cf?.is_enabled
+  }
+
+  // ── Vehicles: company-level feature flag (regardless of role) ──
+  // Lifted out of the else-branch so it always runs. The sidebar
+  // separately gates by admin role; this just answers "does this
+  // company have Vehicle Checks?".
+  if (profile.company_id) {
+    const { data: vehiclesFeature, error: vErr } = await supabase
+      .from('features').select('id').eq('slug', 'vehicle_checks').single()
+
+    if (vErr) {
+      console.warn('[layout] vehicle_checks feature lookup failed:', vErr.message)
+    }
+
+    if (vehiclesFeature) {
+      const { data: cf, error: cfErr } = await supabase
+        .from('company_features')
+        .select('is_enabled')
+        .eq('company_id', profile.company_id)
+        .eq('feature_id', vehiclesFeature.id)
+        .maybeSingle()
+
+      if (cfErr) {
+        console.warn('[layout] company_features lookup failed:', cfErr.message)
       }
+
+      hasVehiclesAccess = !!cf?.is_enabled
     }
   }
+
+  // Diagnostic line — visible in Vercel server logs / terminal.
+  // Helps verify the sidebar is getting the right flags.
+  console.log('[dashboard layout] flags:', {
+    role: profile.role,
+    company_id: profile.company_id,
+    hasHolidayAccess,
+    hasSchedulesAccess,
+    hasVehiclesAccess,
+  })
 
   return (
     <div className="min-h-screen flex bg-slate-50">

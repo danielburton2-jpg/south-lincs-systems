@@ -39,6 +39,7 @@ type Props = {
   schedulesCanEdit?: boolean
   schedulesCanViewAll?: boolean
   hasSchedulesAccess?: boolean
+  hasVehiclesAccess?: boolean
 }
 
 type SubItem = { label: string; href: string }
@@ -58,6 +59,7 @@ export default function DashboardSidebar({
   user,
   holidaysCanEdit, hasHolidayAccess,
   schedulesCanEdit, schedulesCanViewAll, hasSchedulesAccess,
+  hasVehiclesAccess,
 }: Props) {
   const pathname = usePathname() || ''
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
@@ -132,6 +134,21 @@ export default function DashboardSidebar({
     }
     sections.push({
       label: 'Schedules', basePath: '/dashboard/schedules', subItems,
+    })
+  }
+
+  // Vehicles — admin-only for now. Granular per-user permissions can come
+  // when the driver-side checks workflow is built.
+  const showVehicles = user.role === 'admin' && hasVehiclesAccess
+  if (showVehicles) {
+    sections.push({
+      label: 'Vehicles',
+      basePath: '/dashboard/vehicles',
+      subItems: [
+        { label: 'Vehicles',  href: '/dashboard/vehicles' },
+        { label: 'Templates', href: '/dashboard/vehicle-checks/templates' },
+        { label: 'Defects',   href: '/dashboard/vehicle-checks/defects' },
+      ],
     })
   }
 
