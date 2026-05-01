@@ -39,6 +39,7 @@ export type CompanyFormValues = {
   contact_email: string | null
   notes: string | null
   enabled_feature_ids?: string[]
+  vehicle_types?: string[]
 }
 
 type Props = {
@@ -57,7 +58,17 @@ const EMPTY: CompanyFormValues = {
   contact_email: null,
   notes: null,
   enabled_feature_ids: [],
+  vehicle_types: [],
 }
+
+// Catalogue of vehicle types — kept in sync with the Vehicles page.
+const ALL_VEHICLE_TYPES: { value: string; label: string; icon: string }[] = [
+  { value: 'class_1', label: 'Class 1 (HGV Articulated)', icon: '🚛' },
+  { value: 'class_2', label: 'Class 2 (HGV Rigid)',       icon: '🚚' },
+  { value: 'bus',     label: 'Bus',                       icon: '🚌' },
+  { value: 'coach',   label: 'Coach',                     icon: '🚍' },
+  { value: 'minibus', label: 'Minibus',                   icon: '🚐' },
+]
 
 export default function CompanyForm({ mode, initialValues }: Props) {
   const router = useRouter()
@@ -92,6 +103,22 @@ export default function CompanyForm({ mode, initialValues }: Props) {
       return { ...prev, enabled_feature_ids: next }
     })
   }
+
+  const toggleVehicleType = (value: string) => {
+    setV(prev => {
+      const cur = prev.vehicle_types || []
+      const next = cur.includes(value) ? cur.filter(x => x !== value) : [...cur, value]
+      return { ...prev, vehicle_types: next }
+    })
+  }
+
+  // Is the Vehicle Checks feature ticked? Drives whether we show the
+  // vehicle types panel.
+  const vehicleChecksFeature = features.find(f => f.slug === 'vehicle_checks')
+  const vehicleChecksEnabled = !!(
+    vehicleChecksFeature &&
+    (v.enabled_feature_ids || []).includes(vehicleChecksFeature.id)
+  )
 
   const showMessage = (msg: string, type: 'success' | 'error') => {
     setMessage(msg)
@@ -146,6 +173,7 @@ export default function CompanyForm({ mode, initialValues }: Props) {
       contact_email: v.contact_email?.trim() || null,
       notes: v.notes?.trim() || null,
       enabled_feature_ids: v.enabled_feature_ids || [],
+      vehicle_types: v.vehicle_types || [],
     }
     if (mode === 'edit') payload.id = v.id
 
@@ -393,6 +421,47 @@ export default function CompanyForm({ mode, initialValues }: Props) {
             </div>
           )}
         </section>
+
+        {/* Vehicle types — only when Vehicle Checks feature is ticked */}
+        {vehicleChecksEnabled && (
+          <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-4">
+            <div className="flex items-baseline justify-between">
+              <h2 className="text-lg font-semibold text-slate-800">Vehicle Types</h2>
+              <p className="text-xs text-slate-500">
+                Tick the types this company operates. Untick all to allow every type.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {ALL_VEHICLE_TYPES.map(t => {
+                const enabled = (v.vehicle_types || []).includes(t.value)
+                return (
+                  <label
+                    key={t.value}
+                    className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition ${
+                      enabled
+                        ? 'border-blue-400 bg-blue-50'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={() => toggleVehicleType(t.value)}
+                      className="w-4 h-4"
+                    />
+                    <span className="text-xl flex-shrink-0">{t.icon}</span>
+                    <span className="text-sm font-medium text-slate-800 flex-1">{t.label}</span>
+                  </label>
+                )
+              })}
+            </div>
+            {(v.vehicle_types || []).length === 0 && (
+              <p className="text-xs text-slate-500 italic">
+                No types selected — all vehicle types will be available.
+              </p>
+            )}
+          </section>
+        )}
 
         {/* Submit */}
         <div className="flex gap-3">
