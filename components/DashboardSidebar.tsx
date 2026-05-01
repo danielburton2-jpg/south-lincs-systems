@@ -163,9 +163,11 @@ export default function DashboardSidebar({
       label: 'Services',
       basePath: '/dashboard/services',
       subItems: [
+        { label: 'Calendar',  href: '/dashboard/services/calendar' },
         { label: 'Schedule',  href: '/dashboard/services/schedule' },
         { label: 'Templates', href: '/dashboard/services/templates' },
         { label: 'Settings',  href: '/dashboard/services/settings' },
+        { label: 'Reports',   href: '/dashboard/services/reports' },
       ],
     })
   }
