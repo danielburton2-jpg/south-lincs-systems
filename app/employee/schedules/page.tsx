@@ -20,7 +20,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { useIdleLogout, IdleWarningModal } from '@/lib/useIdleLogout'
+import { useIdleLogout } from '@/lib/useIdleLogout'
 
 const supabase = createClient()
 
@@ -67,6 +67,7 @@ const getFileIcon = (mime: string | null) => {
 }
 
 type ViewMode = 'mine' | 'everyone'
+type EveryonePeriod = 'week' | 'day'
 
 export default function EmployeeSchedulePage() {
   const router = useRouter()
@@ -87,14 +88,39 @@ export default function EmployeeSchedulePage() {
   // View mode — controls whether we show only the user's row or everyone's.
   const [viewMode, setViewMode] = useState<ViewMode>('mine')
 
+  // Sub-mode for everyone view: 'day' or 'week'. Defaults to 'day'
+  // because that's more readable on a phone.
+  const [everyonePeriod, setEveryonePeriod] = useState<EveryonePeriod>('day')
+
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeekMon(new Date()))
+  const [dayDate, setDayDate] = useState<Date>(() => {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    return d
+  })
 
   const [openSchedule, setOpenSchedule] = useState<any | null>(null)
   const [openDocs, setOpenDocs] = useState<any[]>([])
   const [docsLoading, setDocsLoading] = useState(false)
   const [docMessage, setDocMessage] = useState('')
 
-  const { showWarning, secondsLeft, stayLoggedIn } = useIdleLogout(true)
+  // Idle auto-logout. The hook itself handles redirecting on idle.
+  // (No warning modal is currently shown — keeps the dependency surface
+  // minimal, matches what the rest of /employee/* uses.)
+  useIdleLogout(true)
+
+  // Returns the current visible date range as ISO strings, based on
+  // the active mode/period. Used both for fetches and for rendering.
+  const currentRange = useCallback((): { fromISO: string, toISO: string } => {
+    if (viewMode === 'everyone' && everyonePeriod === 'day') {
+      const iso = isoDate(dayDate)
+      return { fromISO: iso, toISO: iso }
+    }
+    return {
+      fromISO: isoDate(weekStart),
+      toISO: isoDate(addDays(weekStart, 6)),
+    }
+  }, [viewMode, everyonePeriod, dayDate, weekStart])
 
   const fetchBankHolidays = async () => {
     try {
@@ -231,23 +257,26 @@ export default function EmployeeSchedulePage() {
 
     setCanViewAll(userCanViewAll)
 
-    const from = isoDate(weekStart)
-    const to = isoDate(addDays(weekStart, 6))
-    await loadAll(user.id, profile.company_id, from, to, viewMode)
+    const { fromISO, toISO } = currentRange()
+    await loadAll(user.id, profile.company_id, fromISO, toISO, viewMode)
     setLoading(false)
-  // viewMode intentionally NOT in deps — that's the next effect's job
+  // viewMode/everyonePeriod/dayDate deliberately NOT in deps — the next
+  // effect handles refetching when those change.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router, weekStart, loadAll])
 
   useEffect(() => { init(); fetchBankHolidays() }, [init])
 
-  // Refetch when week or mode changes (after init has set currentUser).
+  // Refetch when range or mode changes.
   useEffect(() => {
     if (!currentUser?.id || !currentUser?.company_id) return
-    const from = isoDate(weekStart)
-    const to = isoDate(addDays(weekStart, 6))
-    loadAll(currentUser.id, currentUser.company_id, from, to, viewMode)
-  }, [weekStart, viewMode, currentUser?.id, currentUser?.company_id, loadAll])
+    const { fromISO, toISO } = currentRange()
+    loadAll(currentUser.id, currentUser.company_id, fromISO, toISO, viewMode)
+  }, [
+    weekStart, dayDate, viewMode, everyonePeriod,
+    currentUser?.id, currentUser?.company_id,
+    loadAll, currentRange,
+  ])
 
   // Realtime subscription. In 'mine' mode, filter by user_id. In
   // 'everyone' mode, listen to all changes for the company.
@@ -255,9 +284,8 @@ export default function EmployeeSchedulePage() {
     if (!currentUser?.id || !currentUser?.company_id) return
 
     const reload = () => {
-      const from = isoDate(weekStart)
-      const to = isoDate(addDays(weekStart, 6))
-      loadAll(currentUser.id, currentUser.company_id, from, to, viewMode)
+      const { fromISO, toISO } = currentRange()
+      loadAll(currentUser.id, currentUser.company_id, fromISO, toISO, viewMode)
     }
 
     const channel = supabase.channel('employee-schedule-realtime')
@@ -276,7 +304,11 @@ export default function EmployeeSchedulePage() {
 
     channel.subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [currentUser?.id, currentUser?.company_id, weekStart, viewMode, loadAll])
+  }, [
+    currentUser?.id, currentUser?.company_id,
+    weekStart, dayDate, viewMode, everyonePeriod,
+    loadAll, currentRange,
+  ])
 
   const weekDates = useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
@@ -288,9 +320,23 @@ export default function EmployeeSchedulePage() {
   const isBankHol = (d: Date): boolean => bankHolidays.has(isoDate(d))
   const bankHolName = (d: Date): string | null => bankHolidayNames[isoDate(d)] || null
 
-  const goPrevWeek = () => setWeekStart(prev => addDays(prev, -7))
-  const goNextWeek = () => setWeekStart(prev => addDays(prev, 7))
-  const goToday = () => setWeekStart(startOfWeekMon(new Date()))
+  const isDayView = viewMode === 'everyone' && everyonePeriod === 'day'
+
+  const goPrev = () => {
+    if (isDayView) setDayDate(prev => addDays(prev, -1))
+    else setWeekStart(prev => addDays(prev, -7))
+  }
+  const goNext = () => {
+    if (isDayView) setDayDate(prev => addDays(prev, 1))
+    else setWeekStart(prev => addDays(prev, 7))
+  }
+  const goToday = () => {
+    if (isDayView) {
+      const d = new Date(); d.setHours(0, 0, 0, 0); setDayDate(d)
+    } else {
+      setWeekStart(startOfWeekMon(new Date()))
+    }
+  }
 
   const renderHolidayLabel = (h: any) => {
     if (h.request_type === 'holiday') return h.half_day_type ? `Holiday (${h.half_day_type})` : 'Holiday'
@@ -395,7 +441,9 @@ export default function EmployeeSchedulePage() {
     window.location.href = data.signedUrl
   }
 
-  const weekLabel = `${formatDateLong(weekDates[0])} – ${formatDateLong(weekDates[6])}`
+  const weekLabel = isDayView
+    ? formatDateLong(dayDate)
+    : `${formatDateLong(weekDates[0])} – ${formatDateLong(weekDates[6])}`
 
   if (loading) {
     return (
@@ -409,7 +457,6 @@ export default function EmployeeSchedulePage() {
 
   return (
     <main className="min-h-screen bg-gray-50 pb-24">
-      <IdleWarningModal show={showWarning} secondsLeft={secondsLeft} onStay={stayLoggedIn} />
 
       <div className="bg-gradient-to-br from-blue-600 to-blue-800 text-white px-6 pt-10 pb-6 rounded-b-3xl shadow-lg">
         <div className="flex items-center justify-between">
@@ -448,21 +495,45 @@ export default function EmployeeSchedulePage() {
           </div>
         )}
 
+        {/* Day/Week sub-toggle — only visible in Everyone mode */}
+        {viewMode === 'everyone' && (
+          <div className="bg-white rounded-xl shadow-sm p-1 flex gap-1">
+            <button
+              onClick={() => setEveryonePeriod('day')}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${
+                everyonePeriod === 'day'
+                  ? 'bg-slate-700 text-white shadow-sm'
+                  : 'bg-transparent text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              Day
+            </button>
+            <button
+              onClick={() => setEveryonePeriod('week')}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${
+                everyonePeriod === 'week'
+                  ? 'bg-slate-700 text-white shadow-sm'
+                  : 'bg-transparent text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              Week
+            </button>
+          </div>
+        )}
+
         {/* Week navigation */}
         <div className="flex items-center gap-2 bg-white rounded-xl shadow-sm p-2">
-          <button onClick={goPrevWeek} className="bg-gray-100 hover:bg-gray-200 text-gray-700 w-10 h-10 rounded-lg text-base font-medium flex-shrink-0">←</button>
-          <button onClick={goToday} className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium">This Week</button>
-          <button onClick={goNextWeek} className="bg-gray-100 hover:bg-gray-200 text-gray-700 w-10 h-10 rounded-lg text-base font-medium flex-shrink-0">→</button>
+          <button onClick={goPrev} className="bg-gray-100 hover:bg-gray-200 text-gray-700 w-10 h-10 rounded-lg text-base font-medium flex-shrink-0">←</button>
+          <button onClick={goToday} className="flex-1 bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-lg text-sm font-medium">{isDayView ? 'Today' : 'This Week'}</button>
+          <button onClick={goNext} className="bg-gray-100 hover:bg-gray-200 text-gray-700 w-10 h-10 rounded-lg text-base font-medium flex-shrink-0">→</button>
         </div>
 
-        {/* Day cards */}
-        <div className="space-y-2">
-          {weekDates.map((d, idx) => {
-            const isToday = isoDate(d) === todayIso
-            const bh = bankHolName(d)
-
-            // ─── 'mine' mode ───
-            if (viewMode === 'mine') {
+        {/* Render area — depends on mode and period */}
+        {viewMode === 'mine' && (
+          <div className="space-y-2">
+            {weekDates.map((d, idx) => {
+              const isToday = isoDate(d) === todayIso
+              const bh = bankHolName(d)
               const dayAsgs = myDayAssignments(d)
               const hol = myHolidayFor(d)
               const isEmpty = dayAsgs.length === 0 && !hol
@@ -508,73 +579,91 @@ export default function EmployeeSchedulePage() {
                   </div>
                 </div>
               )
-            }
+            })}
+          </div>
+        )}
 
-            // ─── 'everyone' mode ───
-            const rows = everyoneRowsForDate(d)
-            const isEmpty = rows.length === 0
+        {viewMode === 'everyone' && everyonePeriod === 'day' && (() => {
+          const d = dayDate
+          const isToday = isoDate(d) === todayIso
+          const bh = bankHolName(d)
+          const rows = everyoneRowsForDate(d)
+          const isEmpty = rows.length === 0
 
-            return (
-              <div key={idx} className={`bg-white rounded-2xl shadow-sm border overflow-hidden ${isToday ? 'border-blue-400 ring-2 ring-blue-100' : 'border-gray-100'}`}>
-                <div className={`px-4 py-2 flex items-center justify-between ${isToday ? 'bg-blue-50' : bh ? 'bg-orange-50' : 'bg-gray-50'}`}>
-                  <div className="flex items-center gap-2">
-                    <p className={`font-semibold text-sm ${isToday ? 'text-blue-800' : 'text-gray-800'}`}>{d.toLocaleDateString('en-GB', { weekday: 'long' })}</p>
-                    <span className={`text-xs ${isToday ? 'text-blue-700' : 'text-gray-500'}`}>{formatDateShort(d)}</span>
-                    {isToday && <span className="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-full font-medium">TODAY</span>}
-                  </div>
-                  {bh && <span className="text-[10px] bg-orange-200 text-orange-800 px-2 py-0.5 rounded-full font-medium">🎉 {bh}</span>}
+          return (
+            <div className={`bg-white rounded-2xl shadow-sm border overflow-hidden ${isToday ? 'border-blue-400 ring-2 ring-blue-100' : 'border-gray-100'}`}>
+              <div className={`px-4 py-2 flex items-center justify-between ${isToday ? 'bg-blue-50' : bh ? 'bg-orange-50' : 'bg-gray-50'}`}>
+                <div className="flex items-center gap-2">
+                  <p className={`font-semibold text-sm ${isToday ? 'text-blue-800' : 'text-gray-800'}`}>{d.toLocaleDateString('en-GB', { weekday: 'long' })}</p>
+                  <span className={`text-xs ${isToday ? 'text-blue-700' : 'text-gray-500'}`}>{formatDateShort(d)}</span>
+                  {isToday && <span className="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-full font-medium">TODAY</span>}
                 </div>
-
-                <div className="p-3 space-y-2">
-                  {isEmpty ? (
-                    <div className="px-3 py-2 text-center text-gray-400 text-sm italic">Nobody scheduled</div>
-                  ) : (
-                    rows.map(row => {
-                      const isMe = row.user.id === currentUser?.id
-                      return (
-                        <div key={row.user.id} className={`rounded-lg p-2.5 ${isMe ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-gray-200'}`}>
-                          <p className={`text-xs font-semibold mb-1.5 ${isMe ? 'text-blue-800' : 'text-gray-700'}`}>
-                            {row.user.full_name || '(no name)'}
-                            {isMe && <span className="ml-1.5 text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded-full">YOU</span>}
-                          </p>
-
-                          {row.holiday && (
-                            <div className={`mb-1 p-2 rounded ${row.holiday.request_type === 'holiday' ? 'bg-red-100' : row.holiday.request_type === 'keep_day_off' ? 'bg-purple-100' : 'bg-amber-100'}`}>
-                              <p className={`text-xs ${row.holiday.request_type === 'holiday' ? 'text-red-800' : row.holiday.request_type === 'keep_day_off' ? 'text-purple-800' : 'text-amber-800'}`}>
-                                {row.holiday.request_type === 'holiday' ? '🏖️' : row.holiday.request_type === 'keep_day_off' ? '🚫' : '🕓'}{' '}
-                                {renderHolidayLabel(row.holiday)}
-                              </p>
-                            </div>
-                          )}
-
-                          {row.assignments.map(a => {
-                            const sched = getSchedule(a.schedule_id)
-                            if (!sched) return null
-                            return (
-                              <button
-                                key={a.id}
-                                onClick={() => openScheduleModal(sched)}
-                                className="w-full text-left bg-white hover:bg-blue-50 active:bg-blue-100 border border-blue-200 rounded p-2 mb-1 last:mb-0 transition"
-                              >
-                                <div className="flex items-start gap-2">
-                                  <div className="flex-1 min-w-0">
-                                    <p className="font-medium text-blue-900 text-xs">{sched.name}</p>
-                                    <p className="text-[11px] text-blue-700">{formatTime(sched.start_time)} – {formatTime(sched.end_time)}</p>
-                                  </div>
-                                  <span className="text-blue-400 text-xs flex-shrink-0">›</span>
-                                </div>
-                              </button>
-                            )
-                          })}
-                        </div>
-                      )
-                    })
-                  )}
-                </div>
+                {bh && <span className="text-[10px] bg-orange-200 text-orange-800 px-2 py-0.5 rounded-full font-medium">🎉 {bh}</span>}
               </div>
-            )
-          })}
-        </div>
+
+              <div className="p-3 space-y-2">
+                {isEmpty ? (
+                  <div className="px-3 py-2 text-center text-gray-400 text-sm italic">Nobody scheduled</div>
+                ) : (
+                  rows.map(row => {
+                    const isMe = row.user.id === currentUser?.id
+                    return (
+                      <div key={row.user.id} className={`rounded-lg p-2.5 ${isMe ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-gray-200'}`}>
+                        <p className={`text-xs font-semibold mb-1.5 ${isMe ? 'text-blue-800' : 'text-gray-700'}`}>
+                          {row.user.full_name || '(no name)'}
+                          {isMe && <span className="ml-1.5 text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded-full">YOU</span>}
+                        </p>
+
+                        {row.holiday && (
+                          <div className={`mb-1 p-2 rounded ${row.holiday.request_type === 'holiday' ? 'bg-red-100' : row.holiday.request_type === 'keep_day_off' ? 'bg-purple-100' : 'bg-amber-100'}`}>
+                            <p className={`text-xs ${row.holiday.request_type === 'holiday' ? 'text-red-800' : row.holiday.request_type === 'keep_day_off' ? 'text-purple-800' : 'text-amber-800'}`}>
+                              {row.holiday.request_type === 'holiday' ? '🏖️' : row.holiday.request_type === 'keep_day_off' ? '🚫' : '🕓'}{' '}
+                              {renderHolidayLabel(row.holiday)}
+                            </p>
+                          </div>
+                        )}
+
+                        {row.assignments.map(a => {
+                          const sched = getSchedule(a.schedule_id)
+                          if (!sched) return null
+                          return (
+                            <button
+                              key={a.id}
+                              onClick={() => openScheduleModal(sched)}
+                              className="w-full text-left bg-white hover:bg-blue-50 active:bg-blue-100 border border-blue-200 rounded p-2 mb-1 last:mb-0 transition"
+                            >
+                              <div className="flex items-start gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-medium text-blue-900 text-xs">{sched.name}</p>
+                                  <p className="text-[11px] text-blue-700">{formatTime(sched.start_time)} – {formatTime(sched.end_time)}</p>
+                                </div>
+                                <span className="text-blue-400 text-xs flex-shrink-0">›</span>
+                              </div>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )
+                  })
+                )}
+              </div>
+            </div>
+          )
+        })()}
+
+        {viewMode === 'everyone' && everyonePeriod === 'week' && (
+          <EveryoneWeekGrid
+            weekDates={weekDates}
+            todayIso={todayIso}
+            companyUsers={companyUsers}
+            currentUserId={currentUser?.id}
+            assignments={assignments}
+            holidays={holidays}
+            schedules={schedules}
+            bankHolidayNames={bankHolidayNames}
+            onPillClick={openScheduleModal}
+          />
+        )}
 
       </div>
 
@@ -656,5 +745,165 @@ export default function EmployeeSchedulePage() {
         </div>
       </nav>
     </main>
+  )
+}
+
+// ─── EveryoneWeekGrid ───────────────────────────────────────────────
+// Admin-style grid: names down the left, dates across the top.
+// Renders horizontal-scrollable on phone widths so the date columns
+// can shrink to readable sizes without losing the name column.
+
+type GridProps = {
+  weekDates: Date[]
+  todayIso: string
+  companyUsers: any[]
+  currentUserId: string | null | undefined
+  assignments: any[]
+  holidays: any[]
+  schedules: any[]
+  bankHolidayNames: Record<string, string>
+  onPillClick: (sched: any) => void
+}
+
+function EveryoneWeekGrid({
+  weekDates, todayIso, companyUsers, currentUserId,
+  assignments, holidays, schedules, bankHolidayNames, onPillClick,
+}: GridProps) {
+  const isoDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+  const getSchedule = (id: string) => schedules.find(s => s.id === id)
+
+  // Cell content for a given user/date — the assignments and any holiday.
+  const cellFor = (userId: string, d: Date) => {
+    const iso = isoDate(d)
+    const cellAsgs = assignments
+      .filter(a => a.user_id === userId && a.assignment_date === iso)
+      .sort((a, b) => {
+        const sa = getSchedule(a.schedule_id)
+        const sb = getSchedule(b.schedule_id)
+        return (sa?.start_time || '').localeCompare(sb?.start_time || '')
+      })
+    const hol = holidays.find(h => h.user_id === userId && iso >= h.start_date && iso <= h.end_date) || null
+    return { cellAsgs, hol }
+  }
+
+  // Only show users that have ANY content somewhere in this week.
+  // Otherwise the grid is mostly empty rows on phones with 20+ users.
+  const visibleUsers = companyUsers.filter(u => {
+    return weekDates.some(d => {
+      const { cellAsgs, hol } = cellFor(u.id, d)
+      return cellAsgs.length > 0 || hol
+    })
+  })
+
+  if (visibleUsers.length === 0) {
+    return (
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 text-center">
+        <p className="text-sm text-gray-500 italic">No assignments or holidays for anyone this week.</p>
+      </div>
+    )
+  }
+
+  // Cell colour for holiday types
+  const holClass = (h: any) => {
+    if (h.request_type === 'holiday') return 'bg-red-100 text-red-800 border border-red-200'
+    if (h.request_type === 'keep_day_off') return 'bg-purple-100 text-purple-800 border border-purple-200'
+    return 'bg-amber-100 text-amber-800 border border-amber-200'
+  }
+  const holLabel = (h: any) => {
+    if (h.request_type === 'holiday') return h.half_day_type ? 'Hol ½' : 'Hol'
+    if (h.request_type === 'keep_day_off') return 'Off'
+    return 'Early'
+  }
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+      {/* Horizontally scrollable region. Name column is sticky left. */}
+      <div className="overflow-x-auto">
+        <table className="border-collapse w-full">
+          <thead>
+            <tr>
+              <th className="sticky left-0 z-10 bg-gray-50 border-b border-r border-gray-200 px-2 py-2 text-left text-[11px] font-semibold text-gray-600 w-[110px] min-w-[110px]">
+                Person
+              </th>
+              {weekDates.map((d, idx) => {
+                const isToday = isoDate(d) === todayIso
+                const bh = bankHolidayNames[isoDate(d)]
+                return (
+                  <th
+                    key={idx}
+                    className={`border-b border-gray-200 px-1 py-2 text-center text-[10px] font-semibold w-[68px] min-w-[68px] ${
+                      isToday ? 'bg-blue-50 text-blue-800' : bh ? 'bg-orange-50 text-orange-800' : 'bg-gray-50 text-gray-700'
+                    }`}
+                  >
+                    <div>{d.toLocaleDateString('en-GB', { weekday: 'short' })}</div>
+                    <div className="text-[9px] font-normal opacity-70">{d.getDate()}</div>
+                    {isToday && <div className="text-[8px] mt-0.5 bg-blue-600 text-white rounded-full px-1 py-0">TODAY</div>}
+                  </th>
+                )
+              })}
+            </tr>
+          </thead>
+
+          <tbody>
+            {visibleUsers.map(u => {
+              const isMe = u.id === currentUserId
+              return (
+                <tr key={u.id} className={isMe ? 'bg-blue-50' : ''}>
+                  <td className={`sticky left-0 z-10 border-b border-r border-gray-200 px-2 py-1.5 text-[11px] font-medium align-top ${
+                    isMe ? 'bg-blue-50 text-blue-900' : 'bg-white text-gray-800'
+                  }`}>
+                    <div className="truncate" title={u.full_name || ''}>
+                      {u.full_name || '(no name)'}
+                    </div>
+                    {isMe && <div className="text-[9px] text-blue-700 font-semibold">YOU</div>}
+                  </td>
+
+                  {weekDates.map((d, idx) => {
+                    const { cellAsgs, hol } = cellFor(u.id, d)
+                    const isToday = isoDate(d) === todayIso
+                    return (
+                      <td
+                        key={idx}
+                        className={`border-b border-gray-200 px-0.5 py-0.5 align-top ${
+                          isToday ? 'bg-blue-50/40' : ''
+                        }`}
+                      >
+                        <div className="space-y-0.5">
+                          {hol && (
+                            <div className={`text-[9px] rounded px-1 py-0.5 text-center font-medium ${holClass(hol)}`}>
+                              {holLabel(hol)}
+                            </div>
+                          )}
+                          {cellAsgs.map(a => {
+                            const sched = getSchedule(a.schedule_id)
+                            if (!sched) return null
+                            return (
+                              <button
+                                key={a.id}
+                                onClick={() => onPillClick(sched)}
+                                className="w-full text-left bg-blue-100 hover:bg-blue-200 active:bg-blue-300 border border-blue-200 text-blue-900 text-[9px] rounded px-1 py-0.5 transition truncate"
+                                title={sched.name}
+                              >
+                                {sched.name}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </td>
+                    )
+                  })}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="px-3 py-2 text-[10px] text-gray-400 italic bg-gray-50 border-t border-gray-200">
+        Scroll horizontally for the full week. Tap any pill for details.
+      </p>
+    </div>
   )
 }
