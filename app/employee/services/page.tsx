@@ -70,18 +70,31 @@ export default function MechanicJobsPage() {
       .from('companies').select('*, company_features (is_enabled, features (name))').eq('id', profile.company_id).single()
     setCompany(companyData)
 
+    // Company-level gate. Slug 'services_mot' kept the same after the
+    // 017 rename — only the display name changed to 'Services & Defects'.
+    // Match on either name to stay robust if anyone re-runs an older
+    // migration or seeds with the original label.
     const companyHasService = companyData?.company_features?.some(
-      (cf: any) => cf.is_enabled && cf.features?.name === 'Services & MOT'
+      (cf: any) => cf.is_enabled && (
+        cf.features?.name === 'Services & Defects' ||
+        cf.features?.name === 'Services & MOT'
+      )
     )
     if (!companyHasService) { router.push('/employee'); return }
 
-    // Confirm user has the Mechanic feature
+    // Per-user gate. Mechanic-status IS the Services & Defects flag —
+    // there's no separate 'Mechanic' feature. Same dual-name check as
+    // above for migration robustness.
     const { data: userFeats } = await supabase
       .from('user_features')
       .select('is_enabled, features (name)')
       .eq('user_id', user.id)
       .eq('is_enabled', true)
-    const userIsMechanic = (userFeats as any[])?.some((uf: any) => uf.features?.name === 'Mechanic')
+    const userIsMechanic = (userFeats as any[])?.some(
+      (uf: any) =>
+        uf.features?.name === 'Services & Defects' ||
+        uf.features?.name === 'Services & MOT'
+    )
     if (!userIsMechanic) { router.push('/employee'); return }
 
     // Load vehicles for display info
