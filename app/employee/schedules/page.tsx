@@ -20,7 +20,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import { useIdleLogout } from '@/lib/useIdleLogout'
 
 const supabase = createClient()
 
@@ -104,10 +103,10 @@ export default function EmployeeSchedulePage() {
   const [docsLoading, setDocsLoading] = useState(false)
   const [docMessage, setDocMessage] = useState('')
 
-  // Idle auto-logout. The hook itself handles redirecting on idle.
-  // (No warning modal is currently shown — keeps the dependency surface
-  // minimal, matches what the rest of /employee/* uses.)
-  useIdleLogout(true)
+  // Idle auto-logout is intentionally NOT enabled on the employee app.
+  // The shared useIdleLogout hook is a no-op for the 'user' role by
+  // design — it's meant to keep fleet drivers signed in even when their
+  // phone screen sleeps. So we just don't call it here.
 
   // Returns the current visible date range as ISO strings, based on
   // the active mode/period. Used both for fetches and for rendering.
