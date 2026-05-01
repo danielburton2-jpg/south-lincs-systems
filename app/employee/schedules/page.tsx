@@ -383,6 +383,13 @@ export default function EmployeeSchedulePage() {
     type Row = { user: any, assignments: any[], holiday: any | null }
     const rows = new Map<string, Row>()
 
+    // Seed every active employee with an empty row first. Users with
+    // no content for the day will show as "Day Off" instead of being
+    // hidden.
+    for (const u of companyUsers) {
+      rows.set(u.id, { user: u, assignments: [], holiday: null })
+    }
+
     // Add assignments
     for (const a of assignments) {
       if (a.assignment_date !== iso) continue
@@ -606,12 +613,27 @@ export default function EmployeeSchedulePage() {
                 ) : (
                   rows.map(row => {
                     const isMe = row.user.id === currentUser?.id
+                    const rowEmpty = row.assignments.length === 0 && !row.holiday
                     return (
-                      <div key={row.user.id} className={`rounded-lg p-2.5 ${isMe ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-gray-200'}`}>
-                        <p className={`text-xs font-semibold mb-1.5 ${isMe ? 'text-blue-800' : 'text-gray-700'}`}>
+                      <div key={row.user.id} className={`rounded-lg p-2.5 ${
+                        rowEmpty
+                          ? 'bg-gray-50/60 border border-gray-100'
+                          : isMe
+                            ? 'bg-blue-50 border border-blue-200'
+                            : 'bg-gray-50 border border-gray-200'
+                      }`}>
+                        <p className={`text-xs font-semibold mb-1.5 ${
+                          rowEmpty
+                            ? 'text-gray-500'
+                            : isMe ? 'text-blue-800' : 'text-gray-700'
+                        }`}>
                           {row.user.full_name || '(no name)'}
                           {isMe && <span className="ml-1.5 text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded-full">YOU</span>}
                         </p>
+
+                        {rowEmpty && (
+                          <p className="text-[11px] text-gray-400 italic">Day Off</p>
+                        )}
 
                         {row.holiday && (
                           <div className={`mb-1 p-2 rounded ${row.holiday.request_type === 'holiday' ? 'bg-red-100' : row.holiday.request_type === 'keep_day_off' ? 'bg-purple-100' : 'bg-amber-100'}`}>
@@ -787,19 +809,15 @@ function EveryoneWeekGrid({
     return { cellAsgs, hol }
   }
 
-  // Only show users that have ANY content somewhere in this week.
-  // Otherwise the grid is mostly empty rows on phones with 20+ users.
-  const visibleUsers = companyUsers.filter(u => {
-    return weekDates.some(d => {
-      const { cellAsgs, hol } = cellFor(u.id, d)
-      return cellAsgs.length > 0 || hol
-    })
-  })
+  // Show every active employee. Rows for people with nothing for the
+  // week still appear with empty cells / "Off" labels, matching the
+  // admin calendar's behaviour.
+  const visibleUsers = companyUsers
 
   if (visibleUsers.length === 0) {
     return (
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 text-center">
-        <p className="text-sm text-gray-500 italic">No assignments or holidays for anyone this week.</p>
+        <p className="text-sm text-gray-500 italic">No employees in this company.</p>
       </div>
     )
   }
@@ -862,6 +880,7 @@ function EveryoneWeekGrid({
                   {weekDates.map((d, idx) => {
                     const { cellAsgs, hol } = cellFor(u.id, d)
                     const isToday = isoDate(d) === todayIso
+                    const cellEmpty = cellAsgs.length === 0 && !hol
                     return (
                       <td
                         key={idx}
@@ -870,6 +889,11 @@ function EveryoneWeekGrid({
                         }`}
                       >
                         <div className="space-y-0.5">
+                          {cellEmpty && (
+                            <div className="text-[9px] text-gray-300 text-center italic py-0.5">
+                              Off
+                            </div>
+                          )}
                           {hol && (
                             <div className={`text-[9px] rounded px-1 py-0.5 text-center font-medium ${holClass(hol)}`}>
                               {holLabel(hol)}
