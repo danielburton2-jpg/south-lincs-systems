@@ -1,4 +1,4 @@
-import { createServerClient } from '@supabase/ssr'
+import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
@@ -21,6 +21,11 @@ import type { NextRequest } from 'next/server'
 
 const PUBLIC_API_ROUTES = ['/api/audit']
 
+// Shape of the array Supabase passes to setAll(). Local type keeps the
+// middleware compiling under noImplicitAny without depending on whether
+// Supabase exports its CookieToSet type publicly.
+type CookieToSet = { name: string; value: string; options?: CookieOptions }
+
 export async function middleware(request: NextRequest) {
   const response = NextResponse.next()
   const { pathname } = request.nextUrl
@@ -38,7 +43,7 @@ export async function middleware(request: NextRequest) {
     {
       cookies: {
         getAll() { return request.cookies.getAll() },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: CookieToSet[]) {
           cookiesToSet.forEach(({ name, value, options }) =>
             response.cookies.set(name, value, options)
           )
