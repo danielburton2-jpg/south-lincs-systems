@@ -66,6 +66,7 @@ export default async function DashboardLayout({
   // company has the feature ticked. The sidebar still requires admin
   // role on top of this.
   let hasVehiclesAccess     = false
+  let hasServicesAccess     = false
 
   // ── Non-admin: look up per-user feature toggles ─────────────
   if (profile.role !== 'admin') {
@@ -127,6 +128,33 @@ export default async function DashboardLayout({
     }
   }
 
+  // Services & MOT — same lookup pattern. Independent feature flag
+  // (Vehicle Checks does NOT imply Services & MOT — they are separate
+  // tickboxes on the company edit form).
+  if (profile.company_id) {
+    const { data: servicesFeature, error: sErr } = await supabase
+      .from('features').select('id').eq('slug', 'services_mot').single()
+
+    if (sErr) {
+      console.warn('[layout] services_mot feature lookup failed:', sErr.message)
+    }
+
+    if (servicesFeature) {
+      const { data: cf, error: cfErr } = await supabase
+        .from('company_features')
+        .select('is_enabled')
+        .eq('company_id', profile.company_id)
+        .eq('feature_id', servicesFeature.id)
+        .maybeSingle()
+
+      if (cfErr) {
+        console.warn('[layout] company_features lookup (services) failed:', cfErr.message)
+      }
+
+      hasServicesAccess = !!cf?.is_enabled
+    }
+  }
+
   // Diagnostic line — visible in Vercel server logs / terminal.
   // Helps verify the sidebar is getting the right flags.
   console.log('[dashboard layout] flags:', {
@@ -135,6 +163,7 @@ export default async function DashboardLayout({
     hasHolidayAccess,
     hasSchedulesAccess,
     hasVehiclesAccess,
+    hasServicesAccess,
   })
 
   return (
@@ -152,6 +181,7 @@ export default async function DashboardLayout({
         schedulesCanViewAll={schedulesCanViewAll}
         hasSchedulesAccess={hasSchedulesAccess}
         hasVehiclesAccess={hasVehiclesAccess}
+        hasServicesAccess={hasServicesAccess}
       />
       <main className="flex-1 overflow-x-auto">
         {children}

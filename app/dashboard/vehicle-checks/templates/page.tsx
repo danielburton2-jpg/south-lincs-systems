@@ -8,11 +8,11 @@ import { logAuditClient } from '@/lib/auditClient'
 const supabase = createClient()
 
 const ALL_VEHICLE_TYPES = [
-  { value: 'class_1', label: 'Class 1 (HGV Articulated)', icon: '🚛' },
-  { value: 'class_2', label: 'Class 2 (HGV Rigid)', icon: '🚚' },
-  { value: 'bus', label: 'Bus', icon: '🚌' },
-  { value: 'coach', label: 'Coach', icon: '🚍' },
-  { value: 'minibus', label: 'Minibus', icon: '🚐' },
+  { value: 'class_1', label: 'Class 1 (HGV Articulated)', short: 'Class 1', icon: '🚛' },
+  { value: 'class_2', label: 'Class 2 (HGV Rigid)',       short: 'Class 2', icon: '🚚' },
+  { value: 'bus',     label: 'Bus',                       short: 'Bus',     icon: '🚌' },
+  { value: 'coach',   label: 'Coach',                     short: 'Coach',   icon: '🚍' },
+  { value: 'minibus', label: 'Minibus',                   short: 'Minibus', icon: '🚐' },
 ] as const
 
 const ANSWER_TYPE_LABELS: Record<string, string> = {
@@ -68,9 +68,19 @@ export default function ChecklistTemplatesPage() {
       .maybeSingle()
 
     if (!template) {
+      // Auto-create a fresh template for this vehicle type. The DB
+      // requires `name` (not null) so we generate a sensible default
+      // from the vehicle type label. Admins can rename it later.
+      const typeLabel = ALL_VEHICLE_TYPES.find(t => t.value === type)?.label || type
+      const defaultName = `${typeLabel} Walk-Round Check`
+
       const { data: newTemplate, error } = await supabase
         .from('vehicle_check_templates')
-        .insert({ company_id: companyId, vehicle_type: type })
+        .insert({
+          company_id: companyId,
+          vehicle_type: type,
+          name: defaultName,
+        })
         .select()
         .single()
 
@@ -543,7 +553,7 @@ export default function ChecklistTemplatesPage() {
                 }`}
               >
                 <span className="text-lg mr-1">{t.icon}</span>
-                <span className="hidden sm:inline">{t.label.split(' ')[0]}</span>
+                <span className="hidden sm:inline">{t.short}</span>
               </button>
             ))}
           </div>

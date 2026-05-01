@@ -40,6 +40,7 @@ type Props = {
   schedulesCanViewAll?: boolean
   hasSchedulesAccess?: boolean
   hasVehiclesAccess?: boolean
+  hasServicesAccess?: boolean
 }
 
 type SubItem = { label: string; href: string }
@@ -60,6 +61,7 @@ export default function DashboardSidebar({
   holidaysCanEdit, hasHolidayAccess,
   schedulesCanEdit, schedulesCanViewAll, hasSchedulesAccess,
   hasVehiclesAccess,
+  hasServicesAccess,
 }: Props) {
   const pathname = usePathname() || ''
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
@@ -148,6 +150,22 @@ export default function DashboardSidebar({
         { label: 'Vehicles',  href: '/dashboard/vehicles' },
         { label: 'Templates', href: '/dashboard/vehicle-checks/templates' },
         { label: 'Defects',   href: '/dashboard/vehicle-checks/defects' },
+        { label: 'Reports',   href: '/dashboard/vehicle-checks/reports' },
+      ],
+    })
+  }
+
+  // Services & MOT — admin-only, only shown when the company has the
+  // sub-feature enabled. Same gate logic as Vehicle Checks above.
+  const showServices = user.role === 'admin' && hasServicesAccess
+  if (showServices) {
+    sections.push({
+      label: 'Services',
+      basePath: '/dashboard/services',
+      subItems: [
+        { label: 'Schedule',  href: '/dashboard/services/schedule' },
+        { label: 'Templates', href: '/dashboard/services/templates' },
+        { label: 'Settings',  href: '/dashboard/services/settings' },
       ],
     })
   }
