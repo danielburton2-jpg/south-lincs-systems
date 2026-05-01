@@ -56,46 +56,52 @@ export default function MechanicJobsPage() {
   const [creatingForJob, setCreatingForJob] = useState<string | null>(null)
 
   const init = useCallback(async () => {
+    console.log('[services] init starting')
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) { router.push('/login'); return }
+    console.log('[services] auth user:', user?.id || 'NONE')
+    if (!user) { console.log('[services] REDIRECT: no user'); router.push('/login'); return }
 
-    const { data: profile } = await supabase
+    const { data: profile, error: profileErr } = await supabase
       .from('profiles').select('*').eq('id', user.id).single()
-    if (!profile) { router.push('/login'); return }
+    console.log('[services] profile:', profile?.id, 'company_id:', profile?.company_id, 'role:', profile?.role, 'error:', profileErr?.message)
+    if (!profile) { console.log('[services] REDIRECT: no profile'); router.push('/login'); return }
     setCurrentUser(profile)
 
-    if (!profile.company_id) { router.push('/employee'); return }
+    if (!profile.company_id) { console.log('[services] REDIRECT: no company_id on profile'); router.push('/employee'); return }
 
-    const { data: companyData } = await supabase
+    const { data: companyData, error: companyErr } = await supabase
       .from('companies').select('*, company_features (is_enabled, features (name))').eq('id', profile.company_id).single()
+    console.log('[services] company:', companyData?.name, 'error:', companyErr?.message)
+    console.log('[services] company_features rows:', JSON.stringify(companyData?.company_features))
     setCompany(companyData)
 
-    // Company-level gate. Slug 'services_mot' kept the same after the
-    // 017 rename — only the display name changed to 'Services & Defects'.
-    // Match on either name to stay robust if anyone re-runs an older
-    // migration or seeds with the original label.
+    // Company-level gate.
     const companyHasService = companyData?.company_features?.some(
       (cf: any) => cf.is_enabled && (
         cf.features?.name === 'Services & Defects' ||
         cf.features?.name === 'Services & MOT'
       )
     )
-    if (!companyHasService) { router.push('/employee'); return }
+    console.log('[services] companyHasService:', companyHasService)
+    if (!companyHasService) { console.log('[services] REDIRECT: company missing Services feature'); router.push('/employee'); return }
 
-    // Per-user gate. Mechanic-status IS the Services & Defects flag —
-    // there's no separate 'Mechanic' feature. Same dual-name check as
-    // above for migration robustness.
-    const { data: userFeats } = await supabase
+    // Per-user gate.
+    const { data: userFeats, error: ufErr } = await supabase
       .from('user_features')
       .select('is_enabled, features (name)')
       .eq('user_id', user.id)
       .eq('is_enabled', true)
+    console.log('[services] user_features error:', ufErr?.message)
+    console.log('[services] user_features rows:', JSON.stringify(userFeats))
     const userIsMechanic = (userFeats as any[])?.some(
       (uf: any) =>
         uf.features?.name === 'Services & Defects' ||
         uf.features?.name === 'Services & MOT'
     )
-    if (!userIsMechanic) { router.push('/employee'); return }
+    console.log('[services] userIsMechanic:', userIsMechanic)
+    if (!userIsMechanic) { console.log('[services] REDIRECT: user missing Services feature'); router.push('/employee'); return }
+
+    console.log('[services] all gates passed, loading data')
 
     // Load vehicles for display info
     const { data: vehData } = await supabase
