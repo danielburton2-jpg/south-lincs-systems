@@ -270,12 +270,20 @@ function isStandalone(): boolean {
   return false
 }
 
-/** Convert URL-safe base64 VAPID key to Uint8Array as the API expects. */
-function urlBase64ToUint8Array(base64: string): Uint8Array {
+/**
+ * Convert URL-safe base64 VAPID key to Uint8Array as the Push API
+ * expects. Return type pinned to Uint8Array<ArrayBuffer> (not the
+ * default Uint8Array<ArrayBufferLike>) because pushManager.subscribe's
+ * applicationServerKey rejects SharedArrayBuffer-backed views.
+ */
+function urlBase64ToUint8Array(base64: string): Uint8Array<ArrayBuffer> {
   const padding = '='.repeat((4 - (base64.length % 4)) % 4)
   const b64 = (base64 + padding).replace(/-/g, '+').replace(/_/g, '/')
   const raw = atob(b64)
-  const bytes = new Uint8Array(raw.length)
+  // Allocate a fresh ArrayBuffer (not SharedArrayBuffer) so the
+  // resulting Uint8Array is typed Uint8Array<ArrayBuffer>.
+  const buf = new ArrayBuffer(raw.length)
+  const bytes = new Uint8Array(buf)
   for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
   return bytes
 }
