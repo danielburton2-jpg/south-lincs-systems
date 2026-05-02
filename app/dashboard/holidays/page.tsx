@@ -19,8 +19,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { getUKBankHolidays } from '@/lib/bankHolidays'
 import { holidayYearForDate, isCurrentHolidayYear } from '@/lib/holidayYear'
-import HolidayRequestForm from '@/components/HolidayRequestForm'
-import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh'
+import { notifyEvent } from '@/lib/notifyEvent'
 
 const supabase = createClient()
 
@@ -56,7 +55,7 @@ const statusBadge = (status: string) => {
   return <span className={`text-xs px-2 py-1 rounded-full font-medium ${cls}`}>{label}</span>
 }
 
-type TabKey = 'pending' | 'calendar' | 'history' | 'manage' | 'mine' | 'reports'
+type TabKey = 'pending' | 'calendar' | 'history' | 'manage' | 'mine'
 
 export default function DashboardHolidaysPage() {
   const router = useRouter()
@@ -68,11 +67,6 @@ export default function DashboardHolidaysPage() {
   const [managerTitles, setManagerTitles] = useState<string[]>([])
   const [bankHolidays, setBankHolidays] = useState<Set<string>>(new Set())
   const [bankHolidayNames, setBankHolidayNames] = useState<Record<string, string>>({})
-  // Permission state — derived from user_features at load time.
-  // Admins always true. Others true if their user_features row for
-  // Holidays has can_edit set.
-  const [canEditHolidays, setCanEditHolidays] = useState(false)
-  const [hasHolidayAccess, setHasHolidayAccess] = useState(false)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<TabKey>('pending')
   const [selected, setSelected] = useState<any>(null)
@@ -96,8 +90,16 @@ export default function DashboardHolidaysPage() {
   const [adjustmentReason, setAdjustmentReason] = useState('')
   const [submittingAdjust, setSubmittingAdjust] = useState(false)
 
-  // My Holidays state — only the toggle is kept here; the form owns its own state
+  // My Holidays state
   const [showMyForm, setShowMyForm] = useState(false)
+  const [submittingMy, setSubmittingMy] = useState(false)
+  const [myType, setMyType] = useState<'holiday'|'early_finish'|'keep_day_off'>('holiday')
+  const [myStartDate, setMyStartDate] = useState('')
+  const [myEndDate, setMyEndDate] = useState('')
+  const [myIsHalfDay, setMyIsHalfDay] = useState(false)
+  const [myHalfDayType, setMyHalfDayType] = useState<'morning'|'afternoon'>('morning')
+  const [myEarlyFinishTime, setMyEarlyFinishTime] = useState('')
+  const [myReason, setMyReason] = useState('')
 
   const showMessage = (msg: string, type: 'success' | 'error') => {
     setMessage(msg); setMessageType(type)
@@ -130,33 +132,6 @@ export default function DashboardHolidaysPage() {
           .from('manager_job_titles')
           .select('job_title').eq('manager_id', user.id)
         setManagerTitles((titles || []).map((t: any) => t.job_title))
-      }
-
-      // Look up Holidays permission for this user.
-      // Admins always have edit. Others get edit only if can_edit is true
-      // on their user_features row for Holidays.
-      // Falls back to is_enabled for backward compatibility with rows
-      // saved before the granular columns were populated.
-      if (profile.role === 'admin') {
-        setCanEditHolidays(true)
-        setHasHolidayAccess(true)
-      } else {
-        const { data: holidaysFeature } = await supabase
-          .from('features').select('id').eq('slug', 'holidays').single()
-        if (holidaysFeature) {
-          const { data: uf } = await supabase
-            .from('user_features')
-            .select('is_enabled, can_view, can_edit')
-            .eq('user_id', user.id)
-            .eq('feature_id', holidaysFeature.id)
-            .maybeSingle()
-          // Edit = explicit can_edit
-          setCanEditHolidays(!!uf?.can_edit)
-          // Any access = can_view OR can_edit OR (legacy is_enabled with neither set)
-          const hasAny = !!(uf?.can_view || uf?.can_edit ||
-            (uf?.is_enabled && !uf?.can_view && !uf?.can_edit))
-          setHasHolidayAccess(hasAny)
-        }
       }
 
       // All company users (for calendar rows + Manage Employee dropdown)
@@ -193,52 +168,22 @@ export default function DashboardHolidaysPage() {
   const isAdmin = me?.role === 'admin'
   const isManager = me?.role === 'manager'
 
-  // Can this user review (approve/reject/see calendar with everyone)?
-  // True for admins always. True for managers (or even users) who have
-  // can_edit = true on the Holidays feature.
-  const canReview = isAdmin || canEditHolidays
-
-  // Auto-correct active tab if it's one the user doesn't have permission for.
-  // Only runs when permissions change (after load). MUST be declared after
-  // isAdmin/canReview because it references them.
-  useEffect(() => {
-    if (loading) return
-    const reviewTabs: TabKey[] = ['pending', 'calendar', 'history', 'reports']
-    if (!canReview && reviewTabs.includes(tab)) {
-      setTab(hasHolidayAccess ? 'mine' : 'pending')
-    }
-    if (!isAdmin && tab === 'manage') {
-      setTab(canReview ? 'pending' : (hasHolidayAccess ? 'mine' : 'pending'))
-    }
-  }, [loading, canReview, isAdmin, hasHolidayAccess, tab])
-
-  // Realtime: refetch when anything relevant changes for this company.
-  useRealtimeRefresh(
-    'holidays-page',
-    [
-      { table: 'holiday_requests',    companyId: company?.id || null },
-      { table: 'balance_adjustments', companyId: company?.id || null },
-      { table: 'profiles',            companyId: company?.id || null },
-    ],
-    load,
-    !!company?.id,
-  )
-
   const visibleRequests = useMemo(() => {
     if (!me) return []
-    if (!canReview) return []                       // no edit permission → no review list
-    if (isAdmin) return requests                    // admin sees everything
-    // Manager (or non-admin with can_edit) → still job-title gated
-    return requests.filter((r: any) => r.user?.job_title && managerTitles.includes(r.user.job_title))
-  }, [me, isAdmin, canReview, requests, managerTitles])
+    if (isAdmin) return requests
+    if (isManager) {
+      return requests.filter((r: any) => r.user?.job_title && managerTitles.includes(r.user.job_title))
+    }
+    return []
+  }, [me, isAdmin, isManager, requests, managerTitles])
 
   const visibleUsers = useMemo(() => {
     if (!me) return []
-    if (!canReview) return []
     if (isAdmin) return users.filter(u => !u.is_frozen && !u.is_deleted)
-    return users.filter(u =>
+    if (isManager) return users.filter(u =>
       !u.is_frozen && !u.is_deleted && u.job_title && managerTitles.includes(u.job_title))
-  }, [me, isAdmin, canReview, users, managerTitles])
+    return []
+  }, [me, isAdmin, isManager, users, managerTitles])
 
   const manageableEmployees = useMemo(
     () => visibleUsers.filter(u => u.id !== me?.id),
@@ -291,8 +236,19 @@ export default function DashboardHolidaysPage() {
     ? holidayYearForDate(manageStartDate, company.holiday_year_start).label
     : null
 
-  // My Holidays balance for the card display
+  // My Holidays calc
+  const myDaysRequested = calcDays(
+    myType, myStartDate, myEndDate,
+    me?.working_days || DEFAULT_WORKING_DAYS, myIsHalfDay,
+  )
   const myBalance = me?.holiday_entitlement || 0
+  const myBalanceAfter = myBalance - myDaysRequested
+  const myIsCurrent = myStartDate && company
+    ? isCurrentHolidayYear(myStartDate, company.holiday_year_start)
+    : true
+  const myYearLabel = myStartDate && company
+    ? holidayYearForDate(myStartDate, company.holiday_year_start).label
+    : null
 
   // ─── Action handlers ────────────────────────────────────────
   const handleApprove = async (req: any) => {
@@ -313,6 +269,13 @@ export default function DashboardHolidaysPage() {
     const data = await res.json()
     setBusy(false)
     if (!res.ok) { showMessage('Error: ' + (data.error || 'unknown'), 'error'); return }
+
+    // Phone push to the requester. Only fires for approve/reject of
+    // an actual holiday (not the cancellation flows).
+    if (action === 'approve') {
+      await notifyEvent({ kind: 'holiday_decided', request_id: req.id })
+    }
+
     showMessage(action === 'approve_cancel' ? 'Cancellation approved' : 'Request approved', 'success')
     setSelected(null); setReviewNotes('')
     load()
@@ -336,6 +299,13 @@ export default function DashboardHolidaysPage() {
     const data = await res.json()
     setBusy(false)
     if (!res.ok) { showMessage('Error: ' + (data.error || 'unknown'), 'error'); return }
+
+    // Phone push to the requester. Only fires for reject of an actual
+    // holiday (not the cancellation flows).
+    if (action === 'reject') {
+      await notifyEvent({ kind: 'holiday_decided', request_id: req.id })
+    }
+
     showMessage(action === 'reject_cancel' ? 'Cancellation rejected' : 'Request rejected', 'success')
     setSelected(null); setReviewNotes('')
     load()
@@ -406,6 +376,43 @@ export default function DashboardHolidaysPage() {
     load()
   }
 
+  const handleMyCreate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (myType === 'holiday' && myIsCurrent && myDaysRequested > myBalance) {
+      showMessage(`You don't have enough balance (${myBalance} available)`, 'error'); return
+    }
+    if (myType === 'holiday' && myDaysRequested === 0) {
+      showMessage('Selected dates contain no working days for you', 'error'); return
+    }
+    if (myIsHalfDay && myStartDate !== myEndDate) {
+      showMessage('Half day must be a single date', 'error'); return
+    }
+    setSubmittingMy(true)
+    const res = await fetch('/api/holiday-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'create',
+        user_id: me.id,
+        company_id: me.company_id,
+        request_type: myType,
+        start_date: myStartDate,
+        end_date: myType === 'early_finish' || myType === 'keep_day_off' ? myStartDate : myEndDate,
+        half_day_type: myIsHalfDay ? myHalfDayType : null,
+        early_finish_time: myType === 'early_finish' ? myEarlyFinishTime : null,
+        reason: myReason || null,
+        days_requested: myDaysRequested,
+      }),
+    })
+    const data = await res.json()
+    setSubmittingMy(false)
+    if (!res.ok) { showMessage('Error: ' + (data.error || 'unknown'), 'error'); return }
+    showMessage('Request submitted', 'success')
+    setMyStartDate(''); setMyEndDate(''); setMyIsHalfDay(false); setMyReason(''); setMyEarlyFinishTime('')
+    setShowMyForm(false)
+    load()
+  }
+
   const handleCancelMyRequest = async (req: any) => {
     if (req.status === 'pending') {
       if (!confirm('Cancel this pending request?')) return
@@ -455,25 +462,12 @@ export default function DashboardHolidaysPage() {
   // ─── Render ─────────────────────────────────────────────────
   if (loading) return <div className="p-8 text-slate-400 italic">Loading…</div>
 
-  // No access at all
-  if (!canReview && !hasHolidayAccess) {
-    return (
-      <div className="p-8 max-w-3xl">
-        <h1 className="text-2xl font-bold text-slate-900 mb-2">Holidays</h1>
-        <p className="text-sm text-slate-500 mb-6">{companyName}</p>
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
-          You don&apos;t have access to the Holidays feature. Ask your admin to give you Read or Edit access.
-        </div>
-      </div>
-    )
-  }
-
   const today = ymd(new Date())
 
   return (
     <div className="p-8 max-w-6xl">
-      <h1 className="text-2xl font-bold text-slate-900 mb-2 print:hidden">Holidays</h1>
-      <p className="text-sm text-slate-500 mb-6 print:hidden">{companyName}</p>
+      <h1 className="text-2xl font-bold text-slate-900 mb-2">Holidays</h1>
+      <p className="text-sm text-slate-500 mb-6">{companyName}</p>
 
       {message && (
         <div className={`mb-4 p-3 rounded-lg text-sm font-medium ${
@@ -481,37 +475,27 @@ export default function DashboardHolidaysPage() {
         }`}>{message}</div>
       )}
 
-      {/* Manager messaging — only relevant when reviewing */}
-      {canReview && isManager && managerTitles.length === 0 && (
+      {isManager && managerTitles.length === 0 && (
         <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-sm text-yellow-800">
           You don&apos;t have any job titles assigned. Ask your admin.
         </div>
       )}
 
-      {canReview && isManager && managerTitles.length > 0 && (
+      {isManager && managerTitles.length > 0 && (
         <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800">
           Showing requests from staff with job titles: <strong>{managerTitles.join(', ')}</strong>
         </div>
       )}
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-slate-200 mb-4 overflow-x-auto print:hidden">
-        {canReview && (
-          <>
-            <TabButton label="Pending Approval" active={tab === 'pending'} count={pending.length} onClick={() => setTab('pending')} />
-            <TabButton label="Calendar"   active={tab === 'calendar'}    onClick={() => setTab('calendar')} />
-            <TabButton label="History"    active={tab === 'history'}     onClick={() => setTab('history')} />
-          </>
-        )}
+      <div className="flex gap-1 border-b border-slate-200 mb-4 overflow-x-auto">
+        <TabButton label="Pending Approval" active={tab === 'pending'} count={pending.length} onClick={() => setTab('pending')} />
+        <TabButton label="Calendar"   active={tab === 'calendar'}    onClick={() => setTab('calendar')} />
+        <TabButton label="History"    active={tab === 'history'}     onClick={() => setTab('history')} />
         {isAdmin && (
           <TabButton label="Manage Employee" active={tab === 'manage'} onClick={() => setTab('manage')} />
         )}
-        {canReview && (
-          <TabButton label="Reports" active={tab === 'reports'} onClick={() => setTab('reports')} />
-        )}
-        {hasHolidayAccess && (
-          <TabButton label="My Holidays" active={tab === 'mine'} onClick={() => setTab('mine')} />
-        )}
+        <TabButton label="My Holidays" active={tab === 'mine'} onClick={() => setTab('mine')} />
       </div>
 
       {/* PENDING TAB */}
@@ -601,14 +585,14 @@ export default function DashboardHolidaysPage() {
               <table className="border-collapse">
                 <thead>
                   <tr>
-                    <th className="sticky left-0 z-20 bg-white border-r border-b border-slate-300 px-2 py-1 text-left text-xs font-semibold text-slate-700 min-w-40">
+                    <th className="sticky left-0 z-20 bg-white border-r border-b border-slate-300 px-3 py-2 text-left text-xs font-semibold text-slate-700 min-w-48">
                       Employee
                     </th>
                     {monthDates.map(date => {
                       const wknd = isWeekend(date); const tdy = isToday(date); const bh = isBankHoliday(date)
                       return (
                         <th key={date.toISOString()}
-                          className={`border-r border-b border-slate-300 px-0.5 py-1 text-[10px] font-medium text-center min-w-7 ${
+                          className={`border-r border-b border-slate-300 px-1 py-2 text-xs font-medium text-center min-w-10 ${
                             tdy ? 'bg-blue-100 text-blue-700' :
                             bh ? 'bg-red-100 text-red-700' :
                             wknd ? 'bg-yellow-100 text-yellow-700' :
@@ -616,7 +600,7 @@ export default function DashboardHolidaysPage() {
                           }`}
                           title={bh ? bankHolidayNames[ymd(date)] : ''}>
                           <div>{date.getDate()}</div>
-                          <div className="text-[8px] opacity-70">
+                          <div className="text-[9px] opacity-70">
                             {date.toLocaleDateString('en-GB', { weekday: 'short' }).slice(0, 1)}
                           </div>
                         </th>
@@ -627,8 +611,9 @@ export default function DashboardHolidaysPage() {
                 <tbody>
                   {visibleUsers.map(user => (
                     <tr key={user.id}>
-                      <td className="sticky left-0 z-10 bg-white border-r border-b border-slate-200 px-2 py-1 text-xs">
+                      <td className="sticky left-0 z-10 bg-white border-r border-b border-slate-200 px-3 py-2 text-sm">
                         <p className="font-medium text-slate-800 truncate">{user.full_name}</p>
+                        {user.job_title && <p className="text-[10px] text-slate-500">{user.job_title}</p>}
                       </td>
                       {monthDates.map(date => {
                         const wknd = isWeekend(date); const tdy = isToday(date); const bh = isBankHoliday(date)
@@ -639,7 +624,7 @@ export default function DashboardHolidaysPage() {
                         else if (wknd) cellBg = 'bg-yellow-50'
                         return (
                           <td key={date.toISOString()}
-                            className={`border-r border-b border-slate-200 p-0.5 text-center min-w-7 h-8 ${cellBg}`}
+                            className={`border-r border-b border-slate-200 p-0.5 text-center min-w-10 h-12 ${cellBg}`}
                             title={bh ? bankHolidayNames[ymd(date)] : ''}>
                             {req && (
                               <button onClick={() => { setSelected(req); setReviewNotes('') }}
@@ -935,15 +920,6 @@ export default function DashboardHolidaysPage() {
         </div>
       )}
 
-      {/* REPORTS TAB */}
-      {tab === 'reports' && canReview && (
-        <ReportsView
-          users={visibleUsers}
-          requests={visibleRequests}
-          companyName={companyName}
-        />
-      )}
-
       {/* MY HOLIDAYS TAB */}
       {tab === 'mine' && (
         <div className="space-y-4">
@@ -971,19 +947,130 @@ export default function DashboardHolidaysPage() {
           )}
 
           {showMyForm && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-bold text-slate-800">New Request</h2>
                 <button onClick={() => setShowMyForm(false)} className="text-slate-400 text-xl leading-none">✕</button>
               </div>
-              <HolidayRequestForm
-                profile={me}
-                company={company}
-                bankHolidays={bankHolidays}
-                variant="dashboard"
-                onSubmitted={() => { setShowMyForm(false); load() }}
-                onCancel={() => setShowMyForm(false)}
-              />
+
+              <form onSubmit={handleMyCreate} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Type</label>
+                  <select value={myType} onChange={e => setMyType(e.target.value as any)}
+                    className="w-full border border-slate-300 rounded-xl px-3 py-3 text-slate-900 bg-white">
+                    <option value="holiday">🏖️ Holiday</option>
+                    {company?.allow_early_finish && <option value="early_finish">🕓 Early Finish</option>}
+                    <option value="keep_day_off">🚫 Keep Day Off</option>
+                  </select>
+                </div>
+
+                {myType === 'holiday' ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Start</label>
+                      <input type="date" value={myStartDate} min={today} onChange={e => setMyStartDate(e.target.value)} required
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-slate-900" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">End</label>
+                      <input type="date" value={myEndDate} min={myStartDate || today} onChange={e => setMyEndDate(e.target.value)} required
+                        className="w-full border border-slate-300 rounded-xl px-3 py-2 text-slate-900" />
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Date</label>
+                    <input type="date" value={myStartDate} min={today} onChange={e => setMyStartDate(e.target.value)} required
+                      className="w-full border border-slate-300 rounded-xl px-3 py-2 text-slate-900" />
+                  </div>
+                )}
+
+                {myType === 'holiday' && company?.allow_half_days && myStartDate === myEndDate && myStartDate && myDaysRequested > 0 && (
+                  <div>
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input type="checkbox" checked={myIsHalfDay} onChange={e => setMyIsHalfDay(e.target.checked)} className="w-4 h-4" />
+                      <span className="text-sm font-medium text-slate-700">Half day only</span>
+                    </label>
+                    {myIsHalfDay && (
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <button type="button" onClick={() => setMyHalfDayType('morning')}
+                          className={`p-2 rounded-xl border-2 text-sm font-medium ${myHalfDayType === 'morning' ? 'border-blue-500 bg-blue-50' : 'border-slate-200'}`}>
+                          🌅 Morning
+                        </button>
+                        <button type="button" onClick={() => setMyHalfDayType('afternoon')}
+                          className={`p-2 rounded-xl border-2 text-sm font-medium ${myHalfDayType === 'afternoon' ? 'border-blue-500 bg-blue-50' : 'border-slate-200'}`}>
+                          🌇 Afternoon
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {myType === 'early_finish' && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Finish time</label>
+                    <input type="time" value={myEarlyFinishTime} onChange={e => setMyEarlyFinishTime(e.target.value)} required
+                      className="w-full border border-slate-300 rounded-xl px-3 py-2 text-slate-900" />
+                  </div>
+                )}
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Reason <span className="text-slate-400">(optional)</span>
+                  </label>
+                  <textarea value={myReason} onChange={e => setMyReason(e.target.value)} rows={2}
+                    placeholder="e.g. Family wedding"
+                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-slate-900" />
+                </div>
+
+                {myType === 'holiday' && myStartDate && !myIsCurrent && (
+                  <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-sm">
+                    <p className="text-blue-800 font-medium">📅 This is for next holiday year ({myYearLabel})</p>
+                    <p className="text-xs text-blue-700 mt-1">
+                      Your current balance won&apos;t change when this gets approved.
+                    </p>
+                  </div>
+                )}
+
+                {myType === 'holiday' && myStartDate && myEndDate && (
+                  <div className={`p-4 rounded-xl border ${
+                    myIsCurrent && myBalanceAfter < 0 ? 'bg-red-50 border-red-200' :
+                    myDaysRequested === 0 ? 'bg-yellow-50 border-yellow-200' :
+                    'bg-slate-50 border-slate-200'
+                  }`}>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-700">Working days requested</span>
+                      <span className="font-bold text-slate-900">{myDaysRequested}</span>
+                    </div>
+                    {myIsCurrent && (
+                      <>
+                        <div className="flex justify-between text-sm mt-1">
+                          <span className="text-slate-700">Current balance</span>
+                          <span className="font-bold text-slate-900">{myBalance}</span>
+                        </div>
+                        <div className="flex justify-between text-sm mt-1 pt-1 border-t border-slate-200">
+                          <span className="text-slate-700">Balance after approval</span>
+                          <span className={`font-bold ${myBalanceAfter < 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            {myBalanceAfter}
+                          </span>
+                        </div>
+                      </>
+                    )}
+                    {myDaysRequested === 0 && (
+                      <p className="text-xs text-yellow-700 mt-2">⚠️ No working days in those dates</p>
+                    )}
+                    {myIsCurrent && myBalanceAfter < 0 && (
+                      <p className="text-xs text-red-600 mt-2">⚠️ Not enough balance</p>
+                    )}
+                  </div>
+                )}
+
+                <button type="submit"
+                  disabled={submittingMy || (myType === 'holiday' && (myDaysRequested === 0 || (myIsCurrent && myBalanceAfter < 0)))}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white py-3 rounded-xl font-medium transition disabled:opacity-50">
+                  {submittingMy ? 'Submitting…' : 'Submit Request'}
+                </button>
+              </form>
             </div>
           )}
 
@@ -1180,170 +1267,6 @@ function Row({ label, value, capitalize }: { label: string; value: string; capit
     <div className="flex justify-between">
       <span className="text-slate-600">{label}</span>
       <span className={`font-medium text-slate-800 ${capitalize ? 'capitalize' : ''}`}>{value}</span>
-    </div>
-  )
-}
-
-/**
- * ReportsView — holiday balance table with CSV / Print / Save-as-PDF exports.
- *
- * Columns: Name / Job Title / Annual Entitlement / Current Balance /
- *          Days Used / Pending Count
- *
- * "Days used" = annual − current (truthful about deductions regardless
- * of source — request approvals OR manual balance adjustments).
- *
- * "Pending count" = number of requests in pending OR cancel_pending
- * status for that user (any year).
- *
- * Prints/PDFs via the browser's native print dialog using a print-only
- * stylesheet that hides everything except the report card.
- */
-function ReportsView({
-  users, requests, companyName,
-}: {
-  users: any[]
-  requests: any[]
-  companyName: string
-}) {
-  // Build report rows
-  const rows = users.map(u => {
-    const annual = Number(u.full_year_entitlement ?? 0)
-    const current = Number(u.holiday_entitlement ?? 0)
-    const used = annual ? Math.round((annual - current) * 10) / 10 : 0
-    const pending = requests.filter(
-      r => r.user_id === u.id && (r.status === 'pending' || r.status === 'cancel_pending')
-    ).length
-    return {
-      id: u.id,
-      name: u.full_name || u.email || '—',
-      jobTitle: u.job_title || '',
-      annual,
-      current,
-      used,
-      pending,
-    }
-  })
-    .sort((a, b) => a.name.localeCompare(b.name))
-
-  const handleCSV = () => {
-    const headers = ['Name', 'Job Title', 'Annual Entitlement', 'Current Balance', 'Days Used', 'Pending Requests']
-    const escape = (v: any) => {
-      const s = String(v ?? '')
-      if (s.includes(',') || s.includes('"') || s.includes('\n')) {
-        return `"${s.replace(/"/g, '""')}"`
-      }
-      return s
-    }
-    const csv = [
-      headers.join(','),
-      ...rows.map(r => [r.name, r.jobTitle, r.annual, r.current, r.used, r.pending].map(escape).join(',')),
-    ].join('\n')
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    const today = new Date().toISOString().slice(0, 10)
-    a.download = `holiday-balances-${today}.csv`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  }
-
-  const handlePrint = () => {
-    window.print()
-  }
-
-  return (
-    <div>
-      {/* Print-only header (hidden on screen) */}
-      <div className="hidden print:block mb-4">
-        <h1 className="text-2xl font-bold">Holiday Balances</h1>
-        <p className="text-sm text-slate-600">{companyName}</p>
-        <p className="text-xs text-slate-500 mt-1">
-          Generated {new Date().toLocaleDateString('en-GB', {
-            day: '2-digit', month: 'long', year: 'numeric',
-          })}
-        </p>
-      </div>
-
-      {/* Action bar — hidden when printing */}
-      <div className="flex items-center justify-between mb-4 print:hidden">
-        <p className="text-sm text-slate-600">
-          {rows.length} {rows.length === 1 ? 'employee' : 'employees'}
-        </p>
-        <div className="flex gap-2">
-          <button onClick={handleCSV}
-            className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium px-3 py-1.5 rounded-lg">
-            ⬇ CSV
-          </button>
-          <button onClick={handlePrint}
-            className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-3 py-1.5 rounded-lg">
-            🖨 Print / Save as PDF
-          </button>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden print:shadow-none print:border-slate-400 print:rounded-none">
-        {rows.length === 0 ? (
-          <div className="p-8 text-center text-slate-400">No employees to report on.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 print:bg-white">
-                <tr>
-                  <th className="text-left px-4 py-2.5 font-semibold text-slate-700 border-b border-slate-200">Name</th>
-                  <th className="text-left px-4 py-2.5 font-semibold text-slate-700 border-b border-slate-200">Job Title</th>
-                  <th className="text-right px-4 py-2.5 font-semibold text-slate-700 border-b border-slate-200">Annual</th>
-                  <th className="text-right px-4 py-2.5 font-semibold text-slate-700 border-b border-slate-200">Balance</th>
-                  <th className="text-right px-4 py-2.5 font-semibold text-slate-700 border-b border-slate-200">Used</th>
-                  <th className="text-right px-4 py-2.5 font-semibold text-slate-700 border-b border-slate-200">Pending</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(r => (
-                  <tr key={r.id} className="border-b border-slate-100 last:border-b-0 hover:bg-slate-50 print:hover:bg-white">
-                    <td className="px-4 py-2 text-slate-800 font-medium">{r.name}</td>
-                    <td className="px-4 py-2 text-slate-600">{r.jobTitle || '—'}</td>
-                    <td className="px-4 py-2 text-right text-slate-800">{r.annual || '—'}</td>
-                    <td className="px-4 py-2 text-right font-medium text-slate-900">{r.current}</td>
-                    <td className="px-4 py-2 text-right text-slate-700">{r.used}</td>
-                    <td className="px-4 py-2 text-right">
-                      {r.pending > 0 ? (
-                        <span className="inline-block bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full text-xs font-medium print:bg-white print:text-slate-700">
-                          {r.pending}
-                        </span>
-                      ) : (
-                        <span className="text-slate-400">—</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      <p className="text-xs text-slate-500 mt-3 print:hidden">
-        <strong>Annual</strong> = full-year entitlement set on the user&apos;s profile.{' '}
-        <strong>Balance</strong> = days remaining now.{' '}
-        <strong>Used</strong> = annual − balance.{' '}
-        <strong>Pending</strong> = requests awaiting review (any year).
-      </p>
-
-      {/* Print stylesheet — hide everything else on the page when printing */}
-      <style jsx global>{`
-        @media print {
-          body { background: white; }
-          /* Hide the sidebar, page header, tabs, message banner — anything
-             that isn't inside the reports view. The report adds its own
-             title via 'hidden print:block' above. */
-          aside, nav, .print\\:hidden { display: none !important; }
-          @page { margin: 1.5cm; }
-        }
-      `}</style>
     </div>
   )
 }

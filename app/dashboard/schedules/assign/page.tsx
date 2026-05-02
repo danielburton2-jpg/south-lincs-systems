@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { logAuditClient } from '@/lib/auditClient'
-import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh'
+import { notifyEvent } from '@/lib/notifyEvent'
 
 const supabase = createClient()
 
@@ -194,30 +194,6 @@ export default function SchedulesAssignPage() {
     const to = isoDate(addDays(weekStart, 6))
     loadAll(currentUser.company_id, from, to)
   }, [weekStart, currentUser?.company_id, loadAll])
-
-  // Realtime: refetch when relevant tables change for this company.
-  // CRITICAL: skip the refetch if the user has unsaved local edits — we
-  // don't want to silently overwrite their work-in-progress assignments.
-  // They'll see the new data after they save or navigate.
-  const reloadCurrentWeek = useCallback(() => {
-    if (!currentUser?.company_id) return
-    if (hasUnsaved) return
-    const from = isoDate(weekStart)
-    const to = isoDate(addDays(weekStart, 6))
-    loadAll(currentUser.company_id, from, to)
-  }, [currentUser?.company_id, weekStart, loadAll, hasUnsaved])
-
-  useRealtimeRefresh(
-    'schedules-assign-realtime',
-    [
-      { table: 'schedule_assignments', companyId: currentUser?.company_id || null },
-      { table: 'schedules',            companyId: currentUser?.company_id || null },
-      { table: 'profiles',             companyId: currentUser?.company_id || null },
-      { table: 'holiday_requests',     companyId: currentUser?.company_id || null },
-    ],
-    reloadCurrentWeek,
-    !!currentUser?.company_id,
-  )
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -429,6 +405,18 @@ export default function SchedulesAssignPage() {
     const now = new Date().toISOString()
 
     try {
+      // Capture the IDs of rows we're ABOUT to publish, so we can ping
+      // each assignee after the bulk update succeeds. (The update doesn't
+      // return rows by default, and even with .select() the predicate
+      // would have already changed.)
+      const { data: toPublish } = await supabase
+        .from('schedule_assignments')
+        .select('id')
+        .eq('company_id', currentUser.company_id)
+        .gte('assignment_date', fromISO)
+        .lte('assignment_date', toISO)
+        .or('status.eq.draft,is_changed.eq.true')
+
       const { error } = await supabase
         .from('schedule_assignments')
         .update({
@@ -446,6 +434,16 @@ export default function SchedulesAssignPage() {
         showMessage('Publish failed: ' + error.message, 'error')
         setPublishing(false)
         return
+      }
+
+      // Phone push per assignee. Fail-silent — the update has already
+      // succeeded; we don't want a failed push to surface to the admin.
+      if (toPublish && toPublish.length > 0) {
+        // Don't await — fire-and-forget so a slow push provider doesn't
+        // hold up the UI redraw. Each call is wrapped in fail-silent.
+        toPublish.forEach((row: any) => {
+          notifyEvent({ kind: 'schedule_assigned', assignment_id: row.id })
+        })
       }
 
       await logAuditClient({

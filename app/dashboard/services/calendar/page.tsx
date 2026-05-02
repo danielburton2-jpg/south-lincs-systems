@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import { notifyEvent } from '@/lib/notifyEvent'
 const supabase = createClient()
 
 const WEEKS_VISIBLE = 26
@@ -586,6 +587,12 @@ export default function ServicesCalendarPage() {
       })
       .eq('id', s.id)
     if (error) { alert('Could not reassign: ' + error.message); return }
+
+    // Phone push to the new assignee (skipped if just unassigning).
+    if (newMechId) {
+      await notifyEvent({ kind: 'service_assigned', schedule_id: s.id })
+    }
+
     setSelectedSchedule(null)
     loadSchedules()
   }
@@ -607,7 +614,7 @@ export default function ServicesCalendarPage() {
       .eq('active', true)
       .maybeSingle()
 
-    const { error } = await supabase.from('service_schedules').insert({
+    const { data: inserted, error } = await supabase.from('service_schedules').insert({
       company_id: currentUser.company_id,
       vehicle_id: quickAssign.vehicle.id,
       service_type: quickAssign.service_type,
@@ -622,9 +629,16 @@ export default function ServicesCalendarPage() {
       status: 'scheduled',
       auto_generated: true,
     })
+    .select('id')
+    .single()
 
     setQuickAssignBusy(false)
     if (error) { alert('Could not assign: ' + error.message); return }
+
+    // Phone push to the assignee
+    if (inserted?.id) {
+      await notifyEvent({ kind: 'service_assigned', schedule_id: inserted.id })
+    }
 
     setQuickAssign(null)
     setQuickAssignMechanic('')

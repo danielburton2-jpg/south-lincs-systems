@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, Suspense } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { notifyEvent } from '@/lib/notifyEvent'
 const supabase = createClient()
 
 const SERVICE_TYPES = [
@@ -213,6 +214,11 @@ function ScheduleForm() {
     setSubmitting(false)
 
     if (error) { showMessage('Could not schedule: ' + error.message, 'error'); return }
+
+    // Phone push to the assignee — only if a mechanic was selected on creation.
+    if (assignedTo && data?.id) {
+      await notifyEvent({ kind: 'service_assigned', schedule_id: data.id })
+    }
 
     showMessage('Scheduled. Redirecting to calendar…', 'success')
     setTimeout(() => router.push('/dashboard/services/calendar'), 1000)

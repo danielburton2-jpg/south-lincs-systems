@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { logAuditClient } from '@/lib/auditClient'
+import { notifyEvent } from '@/lib/notifyEvent'
 
 const supabase = createClient()
 
@@ -242,6 +243,11 @@ export default function AdminDefectsPage() {
       entity_id: defectId,
       details: { assigned_to: userId, assignee_name: assignee?.full_name },
     })
+
+    // Phone push to the new assignee. Skipped if just unassigning.
+    if (userId) {
+      await notifyEvent({ kind: 'defect_assigned', defect_id: defectId })
+    }
 
     showMessage(userId ? `Assigned to ${assignee?.full_name}` : 'Assignment cleared', 'success')
     cancelAssign()
