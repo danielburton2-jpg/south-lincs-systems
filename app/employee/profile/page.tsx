@@ -13,6 +13,8 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import SoundToggle from '@/components/SoundToggle'
+import PushRegistration from '@/components/PushRegistration'
 
 const supabase = createClient()
 
@@ -238,6 +240,16 @@ export default function EmployeeProfilePage() {
             {pwMessage}
           </div>
         )}
+
+        {/* Phone push notifications (drivers only) */}
+        {profile.role === 'user' && (
+          <PushRegistration
+            vapidPublicKey={process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || null}
+          />
+        )}
+
+        {/* Sound notifications */}
+        <SoundToggle variant="inline" />
 
         {/* Change Password */}
         {!showPasswordForm ? (

@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import IdleTimeoutGuard from '@/components/IdleTimeoutGuard'
+import NotificationShell from '@/components/NotificationShell'
 
 /**
  * /employee/* layout.
@@ -9,6 +10,7 @@ import IdleTimeoutGuard from '@/components/IdleTimeoutGuard'
  *   • Server-side gate: only role='user' reaches the children. Anyone
  *     else gets redirected away.
  *   • Mounts the idle-timeout guard (handles silent auto-logout).
+ *   • Mounts the notification shell so toasts + chime work app-wide.
  *
  * No sidebar — employee app is mobile-first. Bottom nav lives on the
  * page itself since it's part of the visual design rhythm.
@@ -36,7 +38,7 @@ export default async function EmployeeLayout({
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('role')
+    .select('id, role, company_id')
     .eq('id', user.id)
     .single()
 
@@ -57,9 +59,14 @@ export default async function EmployeeLayout({
   }
 
   return (
-    <>
-      <IdleTimeoutGuard />
+    <NotificationShell
+      userId={profile.id}
+      companyId={profile.company_id}
+      role={profile.role}
+      scope="employee"
+    >
+      <IdleTimeoutGuard role={profile.role} />
       {children}
-    </>
+    </NotificationShell>
   )
 }

@@ -3,50 +3,45 @@
 /**
  * IdleTimeoutGuard
  *
- * Drop-in component. When mounted inside a logged-in layout, it:
- *   1. Fetches the current user's role
- *   2. If the role is in ROLES_TO_TIME_OUT, starts an idle timer
- *   3. After TIMEOUT_MINUTES of inactivity, signs the user out
+ * Drop this inside a layout that should auto-log-out idle users.
  *
- * Render-wise it returns null. No visible UI.
+ * Pass `role` from the layout — the layout already does the
+ * server-side auth fetch, so we don't need a second client-side
+ * `auth.getUser()` here. Avoiding that call also avoids the Supabase
+ * auth-token lock contention that fires when multiple components
+ * call `auth.getUser()` in parallel:
  *
- * Settings — change these constants to adjust:
- *   ROLES_TO_TIME_OUT — which roles get auto-logged-out
- *   TIMEOUT_MINUTES   — minutes of inactivity before logout
+ *     Lock "lock:sb-...-auth-token" was released because another request stole it
+ *
+ * That error wasn't dangerous (auth eventually settled) but Next.js
+ * surfaces it as a runtime error overlay in dev. The fix is simply not
+ * to do the client-side fetch in the first place — the role is already
+ * known from the server-rendered layout.
+ *
+ * Renders nothing visible.
+ *
+ * Usage in a layout:
+ *
+ *   <IdleTimeoutGuard role={profile.role} />
  */
 
-import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase'
 import { useIdleLogout } from '@/lib/useIdleLogout'
 
+// Roles that should be auto-logged-out after inactivity.
 const ROLES_TO_TIME_OUT = ['superuser', 'admin', 'manager']
-const TIMEOUT_MINUTES = 30
 
-const supabase = createClient()
+// Inactivity threshold in minutes
+const TIMEOUT_MINUTES = 60
 
-export default function IdleTimeoutGuard() {
-  const [role, setRole] = useState<string | null>(null)
+type Props = {
+  /** The current user's role, as known from the server-rendered layout. */
+  role?: string | null
+}
 
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user || cancelled) return
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single()
-      if (!cancelled && profile?.role) {
-        setRole(profile.role)
-      }
-    }
-    load()
-    return () => { cancelled = true }
-  }, [])
-
-  // Hook is safe to call even when role is null — it no-ops in that case.
+export default function IdleTimeoutGuard({ role = null }: Props) {
+  // The hook only attaches listeners if `role` is one of the configured
+  // roles. Drivers (role='user') get no idle timeout — they're often
+  // out on the road and shouldn't be silently logged out.
   useIdleLogout(ROLES_TO_TIME_OUT, role, TIMEOUT_MINUTES)
-
   return null
 }

@@ -5,18 +5,13 @@ import SuperuserSidebar from '@/components/SuperuserSidebar'
 import IdleTimeoutGuard from '@/components/IdleTimeoutGuard'
 
 /**
- * /superuser/* layout.
+ * /superuser/* layout
  *
- *   • Server-side gate: only superusers reach the children. Anyone
- *     else gets redirected to /login.
- *   • Renders the permanent left sidebar.
- *   • Mounts <IdleTimeoutGuard /> which silently signs out after
- *     inactivity (only for the roles configured in that component).
+ * Wraps every superuser page with:
+ *   • Permanent left sidebar
+ *   • Auto-logout after 60 minutes of inactivity (via IdleTimeoutGuard)
  *
- * NOTE: This layout is the right place for the IdleTimeoutGuard —
- * NOT the root app/layout.tsx. Mounting it at the root means it runs
- * on /login too, which previously caused a build error to take down
- * the whole app. Keep IdleTimeoutGuard scoped to logged-in areas only.
+ * Also gates access: redirects non-superusers to /login.
  */
 
 export default async function SuperuserLayout({
@@ -33,7 +28,7 @@ export default async function SuperuserLayout({
         getAll() { return cookieStore.getAll() },
         setAll() { /* no-op in layout */ },
       },
-    },
+    }
   )
 
   const { data: { user } } = await supabase.auth.getUser()
@@ -51,7 +46,10 @@ export default async function SuperuserLayout({
 
   return (
     <div className="min-h-screen flex bg-slate-50">
-      <IdleTimeoutGuard />
+      {/* Idle timeout — silently signs the user out after 60 min inactivity.
+          Only activates for the roles defined in IdleTimeoutGuard. */}
+      <IdleTimeoutGuard role={profile.role} />
+
       <SuperuserSidebar
         user={{
           full_name: profile.full_name,

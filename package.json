@@ -15,7 +15,8 @@
     "jspdf-autotable": "^5.0.7",
     "next": "16.2.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/node": "^22",

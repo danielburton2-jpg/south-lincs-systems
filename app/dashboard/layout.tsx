@@ -3,6 +3,7 @@ import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import DashboardSidebar from '@/components/DashboardSidebar'
 import IdleTimeoutGuard from '@/components/IdleTimeoutGuard'
+import NotificationShell from '@/components/NotificationShell'
 
 /**
  * /dashboard/* layout.
@@ -167,25 +168,32 @@ export default async function DashboardLayout({
   })
 
   return (
-    <div className="min-h-screen flex bg-slate-50">
-      <IdleTimeoutGuard />
-      <DashboardSidebar
-        user={{
-          full_name: profile.full_name,
-          email: profile.email,
-          role: profile.role,
-        }}
-        holidaysCanEdit={holidaysCanEdit}
-        hasHolidayAccess={hasHolidayAccess}
-        schedulesCanEdit={schedulesCanEdit}
-        schedulesCanViewAll={schedulesCanViewAll}
-        hasSchedulesAccess={hasSchedulesAccess}
-        hasVehiclesAccess={hasVehiclesAccess}
-        hasServicesAccess={hasServicesAccess}
-      />
-      <main className="flex-1 overflow-x-auto">
-        {children}
-      </main>
-    </div>
+    <NotificationShell
+      userId={profile.id}
+      companyId={profile.company_id}
+      role={profile.role}
+      scope="dashboard"
+    >
+      <div className="min-h-screen flex bg-slate-50">
+        <IdleTimeoutGuard role={profile.role} />
+        <DashboardSidebar
+          user={{
+            full_name: profile.full_name,
+            email: profile.email,
+            role: profile.role,
+          }}
+          holidaysCanEdit={holidaysCanEdit}
+          hasHolidayAccess={hasHolidayAccess}
+          schedulesCanEdit={schedulesCanEdit}
+          schedulesCanViewAll={schedulesCanViewAll}
+          hasSchedulesAccess={hasSchedulesAccess}
+          hasVehiclesAccess={hasVehiclesAccess}
+          hasServicesAccess={hasServicesAccess}
+        />
+        <main className="flex-1 overflow-x-auto">
+          {children}
+        </main>
+      </div>
+    </NotificationShell>
   )
 }
