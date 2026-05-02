@@ -42,10 +42,19 @@ export default async function EmployeeLayout({
 
   if (!profile) redirect('/login')
 
-  // Send the wrong role to the right place
-  if (profile.role === 'superuser')                            redirect('/superuser')
-  if (profile.role === 'admin' || profile.role === 'manager')  redirect('/dashboard')
-  if (profile.role !== 'user')                                 redirect('/login')
+  // Send the wrong role to the right place. Admins and managers are
+  // allowed in /employee — they use the View Switcher card on
+  // /dashboard/profile to flip to the mobile app, e.g. to do a
+  // walkround on their phone while out driving. Superusers and any
+  // other role are redirected away.
+  if (profile.role === 'superuser') redirect('/superuser')
+  if (
+    profile.role !== 'user' &&
+    profile.role !== 'admin' &&
+    profile.role !== 'manager'
+  ) {
+    redirect('/login')
+  }
 
   return (
     <>

@@ -89,7 +89,7 @@ export default function ServiceSettingsPage() {
     setCompany(companyData)
 
     const hasServices = companyData?.company_features?.some(
-      (cf: any) => cf.is_enabled && cf.features?.name === 'Services & MOT'
+      (cf: any) => cf.is_enabled && (cf.features?.name === 'Services & Defects' || cf.features?.name === 'Services & MOT')
     )
     if (!hasServices) { router.push('/dashboard'); return }
 

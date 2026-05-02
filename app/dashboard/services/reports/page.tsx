@@ -39,7 +39,7 @@ export default function ServicesReportsHubPage() {
     setCompany(companyData)
 
     const hasFeature = companyData?.company_features?.some(
-      (cf: any) => cf.is_enabled && cf.features?.name === 'Services & MOT'
+      (cf: any) => cf.is_enabled && (cf.features?.name === 'Services & Defects' || cf.features?.name === 'Services & MOT')
     )
     if (!hasFeature) { router.push('/dashboard'); return }
 

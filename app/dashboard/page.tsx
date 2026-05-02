@@ -14,7 +14,8 @@
  * counters can come back here. Navigation stays in the sidebar.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
+import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh'
 
 type Stats = {
   company: {
@@ -30,6 +31,40 @@ type Stats = {
   activeUsers: number
   frozenUsers: number
   managerTitles: string[]
+  // At-a-glance panels — the API tells us per-panel whether to render.
+  showHolidays?: boolean
+  holidaysPendingCount?: number | null
+  showDefects?: boolean
+  defectsOpenCount?: number | null
+  recentDefects?: Array<{
+    id: string
+    severity: string | null
+    description: string | null
+    item_text: string | null
+    defect_note: string | null
+    reported_at: string
+    vehicle: {
+      id: string
+      registration: string
+      fleet_number: string | null
+      vehicle_type: string | null
+    } | null
+  }>
+  showServices?: boolean
+  nextServices?: Array<{
+    id: string
+    kind: 'scheduled' | 'compliance'
+    service_type: string
+    status: string | null
+    date: string         // ISO yyyy-mm-dd, for sorting / overdue detection
+    dateLabel: string    // pre-formatted (handles "WC ..." for week-commencing)
+    vehicle: {
+      id: string
+      registration: string
+      fleet_number: string | null
+      vehicle_type: string | null
+    } | null
+  }>
 }
 
 export default function DashboardPage() {
@@ -38,24 +73,38 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const res = await fetch('/api/get-dashboard-stats')
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error || 'Failed to load')
-        if (cancelled) return
-        setStats(data)
-      } catch (e: any) {
-        if (!cancelled) setError(e?.message || 'Failed to load')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
+  const loadStats = useCallback(async () => {
+    try {
+      const res = await fetch('/api/get-dashboard-stats')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to load')
+      setStats(data)
+      setError('')
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load')
+    } finally {
+      setLoading(false)
     }
-    load()
-    return () => { cancelled = true }
   }, [])
+
+  useEffect(() => { loadStats() }, [loadStats])
+
+  // Realtime: refetch the dashboard stats when relevant tables change.
+  useRealtimeRefresh(
+    'dashboard-home',
+    [
+      { table: 'profiles',          companyId: stats?.company?.id || null },
+      { table: 'companies',         companyId: null },
+      { table: 'company_features',  companyId: stats?.company?.id || null },
+      { table: 'holiday_requests',  companyId: stats?.company?.id || null },
+      { table: 'schedules',         companyId: stats?.company?.id || null },
+      { table: 'vehicle_defects',     companyId: stats?.company?.id || null },
+      { table: 'service_schedules',   companyId: stats?.company?.id || null },
+      { table: 'vehicles',            companyId: stats?.company?.id || null },
+    ],
+    loadStats,
+    !!stats?.company?.id,
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -129,22 +178,129 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-4 mt-6">
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
-          <p className="text-2xl font-bold text-slate-800">{stats.totalUsers}</p>
-          <p className="text-xs text-slate-500 mt-1">
-            {isAdmin ? 'Total Users' : 'Your Team'}
-          </p>
+      {/* Two compact glance tiles — Holidays pending + Open defects.
+          Each gates on the respective feature so a company without
+          either still gets a clean dashboard. */}
+      {(stats.showHolidays || stats.showDefects) && (
+        <div className="mt-6 grid grid-cols-2 gap-3 max-w-md">
+          {stats.showHolidays && (
+            <div className="bg-white rounded-lg shadow-sm border border-slate-200 px-3 py-2.5 flex items-baseline gap-2">
+              <span className="text-xl font-bold text-amber-600 tabular-nums">{stats.holidaysPendingCount ?? 0}</span>
+              <span className="text-xs text-slate-500">Holidays pending</span>
+            </div>
+          )}
+          {stats.showDefects && (
+            <div className="bg-white rounded-lg shadow-sm border border-slate-200 px-3 py-2.5 flex items-baseline gap-2">
+              <span className="text-xl font-bold text-red-600 tabular-nums">{stats.defectsOpenCount ?? 0}</span>
+              <span className="text-xs text-slate-500">Open defects</span>
+            </div>
+          )}
         </div>
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
-          <p className="text-2xl font-bold text-green-600">{stats.activeUsers}</p>
-          <p className="text-xs text-slate-500 mt-1">Active</p>
+      )}
+
+      {/* Recent open defects (5 newest) */}
+      {stats.showDefects && (stats.recentDefects?.length ?? 0) > 0 && (
+        <div className="mt-4 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-800">Recent open defects</h2>
+            <span className="text-xs text-slate-400">5 newest</span>
+          </div>
+          <ul className="divide-y divide-slate-100">
+            {(stats.recentDefects || []).map(d => {
+              const sevColor =
+                d.severity === 'critical' ? 'bg-red-100 text-red-800 border-red-300' :
+                d.severity === 'major'    ? 'bg-orange-100 text-orange-800 border-orange-300' :
+                                            'bg-amber-50 text-amber-700 border-amber-200'
+              const detail = d.defect_note || d.description || d.item_text || '—'
+              return (
+                <li key={d.id} className="px-4 py-3 flex items-start gap-3">
+                  <span className={`text-[10px] uppercase px-2 py-0.5 rounded border flex-shrink-0 ${sevColor}`}>
+                    {d.severity || 'minor'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-mono text-sm font-bold text-slate-800">
+                      {d.vehicle?.registration || '?'}
+                      {d.vehicle?.fleet_number && (
+                        <span className="ml-2 text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-sans">
+                          #{d.vehicle.fleet_number}
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-xs text-slate-700 mt-0.5 truncate">{detail}</p>
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      {new Date(d.reported_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}
+                    </p>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
         </div>
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 text-center">
-          <p className="text-2xl font-bold text-orange-500">{stats.frozenUsers}</p>
-          <p className="text-xs text-slate-500 mt-1">Frozen</p>
+      )}
+
+      {/* Next 5 scheduled services */}
+      {stats.showServices && (stats.nextServices?.length ?? 0) > 0 && (
+        <div className="mt-4 bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-800">Next services &amp; compliance</h2>
+            <span className="text-xs text-slate-400">up to 5</span>
+          </div>
+          <ul className="divide-y divide-slate-100">
+            {(stats.nextServices || []).map(s => {
+              const typeLabel =
+                s.service_type === 'service'             ? 'Service' :
+                s.service_type === 'mot'                 ? 'MOT' :
+                s.service_type === 'mot_prep'            ? 'MOT prep' :
+                s.service_type === 'inspection'          ? 'Inspection' :
+                s.service_type === 'safety_inspection'   ? 'Safety inspection' :
+                s.service_type === 'tacho_calibration'   ? 'Tacho' :
+                s.service_type === 'lift_inspection'     ? 'Lift inspection' :
+                s.service_type === 'loler_inspection'    ? 'LOLER' :
+                s.service_type === 'tax'                 ? 'Tax' :
+                s.service_type === 'custom'              ? 'Other' :
+                                                           (s.service_type || '—')
+              const isInProgress = s.status === 'in_progress'
+              // Overdue if the date is strictly before today (string compare
+              // works because dates are ISO yyyy-mm-dd).
+              const todayIso = new Date().toISOString().slice(0, 10)
+              const isOverdue = s.date < todayIso
+              return (
+                <li key={s.id} className="px-4 py-3 flex items-start gap-3">
+                  <span className="text-[10px] uppercase px-2 py-0.5 rounded border flex-shrink-0 bg-slate-100 text-slate-700 border-slate-300">
+                    {typeLabel}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-mono text-sm font-bold text-slate-800">
+                      {s.vehicle?.registration || '?'}
+                      {s.vehicle?.fleet_number && (
+                        <span className="ml-2 text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-sans">
+                          #{s.vehicle.fleet_number}
+                        </span>
+                      )}
+                      {isInProgress && (
+                        <span className="ml-2 text-[10px] uppercase px-2 py-0.5 rounded border bg-blue-100 text-blue-700 border-blue-300 font-sans">
+                          in progress
+                        </span>
+                      )}
+                      {isOverdue && (
+                        <span className="ml-2 text-[10px] uppercase px-2 py-0.5 rounded border bg-red-100 text-red-700 border-red-300 font-sans">
+                          overdue
+                        </span>
+                      )}
+                      {s.kind === 'compliance' && !isOverdue && !isInProgress && (
+                        <span className="ml-2 text-[10px] uppercase px-2 py-0.5 rounded border bg-amber-50 text-amber-700 border-amber-200 font-sans">
+                          due
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-0.5">{s.dateLabel}</p>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
         </div>
-      </div>
+      )}
 
       {isManager && stats.managerTitles.length === 0 && (
         <div className="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">

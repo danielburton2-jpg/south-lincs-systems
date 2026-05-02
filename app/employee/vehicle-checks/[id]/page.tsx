@@ -318,20 +318,43 @@ export default function VehicleCheckFormPage() {
 
       const newDefects = defectItems
         .filter(i => !existingItemIds.has(i.id))
-        .map(i => ({
-          company_id: currentUser.company_id,
-          vehicle_id: vehicle.id,
-          check_id: checkId,
-          check_item_id: i.id,
-          reported_by: currentUser.id,
-          category: i.category,
-          item_text: i.item_text,
-          defect_note: i.defect_note,
-          status: 'open',
-        }))
+        .map(i => {
+          // description used to be NOT NULL on vehicle_defects (migration
+          // 012). It's been made nullable in 021, but we still populate
+          // it from category + item + note so any older code that reads
+          // `description` (admin filters, exports, etc.) keeps working.
+          const description = [i.category, i.item_text, i.defect_note]
+            .filter(Boolean)
+            .join(' — ')
+          return {
+            company_id: currentUser.company_id,
+            vehicle_id: vehicle.id,
+            check_id: checkId,
+            check_item_id: i.id,
+            reported_by: currentUser.id,
+            category: i.category,
+            item_text: i.item_text,
+            defect_note: i.defect_note,
+            description,
+            status: 'open',
+          }
+        })
 
       if (newDefects.length > 0) {
-        await supabase.from('vehicle_defects').insert(newDefects)
+        const { error: defectErr } = await supabase
+          .from('vehicle_defects')
+          .insert(newDefects)
+        if (defectErr) {
+          // Don't roll back the check (it's already saved as completed
+          // with the failed item). But surface the error loudly so the
+          // driver knows the defect record didn't get created.
+          setSubmitting(false)
+          showMessage(
+            `Check saved but defect couldn't be logged: ${defectErr.message}`,
+            'error'
+          )
+          return
+        }
       }
     }
 

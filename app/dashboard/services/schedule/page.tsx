@@ -78,7 +78,7 @@ function ScheduleForm() {
     setCompany(companyData)
 
     const hasFeature = companyData?.company_features?.some(
-      (cf: any) => cf.is_enabled && cf.features?.name === 'Services & MOT'
+      (cf: any) => cf.is_enabled && (cf.features?.name === 'Services & Defects' || cf.features?.name === 'Services & MOT')
     )
     if (!hasFeature) { router.push('/dashboard'); return }
 
@@ -94,8 +94,12 @@ function ScheduleForm() {
     // Load mechanics — use the API endpoint that uses the service role
     // (bypasses RLS issues with user_features for non-superuser callers)
     try {
+      // Look up the Services & Defects feature by slug (slug never
+      // changes, name has been renamed from 'Services & MOT'). Users
+      // with this feature enabled are the company's mechanics — they
+      // can be assigned services and defects.
       const { data: feat } = await supabase
-        .from('features').select('id').eq('name', 'Mechanic').single()
+        .from('features').select('id').eq('slug', 'services_mot').single()
 
       const usersRes = await fetch('/api/get-company-users', {
         method: 'POST',
@@ -342,7 +346,7 @@ function ScheduleForm() {
             <label className="block text-sm font-medium text-slate-700 mb-1">Assign to mechanic</label>
             {mechanics.length === 0 ? (
               <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg p-3">
-                No mechanics yet — give a user the <strong>Mechanic</strong> feature in the user editor.
+                No mechanics yet — give a user the <strong>Services &amp; Defects</strong> feature in the user editor.
               </div>
             ) : (
               <select value={assignedTo} onChange={e => setAssignedTo(e.target.value)}

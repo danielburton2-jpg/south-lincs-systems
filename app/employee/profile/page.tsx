@@ -17,6 +17,7 @@ import { createClient } from '@/lib/supabase'
 const supabase = createClient()
 
 type Profile = {
+  id: string
   full_name: string | null
   email: string | null
   role: string
@@ -43,6 +44,67 @@ export default function EmployeeProfilePage() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // Change password state
+  const [showPasswordForm, setShowPasswordForm] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [submittingPassword, setSubmittingPassword] = useState(false)
+  const [pwMessage, setPwMessage] = useState('')
+  const [pwMessageType, setPwMessageType] = useState<'success' | 'error'>('success')
+
+  const showPwMessage = (msg: string, type: 'success' | 'error') => {
+    setPwMessage(msg)
+    setPwMessageType(type)
+    setTimeout(() => setPwMessage(''), 5000)
+  }
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!profile) return
+
+    if (newPassword.length < 6) {
+      showPwMessage('New password must be at least 6 characters', 'error')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      showPwMessage('New passwords do not match', 'error')
+      return
+    }
+    if (currentPassword === newPassword) {
+      showPwMessage('New password must be different from current', 'error')
+      return
+    }
+
+    setSubmittingPassword(true)
+    const res = await fetch('/api/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'self_change',
+        target_user_id: profile.id,
+        current_password: currentPassword,
+        new_password: newPassword,
+        actor_id: profile.id,
+        actor_email: profile.email,
+        actor_role: profile.role,
+      }),
+    })
+    const result = await res.json()
+    setSubmittingPassword(false)
+
+    if (!res.ok) {
+      showPwMessage(result.error || 'Failed to change password', 'error')
+      return
+    }
+
+    showPwMessage('Password changed successfully!', 'success')
+    setCurrentPassword('')
+    setNewPassword('')
+    setConfirmPassword('')
+    setShowPasswordForm(false)
+  }
+
   useEffect(() => {
     let cancelled = false
     const load = async () => {
@@ -51,7 +113,7 @@ export default function EmployeeProfilePage() {
         if (!user) { router.push('/login'); return }
         const { data } = await supabase
           .from('profiles')
-          .select('full_name, email, role, job_title, employee_number, holiday_entitlement')
+          .select('id, full_name, email, role, job_title, employee_number, holiday_entitlement')
           .eq('id', user.id)
           .single()
         if (!cancelled && data) setProfile(data)
@@ -143,13 +205,116 @@ export default function EmployeeProfilePage() {
           )}
         </div>
 
-        {/* Coming soon */}
-        <div className="bg-slate-50 border border-dashed border-slate-300 rounded-2xl p-4 text-center">
-          <p className="text-sm text-slate-600 font-medium">Editing coming soon</p>
-          <p className="text-xs text-slate-500 mt-1">
-            Soon you&apos;ll be able to update your details and change your password from here.
-          </p>
-        </div>
+        {/* View Switcher — admins/managers only. Drivers don't see this. */}
+        {(profile.role === 'admin' || profile.role === 'manager') && (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4">
+            <h2 className="text-base font-bold text-slate-800 mb-1">📱 Switch View</h2>
+            <p className="text-xs text-slate-500 mb-3">
+              You&apos;re currently in the App view. Switch back to the full Dashboard.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="border-2 border-indigo-600 bg-indigo-50 rounded-xl p-4 text-center">
+                <p className="text-2xl mb-1">📱</p>
+                <p className="font-semibold text-indigo-800 text-sm">App</p>
+                <p className="text-xs text-indigo-600 mt-0.5">You&apos;re here</p>
+              </div>
+              <button
+                onClick={() => router.push('/dashboard')}
+                className="border-2 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50 active:bg-indigo-100/50 rounded-xl p-4 text-center transition"
+              >
+                <p className="text-2xl mb-1">🖥️</p>
+                <p className="font-semibold text-slate-700 text-sm">Dashboard</p>
+                <p className="text-xs text-slate-500 mt-0.5">Switch back</p>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Password change message */}
+        {pwMessage && (
+          <div className={`p-3 rounded-2xl text-sm font-medium ${
+            pwMessageType === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+          }`}>
+            {pwMessage}
+          </div>
+        )}
+
+        {/* Change Password */}
+        {!showPasswordForm ? (
+          <button
+            onClick={() => setShowPasswordForm(true)}
+            className="w-full bg-white hover:bg-slate-50 active:bg-slate-100 border border-slate-200 rounded-2xl shadow-sm py-4 text-slate-700 font-medium transition flex items-center justify-center gap-2"
+          >
+            🔒 Change Password
+          </button>
+        ) : (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-bold text-slate-800">Change Password</h2>
+              <button
+                onClick={() => {
+                  setShowPasswordForm(false)
+                  setCurrentPassword('')
+                  setNewPassword('')
+                  setConfirmPassword('')
+                }}
+                className="text-slate-400 text-lg"
+                aria-label="Cancel"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleChangePassword} className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Current password</label>
+                <input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-900"
+                  required
+                  autoComplete="current-password"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">New password</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-900"
+                  required
+                  minLength={6}
+                  autoComplete="new-password"
+                />
+                <p className="text-xs text-slate-500 mt-0.5">At least 6 characters</p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">Confirm new password</label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-900"
+                  required
+                  minLength={6}
+                  autoComplete="new-password"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={submittingPassword}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-medium transition disabled:opacity-50"
+              >
+                {submittingPassword ? 'Updating…' : 'Update Password'}
+              </button>
+            </form>
+          </div>
+        )}
 
         {/* Sign out */}
         <button

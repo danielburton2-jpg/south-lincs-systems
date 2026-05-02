@@ -103,7 +103,11 @@ export default function EmployeeHistoryPage() {
     const userHasFeature = (userFeats as any[])?.some(
       (uf: any) => uf.features?.name === 'Vehicle Checks'
     )
-    if (!userHasFeature) {
+    // Admins/managers using the View Switcher don't typically have
+    // user_features rows ticked — let them through anyway so they can
+    // do walkrounds from a phone.
+    const isAdminViewing = profile.role === 'admin' || profile.role === 'manager'
+    if (!userHasFeature && !isAdminViewing) {
       router.push('/employee')
       return
     }

@@ -1,86 +1,55 @@
-import { createServerClient, type CookieOptions } from '@supabase/ssr'
+import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-
-/**
- * Auth middleware.
- *
- * Subscription rule: a company user (non-superuser) can only access the
- * app if their company has a valid subscription end. The "effective end"
- * is whichever of:
- *   • override_end_date (if set, takes priority)
- *   • end_date          (calculated from start + length when the company
- *                        was created or last edited)
- *
- * If neither is set → blocked. If the effective end is today or in the
- * past → blocked. (Today counts as expired so a 1-year sub starting
- * Jan 1 ends Jan 1 next year — the user can use it through Dec 31 only.)
- *
- * Superusers are not company-bound and therefore never expire.
- */
-
-const PUBLIC_API_ROUTES = ['/api/audit']
-
-// Shape of the array Supabase passes to setAll(). Local type keeps the
-// middleware compiling under noImplicitAny without depending on whether
-// Supabase exports its CookieToSet type publicly.
-type CookieToSet = { name: string; value: string; options?: CookieOptions }
 
 export async function middleware(request: NextRequest) {
   const response = NextResponse.next()
   const { pathname } = request.nextUrl
-
-  if (PUBLIC_API_ROUTES.some(p => pathname.startsWith(p))) {
-    return response
-  }
-
-  // /signup is no longer present (deleted), so only /login is auth-free
-  const isAuthFreePath = pathname === '/login'
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll() { return request.cookies.getAll() },
-        setAll(cookiesToSet: CookieToSet[]) {
+        getAll() {
+          return request.cookies.getAll()
+        },
+        setAll(cookiesToSet) {
           cookiesToSet.forEach(({ name, value, options }) =>
             response.cookies.set(name, value, options)
           )
         },
       },
-    },
+    }
   )
 
   const { data: { user } } = await supabase.auth.getUser()
 
+  // If not logged in, send to login page
   if (!user) {
-    if (isAuthFreePath) return response
+    if (pathname.startsWith('/login')) return response
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
+  // Get the user's profile
   const { data: profile } = await supabase
     .from('profiles')
     .select('role, is_frozen, is_deleted, company_id')
     .eq('id', user.id)
     .single()
 
-  if (!profile) {
-    await supabase.auth.signOut()
-    const url = new URL('/login', request.url)
-    url.searchParams.set('error', 'noprofile')
-    return NextResponse.redirect(url)
-  }
+  const role = profile?.role
 
-  if (profile.is_frozen || profile.is_deleted) {
+  // If account is frozen or deleted, sign out and send to login
+  if (profile?.is_frozen || profile?.is_deleted) {
     await supabase.auth.signOut()
     const url = new URL('/login', request.url)
     url.searchParams.set('error', 'frozen')
     return NextResponse.redirect(url)
   }
 
-  // Company subscription check (non-superusers only)
-  if (profile.company_id && profile.role !== 'superuser') {
+  // If company user, check company is active and not expired
+  if (profile?.company_id && role !== 'superuser') {
     const { data: company } = await supabase
       .from('companies')
       .select('is_active, end_date, override_end_date')
@@ -88,60 +57,40 @@ export async function middleware(request: NextRequest) {
       .single()
 
     if (company) {
-      // Inactive blocks immediately
-      if (!company.is_active) {
-        await supabase.auth.signOut()
-        const url = new URL('/login', request.url)
-        url.searchParams.set('error', 'inactive')
-        return NextResponse.redirect(url)
-      }
-
-      // Effective end: override wins, otherwise the calculated end.
-      // If neither is set → blocked.
       const effectiveEnd = company.override_end_date || company.end_date
-      if (!effectiveEnd) {
-        await supabase.auth.signOut()
-        const url = new URL('/login', request.url)
-        url.searchParams.set('error', 'expired')
-        return NextResponse.redirect(url)
-      }
+      const isExpired = effectiveEnd && new Date(effectiveEnd) < new Date()
+      const isInactive = !company.is_active
 
-      // Compare against today at midnight (so "ends today" still allows today)
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-      const end = new Date(effectiveEnd)
-      end.setHours(0, 0, 0, 0)
-      if (end < today) {
+      if (isExpired || isInactive) {
         await supabase.auth.signOut()
         const url = new URL('/login', request.url)
-        url.searchParams.set('error', 'expired')
+        url.searchParams.set('error', isExpired ? 'expired' : 'inactive')
         return NextResponse.redirect(url)
       }
-    } else {
-      // Profile says they're in a company that doesn't exist — block
-      await supabase.auth.signOut()
-      const url = new URL('/login', request.url)
-      url.searchParams.set('error', 'inactive')
-      return NextResponse.redirect(url)
     }
   }
 
-  const role = profile.role
-
-  if (isAuthFreePath) {
+  // If logged in and on login page, send to correct dashboard
+  if (pathname.startsWith('/login')) {
     if (role === 'superuser') return NextResponse.redirect(new URL('/superuser', request.url))
     if (role === 'admin' || role === 'manager') return NextResponse.redirect(new URL('/dashboard', request.url))
     return NextResponse.redirect(new URL('/employee', request.url))
   }
 
+  // Block wrong roles from accessing wrong areas. Admins and managers
+  // are allowed into /employee so they can use the View Switcher on
+  // /dashboard/profile to see what drivers see (handy for support and
+  // for testing). Superusers are not — they have their own area.
   if (pathname.startsWith('/superuser') && role !== 'superuser') {
     return NextResponse.redirect(new URL('/login', request.url))
   }
+
   if (pathname.startsWith('/dashboard') && role !== 'admin' && role !== 'manager') {
     return NextResponse.redirect(new URL('/login', request.url))
   }
-  if (pathname.startsWith('/employee') && role === 'superuser') {
-    return NextResponse.redirect(new URL('/superuser', request.url))
+
+  if (pathname.startsWith('/employee') && role !== 'user' && role !== 'admin' && role !== 'manager') {
+    return NextResponse.redirect(new URL('/login', request.url))
   }
 
   return response

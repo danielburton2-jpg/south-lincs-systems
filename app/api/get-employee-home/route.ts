@@ -9,9 +9,8 @@ import { NextResponse } from 'next/server'
  * Returns everything the employee home page needs in one call:
  *   • profile  — id, full_name, email, role, job_title, holiday_entitlement
  *   • company  — id, name, end_date, override_end_date (for expiry warning)
- *   • features — enabled features the user has access to.
- *                Access = can_view OR can_edit (or admin role).
- *                Each feature: {id, slug, name, description}
+ *   • features — array of enabled features for this user, each with
+ *                {feature_id, slug, name, description}
  *
  * Auth via the user's session cookie. Reads via service role.
  */
@@ -58,41 +57,49 @@ export async function GET() {
       company = c
     }
 
+    // Feature loading depends on role.
+    //
+    // Drivers (role='user'):  only what their user_features row enables.
+    //                         Per-user gating, the original design.
+    //
+    // Admins / managers:      every feature the COMPANY has enabled,
+    //                         regardless of per-user flags. Reason —
+    //                         when an admin uses the View Switcher to
+    //                         go driving (do a walkround on a phone,
+    //                         clock holiday on the go, etc.), they need
+    //                         to actually be able to USE the app, not
+    //                         see an empty grid because no one ticked
+    //                         their user_features rows.
     let features: any[] = []
+    if (profile.role === 'admin' || profile.role === 'manager') {
+      // All features the company has enabled (joined to the catalogue)
+      if (profile.company_id) {
+        const { data: cfRows } = await svc
+          .from('company_features')
+          .select('feature_id, is_enabled, features (id, slug, name, description, display_order)')
+          .eq('company_id', profile.company_id)
+          .eq('is_enabled', true)
 
-    if (profile.role === 'admin') {
-      // Admin: every feature the company has enabled
-      const { data: companyFeatures } = await svc
-        .from('company_features')
-        .select('feature_id, is_enabled')
-        .eq('company_id', profile.company_id)
-        .eq('is_enabled', true)
-      const ids = (companyFeatures || []).map((c: any) => c.feature_id)
-      if (ids.length > 0) {
-        const { data: fRows } = await svc
-          .from('features')
-          .select('id, slug, name, description, display_order')
-          .in('id', ids)
-          .order('display_order', { ascending: true })
-        features = fRows || []
+        features = (cfRows || [])
+          .map((r: any) => r.features)
+          .filter(Boolean)
+          .sort((a: any, b: any) => (a.display_order ?? 0) - (b.display_order ?? 0))
       }
     } else {
-      // Non-admin: features where user_features.can_view OR can_edit is true.
-      // (is_enabled is also relevant for backward compatibility — if can_view
-      //  is null but is_enabled is true, count it as access. The form now
-      //  always sets these in sync but old data might exist.)
+      // Drivers — per-user gating
       const { data: ufRows } = await svc
         .from('user_features')
-        .select('feature_id, is_enabled, can_view, can_edit')
+        .select('feature_id, is_enabled')
         .eq('user_id', user.id)
-      const accessibleIds = (ufRows || [])
-        .filter((r: any) => r.can_view || r.can_edit || r.is_enabled)
-        .map((r: any) => r.feature_id)
-      if (accessibleIds.length > 0) {
+        .eq('is_enabled', true)
+
+      const enabledFeatureIds = (ufRows || []).map(r => r.feature_id)
+
+      if (enabledFeatureIds.length > 0) {
         const { data: fRows } = await svc
           .from('features')
           .select('id, slug, name, description, display_order')
-          .in('id', accessibleIds)
+          .in('id', enabledFeatureIds)
           .order('display_order', { ascending: true })
         features = fRows || []
       }

@@ -62,6 +62,15 @@ export default function MechanicJobsPage() {
   const [fixNote, setFixNote] = useState('')
   const [submittingFix, setSubmittingFix] = useState(false)
 
+  // Defect inline expansion state
+  const [expandedDefectId, setExpandedDefectId] = useState<string | null>(null)
+  const [notesByDefect, setNotesByDefect] = useState<Record<string, any[]>>({})
+  const [noteDraftByDefect, setNoteDraftByDefect] = useState<Record<string, string>>({})
+  const [loadingNotesFor, setLoadingNotesFor] = useState<string | null>(null)
+  const [submittingNoteFor, setSubmittingNoteFor] = useState<string | null>(null)
+  // For showing "by Jane Doe" on notes whose author isn't in the join cache
+  const [authorNames, setAuthorNames] = useState<Record<string, string>>({})
+
   const init = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.push('/login'); return }
@@ -145,6 +154,9 @@ export default function MechanicJobsPage() {
   // Realtime
   useEffect(() => {
     if (!currentUser?.id) return
+    // Snapshot the current value once for the closure — referencing
+    // notesByDefect directly inside the callback would force this
+    // useEffect to re-subscribe every time a note arrives.
     const channel = supabase.channel('mechanic-jobs-rt')
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'service_schedules', filter: `assigned_to=eq.${currentUser.id}` },
@@ -153,6 +165,38 @@ export default function MechanicJobsPage() {
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'vehicle_defects', filter: `assigned_to=eq.${currentUser.id}` },
         () => init()
+      )
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'vehicle_defect_notes' },
+        (payload: any) => {
+          const note = payload?.new
+          if (!note?.defect_id) return
+          // Append only if we have notes already loaded for this defect
+          // (i.e. it was expanded at least once during this session).
+          setNotesByDefect(prev => {
+            const existing = prev[note.defect_id]
+            if (!existing) return prev
+            // Skip if it's already there (we may have just optimistically
+            // inserted it ourselves).
+            if (existing.some(n => n.id === note.id)) return prev
+            return { ...prev, [note.defect_id]: [...existing, note] }
+          })
+          // Resolve author name if needed
+          if (note.author_id) {
+            setAuthorNames(prev => {
+              if (prev[note.author_id]) return prev
+              // Trigger a fetch but don't block — RT note ordering is
+              // already correct so we just need the name to render.
+              supabase.from('profiles').select('id, full_name').eq('id', note.author_id).single()
+                .then(({ data: p }: any) => {
+                  if (p?.full_name) {
+                    setAuthorNames(cur => ({ ...cur, [p.id]: p.full_name }))
+                  }
+                })
+              return prev
+            })
+          }
+        }
       )
       .subscribe()
     return () => { supabase.removeChannel(channel) }
@@ -337,6 +381,85 @@ export default function MechanicJobsPage() {
     init()
   }
 
+  // Load notes for a defect on first expansion. Subsequent toggles
+  // re-use the cached array (kept fresh by realtime).
+  const loadNotesFor = useCallback(async (defectId: string) => {
+    setLoadingNotesFor(defectId)
+    const { data, error } = await supabase
+      .from('vehicle_defect_notes')
+      .select('id, defect_id, author_id, note, created_at')
+      .eq('defect_id', defectId)
+      .order('created_at', { ascending: true })  // oldest first per Daniel's choice
+    setLoadingNotesFor(null)
+    if (error) {
+      console.error('Could not load notes:', error.message)
+      return
+    }
+    setNotesByDefect(prev => ({ ...prev, [defectId]: data || [] }))
+
+    // Resolve author names we don't know yet
+    const unknownAuthorIds = Array.from(new Set(
+      (data || [])
+        .map((n: any) => n.author_id)
+        .filter((id: string | null) => id && !authorNames[id])
+    )) as string[]
+    if (unknownAuthorIds.length > 0) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', unknownAuthorIds)
+      if (profs) {
+        const updates: Record<string, string> = {}
+        profs.forEach((p: any) => { updates[p.id] = p.full_name || '' })
+        setAuthorNames(prev => ({ ...prev, ...updates }))
+      }
+    }
+  }, [authorNames])
+
+  const toggleDefectExpanded = (defectId: string) => {
+    setExpandedDefectId(prev => {
+      const next = prev === defectId ? null : defectId
+      // Load notes lazily on first expand
+      if (next && !notesByDefect[defectId]) {
+        loadNotesFor(defectId)
+      }
+      return next
+    })
+  }
+
+  const submitNote = async (defectId: string) => {
+    const text = (noteDraftByDefect[defectId] || '').trim()
+    if (!text) return
+    if (!currentUser) return
+    setSubmittingNoteFor(defectId)
+    const { data, error } = await supabase
+      .from('vehicle_defect_notes')
+      .insert({
+        defect_id: defectId,
+        company_id: currentUser.company_id,
+        author_id: currentUser.id,
+        note: text,
+      })
+      .select('id, defect_id, author_id, note, created_at')
+      .single()
+    setSubmittingNoteFor(null)
+    if (error) {
+      alert('Could not add note: ' + error.message)
+      return
+    }
+    // Optimistic append
+    setNotesByDefect(prev => ({
+      ...prev,
+      [defectId]: [...(prev[defectId] || []), data],
+    }))
+    // Make sure this user's name is cached
+    if (currentUser.full_name) {
+      setAuthorNames(prev => ({ ...prev, [currentUser.id]: currentUser.full_name }))
+    }
+    // Clear draft
+    setNoteDraftByDefect(prev => ({ ...prev, [defectId]: '' }))
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -411,12 +534,20 @@ export default function MechanicJobsPage() {
                 const sevIcon =
                   d.severity === 'critical' ? '🚨' :
                   d.severity === 'major'    ? '⚠️' : '⚙️'
+                const isExpanded = expandedDefectId === d.id
+                const notes = notesByDefect[d.id]
+                const draft = noteDraftByDefect[d.id] || ''
                 return (
                   <div key={d.id}
-                    className={`bg-white rounded-2xl shadow-sm border p-3 ${
-                      isOpen ? 'border-slate-100' : 'border-slate-200 opacity-70'
+                    className={`bg-white rounded-2xl shadow-sm border ${
+                      isOpen ? 'border-slate-100' : 'border-slate-200 opacity-80'
                     }`}>
-                    <div className="flex items-start gap-3">
+                    {/* Header — clickable to toggle expansion */}
+                    <button
+                      type="button"
+                      onClick={() => toggleDefectExpanded(d.id)}
+                      className="w-full text-left p-3 flex items-start gap-3 hover:bg-slate-50/60 active:bg-slate-100/60 rounded-t-2xl transition"
+                    >
                       <div className="text-3xl flex-shrink-0">{sevIcon}</div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
@@ -436,6 +567,7 @@ export default function MechanicJobsPage() {
                         <div className="flex items-center gap-3 mt-1 text-xs text-slate-500">
                           <span>📅 {new Date(d.reported_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })}</span>
                           {d.category && <span>· {d.category}</span>}
+                          <span className="ml-auto text-slate-400">{isExpanded ? '▴' : '▾'}</span>
                         </div>
                         {d.resolution_notes && (
                           <p className="text-xs text-slate-600 mt-1 italic bg-slate-50 rounded px-2 py-1">
@@ -443,15 +575,63 @@ export default function MechanicJobsPage() {
                           </p>
                         )}
                       </div>
-                      {isOpen && (
-                        <button
-                          onClick={() => { setFixingDefect(d); setFixNote('') }}
-                          className="bg-green-600 hover:bg-green-700 text-white text-xs font-bold px-3 py-2 rounded-full flex-shrink-0 self-center"
-                        >
-                          Mark fixed
-                        </button>
-                      )}
-                    </div>
+                    </button>
+
+                    {/* Expanded details */}
+                    {isExpanded && (
+                      <div className="border-t border-slate-100 p-3 space-y-3">
+                        {/* Notes thread (oldest first) */}
+                        <div>
+                          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                            Notes
+                          </p>
+                          {loadingNotesFor === d.id && !notes ? (
+                            <p className="text-xs text-slate-400 italic">Loading…</p>
+                          ) : (notes && notes.length > 0) ? (
+                            <ul className="space-y-2">
+                              {notes.map(n => (
+                                <li key={n.id} className="bg-slate-50 rounded-lg px-3 py-2">
+                                  <p className="text-sm text-slate-800 whitespace-pre-wrap">{n.note}</p>
+                                  <p className="text-[10px] text-slate-500 mt-1">
+                                    {authorNames[n.author_id] || 'Unknown'} · {new Date(n.created_at).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                  </p>
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="text-xs text-slate-400 italic">No notes yet.</p>
+                          )}
+                        </div>
+
+                        {/* Add note */}
+                        {isOpen && (
+                          <div>
+                            <textarea
+                              value={draft}
+                              onChange={(e) => setNoteDraftByDefect(prev => ({ ...prev, [d.id]: e.target.value }))}
+                              placeholder="Add an update — e.g. ordered part, waiting on supplier…"
+                              rows={2}
+                              className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 text-slate-900"
+                            />
+                            <div className="flex gap-2 mt-2">
+                              <button
+                                onClick={() => submitNote(d.id)}
+                                disabled={!draft.trim() || submittingNoteFor === d.id}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium px-3 py-2 rounded-lg disabled:opacity-50"
+                              >
+                                {submittingNoteFor === d.id ? 'Adding…' : 'Add note'}
+                              </button>
+                              <button
+                                onClick={() => { setFixingDefect(d); setFixNote('') }}
+                                className="bg-green-600 hover:bg-green-700 text-white text-xs font-bold px-3 py-2 rounded-lg ml-auto"
+                              >
+                                ✓ Mark fixed
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )
               })}

@@ -15,13 +15,18 @@ const VEHICLE_TYPE_ICONS: Record<string, string> = {
   minibus: '🚐',
 }
 
-type FilterTab = 'mine' | 'all' | 'reported'
+type FilterTab = 'all' | 'reported'
 
 // Wrapper component that uses useSearchParams (must be inside Suspense)
 function DefectsPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const initialFilter = (searchParams?.get('filter') as FilterTab) || 'all'
+  // Old links may still have ?filter=mine in them — fall back to 'all'
+  // since the "Assigned to me" tab has been removed (mechanics see
+  // their assignments on /employee/services Defects tab instead).
+  const rawFilter = searchParams?.get('filter')
+  const initialFilter: FilterTab =
+    rawFilter === 'all' || rawFilter === 'reported' ? rawFilter : 'all'
 
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [company, setCompany] = useState<any>(null)
@@ -257,7 +262,6 @@ function DefectsPageContent() {
 
   const filtered = defects
     .filter(d => {
-      if (filterTab === 'mine') return d.assigned_to === currentUser?.id
       if (filterTab === 'reported') return d.reported_by === currentUser?.id
       return true
     })
@@ -273,7 +277,6 @@ function DefectsPageContent() {
     })
 
   const counts = {
-    mine: defects.filter(d => d.assigned_to === currentUser?.id).length,
     all: defects.length,
     reported: defects.filter(d => d.reported_by === currentUser?.id).length,
   }
@@ -296,9 +299,6 @@ function DefectsPageContent() {
         </div>
         <h1 className="text-2xl font-bold mt-2">⚠️ Defects</h1>
         <p className="text-red-100 text-sm mt-1">
-          {counts.mine > 0 && (
-            <span className="font-semibold">🔧 {counts.mine} assigned to you · </span>
-          )}
           {defects.length} total open
         </p>
       </div>
@@ -314,21 +314,6 @@ function DefectsPageContent() {
         )}
 
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-1.5 flex gap-1">
-          <button
-            onClick={() => setFilterTab('mine')}
-            className={`flex-1 py-2 rounded-xl text-xs font-medium transition relative ${
-              filterTab === 'mine'
-                ? 'bg-purple-600 text-white'
-                : 'bg-transparent text-slate-700 hover:bg-slate-50'
-            }`}
-          >
-            🔧 Assigned to me
-            {counts.mine > 0 && filterTab !== 'mine' && (
-              <span className="absolute -top-1 -right-1 bg-purple-600 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center">
-                {counts.mine}
-              </span>
-            )}
-          </button>
           <button
             onClick={() => setFilterTab('all')}
             className={`flex-1 py-2 rounded-xl text-xs font-medium transition ${
@@ -363,15 +348,12 @@ function DefectsPageContent() {
 
         {filtered.length === 0 ? (
           <div className="bg-white rounded-2xl shadow-sm p-8 border border-slate-100 text-center">
-            <p className="text-5xl mb-3">{filterTab === 'mine' ? '🎉' : '✅'}</p>
+            <p className="text-5xl mb-3">✅</p>
             <p className="text-slate-700 font-medium">
-              {filterTab === 'mine' ? 'Nothing assigned to you' :
-                filterTab === 'reported' ? 'You haven\'t reported anything' :
-                'No open defects'}
+              {filterTab === 'reported' ? 'You haven\'t reported anything' : 'No open defects'}
             </p>
             <p className="text-xs text-slate-500 mt-1">
-              {filterTab === 'mine' ? 'Workshop will assign you defects to repair' :
-                defects.length === 0 ? 'All vehicles are good to go' : 'No matches'}
+              {defects.length === 0 ? 'All vehicles are good to go' : 'No matches'}
             </p>
           </div>
         ) : (
