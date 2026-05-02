@@ -159,9 +159,115 @@ export function useNotificationsListener({ userId, companyId, role, scope }: Arg
           })
         }
       )
+
+      // ── Holiday decided (approved or rejected) ─────────────────
+      // Filtered by user_id so only the requester gets the toast.
+      // Listens to UPDATE only — the INSERT was already covered by
+      // the "submitted" pending state.
+      channel.on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'holiday_requests',
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload: any) => {
+          const row = payload?.new
+          const old = payload?.old
+          if (!row || !old) return
+          // Only notify when the status JUST flipped to approved/rejected.
+          if (old.status === row.status) return
+          if (row.status !== 'approved' && row.status !== 'rejected') return
+          // Stale-event guard (use updated_at if present, else just now)
+          const eventTime = row.updated_at
+            ? new Date(row.updated_at).getTime()
+            : Date.now()
+          if (eventTime < mountedAtRef.current - 5000) return
+
+          const dateRange = row.start_date === row.end_date
+            ? formatShortDate(row.start_date)
+            : `${formatShortDate(row.start_date)} – ${formatShortDate(row.end_date)}`
+
+          notify({
+            title: row.status === 'approved' ? '✅ Holiday approved' : '❌ Holiday rejected',
+            body: dateRange,
+            href: '/employee/holidays',
+            tone: 'info',
+          })
+        }
+      )
+
+      // ── Service assigned to me (mechanic) ──────────────────────
+      channel.on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'service_schedules',
+          filter: `assigned_to=eq.${userId}`,
+        },
+        (payload: any) => {
+          const row = payload?.new
+          if (!row || payload.eventType === 'DELETE') return
+          if (payload.eventType === 'UPDATE') {
+            const old = payload.old
+            if (old?.assigned_to === userId) return  // not a new assignment
+          }
+          if (row.assigned_by === userId) return  // self-action
+          const eventTime = row.assigned_at
+            ? new Date(row.assigned_at).getTime()
+            : Date.now()
+          if (eventTime < mountedAtRef.current - 5000) return
+
+          notify({
+            title: 'New service assigned',
+            body: 'Open the app to see the details.',
+            href: '/employee/services',
+            tone: 'info',
+          })
+        }
+      )
+
+      // ── Schedule assigned/changed for me ───────────────────────
+      // schedule_assignments rows linking a user to a shift. INSERT or
+      // UPDATE both worth notifying — admins might shift the time later.
+      channel.on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'schedule_assignments',
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload: any) => {
+          if (payload.eventType === 'DELETE') return
+          const row = payload?.new
+          if (!row) return
+          // Stale-event guard — schedule_assignments may not have a
+          // timestamp on it directly. Fall back to "now" + a small grace.
+          const eventTime = row.created_at
+            ? new Date(row.created_at).getTime()
+            : Date.now()
+          if (eventTime < mountedAtRef.current - 5000) return
+
+          notify({
+            title: payload.eventType === 'INSERT' ? 'Shift scheduled' : 'Shift updated',
+            body: 'Check your schedule for the details.',
+            href: '/employee/schedules',
+            tone: 'info',
+          })
+        }
+      )
     }
 
     channel.subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [userId, companyId, role, scope, notify])
+}
+
+/** Shorthand date formatter — "02 May" — used in toast bodies. */
+function formatShortDate(iso: string | null | undefined): string {
+  if (!iso) return ''
+  return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
 }

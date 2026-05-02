@@ -91,10 +91,55 @@ export default function EmployeeHolidays() {
     }
   }, [router])
 
+  // Silent reload — refreshes only the requests list, no spinner.
+  // Used by the realtime subscription so the user doesn't see a flash
+  // every time a row changes (e.g. admin approves their holiday).
+  const reloadRequestsSilently = useCallback(async () => {
+    if (!profile?.id) return
+    try {
+      const res = await fetch('/api/get-holiday-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: profile.id, scope: 'mine' }),
+      })
+      const data = await res.json()
+      if (res.ok && Array.isArray(data.requests)) setRequests(data.requests)
+    } catch { /* best-effort */ }
+  }, [profile?.id])
+
   useEffect(() => {
     loadAll()
     getUKBankHolidays().then(d => setBankHolidays(d.dates))
   }, [loadAll])
+
+  // Realtime: when this user's holiday rows change (admin approves /
+  // rejects, or another tab cancels), silently re-fetch the list so
+  // the UI matches reality without a manual refresh.
+  useEffect(() => {
+    if (!profile?.id) return
+    const channel = supabase
+      .channel(`employee-holidays-${profile.id}`)
+      .on('postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'holiday_requests',
+          filter: `user_id=eq.${profile.id}`,
+        },
+        () => reloadRequestsSilently(),
+      )
+      .on('postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'balance_adjustments',
+          filter: `user_id=eq.${profile.id}`,
+        },
+        () => reloadRequestsSilently(),
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [profile?.id, reloadRequestsSilently])
 
   const handleCancel = async (req: any) => {
     if (req.status === 'pending') {
