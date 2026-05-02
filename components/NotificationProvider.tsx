@@ -96,9 +96,11 @@ export default function NotificationProvider({ children }: { children: React.Rea
         const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext
         if (!Ctx) return
         if (!audioCtxRef.current) audioCtxRef.current = new Ctx()
+        const ctx = audioCtxRef.current
+        if (!ctx) return
         // Resume suspends-on-creation contexts in some browsers
-        if (audioCtxRef.current.state === 'suspended') {
-          audioCtxRef.current.resume()
+        if (ctx.state === 'suspended') {
+          ctx.resume()
         }
         audioUnlockedRef.current = true
       } catch { /* ignore */ }
