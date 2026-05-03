@@ -13,9 +13,23 @@
  *   • Auto-marks thread as read after view (debounced)
  *   • Auto-scrolls to bottom on new message ONLY if user is already
  *     near the bottom (don't yank them up if they're scrolled to read history)
+ *   • Renders attachments inline (image thumbs / PDF cards) with
+ *     a fullscreen image lightbox on tap
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createClient } from '@/lib/supabase'
+import MessageComposer from './MessageComposer'
+
+type Attachment = {
+  id: string
+  message_id: string
+  storage_path: string
+  filename: string
+  mime_type: string
+  size_bytes: number | null
+  is_image: boolean
+  signed_url: string | null
+}
 
 type Message = {
   id: string
@@ -25,7 +39,7 @@ type Message = {
   created_at: string
   edited_at: string | null
   sender: { id: string; full_name: string; job_title: string | null } | null
-  attachments: any[]
+  attachments: Attachment[]
 }
 
 type Thread = {
@@ -59,14 +73,13 @@ export default function ThreadView({ threadId, currentUserId, onBack, accent = '
   const [members, setMembers] = useState<Member[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
-  const [sending, setSending] = useState(false)
-  const [draft, setDraft] = useState('')
   const [showMembers, setShowMembers] = useState(false)
   const [error, setError] = useState('')
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const isAtBottomRef = useRef(true)
   const messageIdSetRef = useRef<Set<string>>(new Set())
+  const [lightbox, setLightbox] = useState<{ url: string; filename: string } | null>(null)
 
   const accentBg = accent === 'indigo' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-slate-800 hover:bg-slate-900'
   const ownBubble = accent === 'indigo' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-white'
@@ -125,25 +138,27 @@ export default function ThreadView({ threadId, currentUserId, onBack, accent = '
         async (payload: any) => {
           const m = payload?.new
           if (!m) return
-          // Avoid double-add if our own send already optimistically pushed
           if (messageIdSetRef.current.has(m.id)) return
 
-          // We need sender info that the realtime payload doesn't include.
-          // Cheapest path: re-fetch the single message (with its joined sender).
-          // Could maintain a cache of senders, but this scales fine for now.
-          const { data: full } = await supabase
-            .from('messages')
-            .select(`
-              id, thread_id, sender_id, body, created_at, edited_at,
-              sender:profiles!messages_sender_id_fkey(id, full_name, job_title)
-            `)
-            .eq('id', m.id)
-            .single()
-
-          if (full) {
-            messageIdSetRef.current.add(full.id)
-            setMessages(prev => [...prev, { ...(full as any), attachments: [] }])
-          }
+          // Re-fetch the thread payload so we get the message WITH its
+          // joined sender AND signed-URL'd attachments. This is heavier
+          // than just adding the one message but it ensures attachment
+          // URLs are properly signed (which a direct supabase select
+          // can't do — the API generates them server-side).
+          //
+          // Tradeoff: every new message in any open thread triggers a
+          // small refetch. Acceptable for typical chat volume; we'd
+          // optimize if we hit scale.
+          try {
+            const res = await fetch(`/api/messages/threads/${threadId}`)
+            if (!res.ok) return
+            const data = await res.json()
+            if (Array.isArray(data.messages)) {
+              const ids = new Set<string>(data.messages.map((mm: Message) => mm.id))
+              messageIdSetRef.current = ids
+              setMessages(data.messages)
+            }
+          } catch { /* silent */ }
         }
       )
       .subscribe()
@@ -178,48 +193,7 @@ export default function ThreadView({ threadId, currentUserId, onBack, accent = '
     return () => clearTimeout(t)
   }, [loading, messages.length, threadId, messages])
 
-  // ── Send a message ──
-  const handleSend = async () => {
-    const text = draft.trim()
-    if (!text) return
-    setSending(true)
-    setDraft('')
-    try {
-      const res = await fetch(`/api/messages/threads/${threadId}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: text }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.error || 'Failed to send')
-        setDraft(text)  // restore
-      } else if (data.message) {
-        // Realtime will pick this up too — but optimistic-add for snappiness.
-        if (!messageIdSetRef.current.has(data.message.id)) {
-          messageIdSetRef.current.add(data.message.id)
-          // Need sender info — synthesize from current user since we know it's us
-          setMessages(prev => [...prev, {
-            ...data.message,
-            sender: { id: currentUserId, full_name: 'You', job_title: null },
-            attachments: [],
-          }])
-        }
-        // Force scroll-to-bottom after sending own message
-        isAtBottomRef.current = true
-      }
-    } finally {
-      setSending(false)
-    }
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // Enter sends, Shift+Enter inserts a newline
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
-  }
+  // Send/keyboard handling lives inside MessageComposer now.
 
   // ── Render ──
   if (error) {
@@ -320,12 +294,29 @@ export default function ThreadView({ threadId, currentUserId, onBack, accent = '
                         {formatTime(m.created_at)}
                       </p>
                     )}
-                    <div className={`rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words ${
-                      isOwn
-                        ? `${ownBubble} rounded-br-sm`
-                        : 'bg-white text-slate-800 rounded-bl-sm border border-slate-100'
-                    }`}>
-                      {m.body}
+                    <div className="space-y-1">
+                      {/* Attachments */}
+                      {m.attachments && m.attachments.length > 0 && (
+                        <div className={`flex flex-col gap-1 ${isOwn ? 'items-end' : 'items-start'}`}>
+                          {m.attachments.map(a => (
+                            <AttachmentTile
+                              key={a.id}
+                              attachment={a}
+                              onOpen={(url, name) => setLightbox({ url, filename: name })}
+                            />
+                          ))}
+                        </div>
+                      )}
+                      {/* Text body — only if non-empty */}
+                      {m.body && m.body.trim() !== '' && (
+                        <div className={`rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words ${
+                          isOwn
+                            ? `${ownBubble} rounded-br-sm`
+                            : 'bg-white text-slate-800 rounded-bl-sm border border-slate-100'
+                        }`}>
+                          {m.body}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -335,30 +326,103 @@ export default function ThreadView({ threadId, currentUserId, onBack, accent = '
         )}
       </div>
 
-      {/* Composer */}
-      <div className="border-t border-slate-200 bg-white px-3 py-3 sticky bottom-0">
-        <div className="flex items-end gap-2">
-          <textarea
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type a message…"
-            rows={1}
-            className="flex-1 resize-none px-3 py-2 rounded-2xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300 max-h-32"
-            disabled={sending}
-          />
+      {/* Image lightbox */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4"
+          onClick={() => setLightbox(null)}
+        >
           <button
             type="button"
-            onClick={handleSend}
-            disabled={!draft.trim() || sending}
-            className={`${accentBg} text-white px-4 py-2 rounded-2xl text-sm font-medium disabled:opacity-50 flex-shrink-0`}
+            onClick={() => setLightbox(null)}
+            className="absolute top-4 right-4 text-white text-3xl leading-none"
+            aria-label="Close"
           >
-            {sending ? '…' : 'Send'}
+            ×
           </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={lightbox.url}
+            alt={lightbox.filename}
+            className="max-w-full max-h-full object-contain"
+            onClick={e => e.stopPropagation()}
+          />
         </div>
-      </div>
+      )}
+
+      {/* Composer */}
+      <MessageComposer
+        threadId={threadId}
+        accent={accent}
+        onSent={() => {
+          // Force scroll-to-bottom on next paint, then refetch to show
+          // own message immediately (realtime would deliver too, but a
+          // direct refetch is snappier for the sender).
+          isAtBottomRef.current = true
+          load()
+        }}
+      />
     </div>
   )
+}
+
+/** Inline tile for an attachment in a message bubble. */
+function AttachmentTile({
+  attachment,
+  onOpen,
+}: {
+  attachment: Attachment
+  onOpen: (url: string, filename: string) => void
+}) {
+  if (!attachment.signed_url) {
+    // Storage signing failed — show a fallback
+    return (
+      <div className="text-xs text-slate-400 italic px-2 py-1">
+        [unavailable: {attachment.filename}]
+      </div>
+    )
+  }
+  if (attachment.is_image) {
+    return (
+      <button
+        type="button"
+        onClick={() => onOpen(attachment.signed_url!, attachment.filename)}
+        className="block rounded-xl overflow-hidden border border-slate-200 hover:opacity-90 transition"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={attachment.signed_url}
+          alt={attachment.filename}
+          className="max-w-[260px] sm:max-w-[320px] max-h-[320px] object-cover"
+          loading="lazy"
+        />
+      </button>
+    )
+  }
+  // PDFs / other docs — file card
+  return (
+    <a
+      href={attachment.signed_url}
+      target="_blank"
+      rel="noreferrer"
+      className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 hover:bg-slate-50 transition max-w-[260px] sm:max-w-[320px]"
+    >
+      <span className="text-2xl flex-shrink-0">📄</span>
+      <div className="min-w-0">
+        <p className="text-sm text-slate-800 truncate">{attachment.filename}</p>
+        <p className="text-[10px] text-slate-500">
+          {formatBytes(attachment.size_bytes)} · {attachment.mime_type.split('/').pop()?.toUpperCase()}
+        </p>
+      </div>
+    </a>
+  )
+}
+
+function formatBytes(n: number | null): string {
+  if (!n || n < 0) return ''
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
 function formatTime(iso: string): string {

@@ -86,10 +86,28 @@ export async function GET(
       .from('message_attachments')
       .select('id, message_id, storage_path, filename, mime_type, size_bytes, is_image')
       .in('message_id', ids)
-    for (const a of (atts || [])) {
-      const arr = attachmentsByMessage[a.message_id] || []
-      arr.push(a)
-      attachmentsByMessage[a.message_id] = arr
+
+    // Mint short-lived signed download URLs so the client can render
+    // images and provide download links without a per-attachment
+    // round-trip. 10 minute expiry — plenty for a page session.
+    if (atts && atts.length > 0) {
+      const svcUrls = adminClient()
+      // Sign in parallel — small file lists, tiny round-trip each.
+      const signed = await Promise.all(
+        atts.map(async (a) => {
+          const { data } = await svcUrls
+            .storage
+            .from('message-attachments')
+            .createSignedUrl(a.storage_path, 60 * 10)
+          return { id: a.id, url: data?.signedUrl || null }
+        })
+      )
+      const urlById = new Map(signed.map(s => [s.id, s.url]))
+      for (const a of atts) {
+        const arr = attachmentsByMessage[a.message_id] || []
+        arr.push({ ...a, signed_url: urlById.get(a.id) || null })
+        attachmentsByMessage[a.message_id] = arr
+      }
     }
   }
 
