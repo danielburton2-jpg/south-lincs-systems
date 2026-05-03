@@ -333,19 +333,50 @@ export async function POST(req: NextRequest) {
   }
 
   else if (event.kind === 'schedule_assigned') {
-    const { data: a } = await svc
+    // Two clean queries instead of a chained nested join.
+    //
+    // Same bug pattern that broke message_sent: PostgREST returns
+    // `schedule:schedules(...)` as either an object or an array
+    // depending on inferred cardinality. When it came back as an
+    // array, `a.schedule.company_id` was undefined, the cross-company
+    // gate failed, and the route silently returned 404 — admin saw
+    // nothing because notifyEvent() is fail-silent.
+    //
+    // Logging at every checkpoint so future failures are diagnosable
+    // straight from Vercel function logs.
+
+    // 1. Fetch the assignment
+    const { data: a, error: aErr } = await svc
       .from('schedule_assignments')
-      .select(`
-        id, schedule_id, user_id,
-        schedule:schedules(id, company_id, title, start_date, end_date, start_time, end_time)
-      `)
+      .select('id, schedule_id, user_id')
       .eq('id', event.assignment_id)
       .single()
-    if (!a || (a.schedule as any)?.company_id !== caller.company_id) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (aErr || !a) {
+      console.warn('[notify-event schedule_assigned] assignment not found', event.assignment_id, aErr?.message)
+      return NextResponse.json({ error: 'Assignment not found' }, { status: 404 })
     }
+
+    // 2. Fetch the parent schedule for cross-company gate + payload data
+    const { data: sch, error: sErr } = await svc
+      .from('schedules')
+      .select('id, company_id, title, start_date, end_date, start_time, end_time')
+      .eq('id', a.schedule_id)
+      .single()
+    if (sErr || !sch) {
+      console.warn('[notify-event schedule_assigned] schedule not found', a.schedule_id, sErr?.message)
+      return NextResponse.json({ error: 'Schedule not found' }, { status: 404 })
+    }
+
+    if (sch.company_id !== caller.company_id) {
+      console.warn('[notify-event schedule_assigned] cross-company attempt', {
+        schedule_company: sch.company_id,
+        caller_company: caller.company_id,
+      })
+      return NextResponse.json({ error: 'Not allowed' }, { status: 403 })
+    }
+
     targetUserId = a.user_id
-    const sch = a.schedule as any
+
     const dateRange = sch.start_date === sch.end_date
       ? formatDate(sch.start_date)
       : `${formatDate(sch.start_date)} – ${formatDate(sch.end_date)}`
@@ -359,6 +390,12 @@ export async function POST(req: NextRequest) {
       tone: 'info',
       tag: `schedule-${a.id}`,
     }
+
+    console.log('[notify-event schedule_assigned]', {
+      assignment_id: a.id,
+      schedule_id: sch.id,
+      target_user: targetUserId,
+    })
   }
 
   else {
