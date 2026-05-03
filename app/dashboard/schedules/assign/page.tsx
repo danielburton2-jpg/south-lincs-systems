@@ -414,7 +414,12 @@ export default function SchedulesAssignPage() {
     })
   }, [publishableCells])
 
-  const availableUsers = useMemo(() => {
+  // Renamed from `availableUsers` to `pickerAvailableUsers` because
+  // an existing top-scope `availableUsers(s, d)` function (declared
+  // earlier in this component for the assign-grid dropdown) takes
+  // the same name. Turbopack's production build catches the
+  // duplicate declaration; dev mode happens to let it slide.
+  const pickerAvailableUsers = useMemo(() => {
     const set = new Set<string>()
     for (const c of publishableCells) {
       if (c.userId) set.add(c.userId)
@@ -821,7 +826,7 @@ export default function SchedulesAssignPage() {
         onPublish={submitPublish}
         weekRangeLabel={weekRangeLabel}
         availableDates={availableDates}
-        availableUsers={availableUsers}
+        availableUsers={pickerAvailableUsers}
         countFor={countFor}
         busy={publishing}
       />
