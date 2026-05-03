@@ -77,28 +77,63 @@ export async function POST(req: NextRequest) {
   // current thread members (live for job_title / all_company), filter
   // out the sender, and push each one. Role gate doesn't apply here
   // because messaging is everyone-to-everyone.
+  //
+  // Implementation note: we used to do a single .select() with a
+  // PostgREST nested join (`thread:message_threads(...)`) but that
+  // returned the relation as either an object or an array depending
+  // on inferred cardinality, which intermittently broke
+  // `thread.company_id` access. Two cleaner queries are fewer
+  // surprises. Added explicit logging so the next failure is easy to
+  // diagnose from Vercel function logs.
   if (event.kind === 'message_sent') {
-    const { data: msg } = await svc
+    // 1. Fetch the message itself
+    const { data: msg, error: msgErr } = await svc
       .from('messages')
-      .select(`
-        id, thread_id, sender_id, body, created_at,
-        thread:message_threads(id, company_id, target_kind, target_job_title, title),
-        sender:profiles!messages_sender_id_fkey(id, full_name)
-      `)
+      .select('id, thread_id, sender_id, body, created_at')
       .eq('id', event.message_id)
       .single()
-    if (!msg) {
+    if (msgErr || !msg) {
+      console.warn('[notify-event message_sent] message not found', event.message_id, msgErr?.message)
       return NextResponse.json({ error: 'Message not found' }, { status: 404 })
     }
-    const thread = msg.thread as any
-    if (!thread || thread.company_id !== caller.company_id) {
+
+    // 2. Fetch the thread separately
+    const { data: thread, error: threadErr } = await svc
+      .from('message_threads')
+      .select('id, company_id, target_kind, target_job_title, title')
+      .eq('id', msg.thread_id)
+      .single()
+    if (threadErr || !thread) {
+      console.warn('[notify-event message_sent] thread not found', msg.thread_id, threadErr?.message)
+      return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
+    }
+
+    if (thread.company_id !== caller.company_id) {
+      console.warn('[notify-event message_sent] cross-company attempt', {
+        thread_company: thread.company_id,
+        caller_company: caller.company_id,
+      })
       return NextResponse.json({ error: 'Not allowed' }, { status: 403 })
     }
+
+    // The caller MUST be the message's sender. Otherwise anyone could
+    // trigger pushes for messages they didn't write.
     if (msg.sender_id !== caller.id) {
+      console.warn('[notify-event message_sent] caller is not sender', {
+        sender: msg.sender_id, caller: caller.id,
+      })
       return NextResponse.json({ error: 'Only the sender can trigger this' }, { status: 403 })
     }
 
-    // Resolve recipients live based on thread kind
+    // 3. Fetch sender display name (for the push payload title)
+    const { data: senderRow } = await svc
+      .from('profiles')
+      .select('full_name')
+      .eq('id', msg.sender_id)
+      .single()
+    const senderName = senderRow?.full_name || 'Someone'
+
+    // 4. Resolve recipients live based on thread kind
     let recipientIds: string[] = []
     if (thread.target_kind === 'user_list') {
       const { data: members } = await svc
@@ -111,11 +146,12 @@ export async function POST(req: NextRequest) {
         .from('profiles')
         .select('id, job_title')
         .eq('company_id', thread.company_id)
+      const targetTitle = (thread.target_job_title || '').toLowerCase().trim()
       recipientIds = (people || [])
-        .filter((p: any) =>
-          (p.job_title || '').toLowerCase().trim() === (thread.target_job_title || '').toLowerCase().trim()
-          && (p.job_title || '').trim() !== ''
-        )
+        .filter((p: any) => {
+          const jt = (p.job_title || '').toLowerCase().trim()
+          return jt !== '' && jt === targetTitle
+        })
         .map((p: any) => p.id)
     } else {
       // all_company
@@ -128,14 +164,20 @@ export async function POST(req: NextRequest) {
 
     // Filter out sender
     recipientIds = recipientIds.filter(id => id !== msg.sender_id)
+
+    console.log('[notify-event message_sent]', {
+      message_id: msg.id,
+      thread_id: thread.id,
+      target_kind: thread.target_kind,
+      sender: msg.sender_id,
+      recipient_count: recipientIds.length,
+    })
+
     if (recipientIds.length === 0) {
       return NextResponse.json({ ok: true, skipped: 'no recipients' })
     }
 
-    // Build the push payload. Title format: "Sender · ThreadName" for
-    // group threads, just "Sender" for 1-on-1. Recipient role drives
-    // the URL prefix (driver → /employee, others → /dashboard).
-    const senderName = (msg.sender as any)?.full_name || 'Someone'
+    // 5. Build the push payload + send to each recipient
     const isGroup = thread.target_kind !== 'user_list'
     const groupLabel = thread.title || (
       thread.target_kind === 'all_company' ? 'Everyone' : (thread.target_job_title || 'Group')
@@ -143,18 +185,24 @@ export async function POST(req: NextRequest) {
     const titleForGroup = `${senderName} · ${groupLabel}`
     const titleForDirect = senderName
 
-    // Body: message body or [attachment] indicator
     let bodyText = msg.body || '[attachment]'
     if (bodyText.length > 80) bodyText = bodyText.slice(0, 79) + '…'
 
-    // For each recipient: lookup their role to pick URL prefix, then push
+    // Look up each recipient's role ONCE so we can pick the URL prefix.
+    // Do all the lookups first, in one query, then push in parallel.
+    const { data: recipientProfiles } = await svc
+      .from('profiles')
+      .select('id, role')
+      .in('id', recipientIds)
+
+    const roleById = new Map<string, string>()
+    for (const p of (recipientProfiles || [])) {
+      roleById.set(p.id, p.role)
+    }
+
     const pushResults = await Promise.all(recipientIds.map(async (uid) => {
-      const { data: rp } = await svc
-        .from('profiles')
-        .select('role')
-        .eq('id', uid)
-        .single()
-      const isDriver = rp?.role === 'user'
+      const role = roleById.get(uid) || 'user'
+      const isDriver = role === 'user'
       const url = isDriver
         ? `/employee/messages/${thread.id}`
         : `/dashboard/messages/${thread.id}`
@@ -167,10 +215,15 @@ export async function POST(req: NextRequest) {
         tag: `message-${thread.id}`,
       }
       const sent = await sendPushToUser(uid, recipientPayload)
-      return sent
+      return { uid, sent }
     }))
 
-    const totalSent = pushResults.reduce((a, b) => a + b, 0)
+    const totalSent = pushResults.reduce((a, r) => a + r.sent, 0)
+    console.log('[notify-event message_sent] sent', {
+      total: totalSent,
+      per_recipient: pushResults,
+    })
+
     return NextResponse.json({
       ok: true,
       kind: 'message_sent',
