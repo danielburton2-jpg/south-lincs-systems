@@ -10,6 +10,7 @@
  *   { kind: 'service_assigned', schedule_id }
  *   { kind: 'holiday_decided',  request_id }   // approved or rejected
  *   { kind: 'schedule_assigned', assignment_id }
+ *   { kind: 'day_sheet_assigned', assignment_id }
  *
  * Each event:
  *   1. Verifies the caller is authenticated and same-company as the row
@@ -29,6 +30,7 @@ type Event =
   | { kind: 'service_assigned';  schedule_id: string }
   | { kind: 'holiday_decided';   request_id: string }
   | { kind: 'schedule_assigned'; assignment_id: string }
+  | { kind: 'day_sheet_assigned'; assignment_id: string }
   | { kind: 'message_sent';      message_id: string }
 
 export async function POST(req: NextRequest) {
@@ -415,6 +417,75 @@ export async function POST(req: NextRequest) {
     console.log('[notify-event schedule_assigned]', {
       assignment_id: a.id,
       schedule_id: sch.id,
+      target_user: targetUserId,
+      assignment_date: a.assignment_date,
+    })
+  }
+
+  // ─── day_sheet_assigned — driver gets pinged for a published row ───
+  // Mirrors schedule_assigned in shape but reads from day_sheet_assignments
+  // and joins to day_sheets for the customer name + times.
+  //
+  // Same defensive pattern: two queries instead of a chained join, with
+  // logging at each checkpoint so the next failure is diagnosable from
+  // Vercel function logs.
+  else if (event.kind === 'day_sheet_assigned') {
+    // 1. Fetch the assignment row
+    const { data: a, error: aErr } = await svc
+      .from('day_sheet_assignments')
+      .select('id, day_sheet_id, user_id, assignment_date, company_id')
+      .eq('id', event.assignment_id)
+      .single()
+    if (aErr || !a) {
+      console.warn('[notify-event day_sheet_assigned] assignment not found', event.assignment_id, aErr?.message)
+      return NextResponse.json({ error: 'Assignment not found' }, { status: 404 })
+    }
+
+    // 2. Fetch the parent day sheet for cross-company gate + payload
+    const { data: ds, error: dsErr } = await svc
+      .from('day_sheets')
+      .select('id, company_id, customer_name, job_description, start_time, end_time')
+      .eq('id', a.day_sheet_id)
+      .single()
+    if (dsErr || !ds) {
+      console.warn('[notify-event day_sheet_assigned] day_sheet not found', a.day_sheet_id, dsErr?.message)
+      return NextResponse.json({ error: 'Day sheet not found' }, { status: 404 })
+    }
+
+    if (ds.company_id !== caller.company_id) {
+      console.warn('[notify-event day_sheet_assigned] cross-company attempt', {
+        sheet_company: ds.company_id,
+        caller_company: caller.company_id,
+      })
+      return NextResponse.json({ error: 'Not allowed' }, { status: 403 })
+    }
+
+    targetUserId = a.user_id
+
+    // Title shows customer name (and a short job-description tail if
+    // present), body shows the SPECIFIC date plus the daily time
+    // window. Tag is per-assignment so multiple-jobs-per-day each
+    // get their own notification rather than collapsing.
+    const dateLabel = formatDate(a.assignment_date)
+    const timeRange = ds.start_time && ds.end_time
+      ? ` ${String(ds.start_time).slice(0,5)}–${String(ds.end_time).slice(0,5)}`
+      : ds.start_time
+        ? ` ${String(ds.start_time).slice(0,5)}`
+        : ''
+    const titleBase = ds.job_description
+      ? `${ds.customer_name}: ${truncate(ds.job_description, 40)}`
+      : ds.customer_name
+    payload = {
+      title: withCompanySuffix(titleBase || 'Day sheet'),
+      body: `${dateLabel}${timeRange}`,
+      url: '/employee/schedules',
+      tone: 'info',
+      tag: `day-sheet-${a.id}`,
+    }
+
+    console.log('[notify-event day_sheet_assigned]', {
+      assignment_id: a.id,
+      day_sheet_id: ds.id,
       target_user: targetUserId,
       assignment_date: a.assignment_date,
     })

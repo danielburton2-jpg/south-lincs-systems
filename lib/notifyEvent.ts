@@ -17,11 +17,12 @@
  */
 
 type Event =
-  | { kind: 'defect_assigned';   defect_id: string }
-  | { kind: 'service_assigned';  schedule_id: string }
-  | { kind: 'holiday_decided';   request_id: string }
-  | { kind: 'schedule_assigned'; assignment_id: string }
-  | { kind: 'message_sent';      message_id: string }
+  | { kind: 'defect_assigned';     defect_id: string }
+  | { kind: 'service_assigned';    schedule_id: string }
+  | { kind: 'holiday_decided';     request_id: string }
+  | { kind: 'schedule_assigned';   assignment_id: string }
+  | { kind: 'day_sheet_assigned';  assignment_id: string }
+  | { kind: 'message_sent';        message_id: string }
 
 export async function notifyEvent(event: Event): Promise<void> {
   try {

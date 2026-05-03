@@ -227,6 +227,47 @@ export default function EmployeeDaySheetSchedule({ currentUser, company }: Props
 
   useEffect(() => { loadAll() }, [loadAll])
 
+  // ── Realtime: re-load when planner publishes/edits ───────────────
+  // Subscribe to postgres_changes on the three day-sheet tables that
+  // affect what this driver sees. Each event triggers a full reload
+  // (cheap — the queries are well-indexed and bounded by the visible
+  // window).
+  //
+  // Filters are scoped tightly:
+  //   - day_sheet_assignments: only my user_id
+  //   - driver_day_assignments: only my user_id
+  //   - day_sheets: company-scoped (we can't filter by an FK from
+  //     here, but we still want to know when a sheet I'm on gets
+  //     edited — customer name, times, etc.)
+  //
+  // Requires the tables to be in the supabase_realtime publication
+  // (migration 035 ensures that).
+  useEffect(() => {
+    if (!currentUser?.id || !currentUser?.company_id) return
+
+    const channel = supabase.channel('employee-day-sheet-realtime')
+
+    channel
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'day_sheet_assignments', filter: `user_id=eq.${currentUser.id}` },
+        () => { loadAll() },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'driver_day_assignments', filter: `user_id=eq.${currentUser.id}` },
+        () => { loadAll() },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'day_sheets', filter: `company_id=eq.${currentUser.company_id}` },
+        () => { loadAll() },
+      )
+
+    channel.subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [currentUser?.id, currentUser?.company_id, loadAll])
+
   // ── Lookups & per-day derivations ─────────────────────────────────
   const sheetById = useMemo(() => {
     const m = new Map<string, DaySheet>()

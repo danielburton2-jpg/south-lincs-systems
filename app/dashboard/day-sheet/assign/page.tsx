@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh'
+import { notifyEvent } from '@/lib/notifyEvent'
 import PublishPickerModal, { type PublishFilter } from '@/components/PublishPickerModal'
 
 const supabase = createClient()
@@ -547,6 +548,17 @@ export default function DaySheetAssignPage() {
         `Published ${data.published || 0} assignment${data.published === 1 ? '' : 's'}.`,
         'success',
       )
+
+      // Fire-and-forget per-row driver pings. The publish API
+      // returns the IDs of rows that just got flipped to 'published'
+      // — we ping each one. notifyEvent itself is fail-silent so a
+      // bad push doesn't surface to the planner. Don't await: a
+      // slow push provider shouldn't hold up the UI redraw.
+      const ids: string[] = Array.isArray(data.published_ids) ? data.published_ids : []
+      for (const id of ids) {
+        notifyEvent({ kind: 'day_sheet_assigned', assignment_id: id })
+      }
+
       await fetchData()
     } catch (err: any) {
       showMessage(err?.message || 'Server error', 'error')

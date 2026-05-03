@@ -26,14 +26,12 @@ import { logAudit } from '@/lib/audit'
  *     - published_at := now
  *     - published_by := <user id, or null>
  *
- * Returns: { published: <count> }
+ * Returns: { published: <count>, published_ids: <string[]> }
  *
  * Backwards-compatible: callers that omit user_id and date publish the
- * whole week (current behaviour preserved).
- *
- * Mirrors the publish flow on schedule_assignments. Notifications to
- * drivers are NOT sent — the employee-side day sheet view doesn't
- * exist yet, so a push would lead nowhere.
+ * whole week (current behaviour preserved). Callers that ignore
+ * `published_ids` see no behaviour change. The driver-side ping
+ * fan-out is done by the day-sheet assign page after this returns.
  */
 export async function POST(request: Request) {
   try {
@@ -74,8 +72,13 @@ export async function POST(request: Request) {
 
     const count = (candidates || []).length
     if (count === 0) {
-      return NextResponse.json({ published: 0 })
+      return NextResponse.json({ published: 0, published_ids: [] })
     }
+
+    // Capture IDs before the update — the caller needs them to fan
+    // out per-row notifications. (Driver pings happen browser-side
+    // because notifyEvent uses cookie-bound auth.)
+    const publishedIds: string[] = (candidates || []).map((r: any) => r.id)
 
     const now = new Date().toISOString()
 
@@ -112,7 +115,7 @@ export async function POST(request: Request) {
       ip_address: request.headers.get('x-forwarded-for') || undefined,
     })
 
-    return NextResponse.json({ published: count })
+    return NextResponse.json({ published: count, published_ids: publishedIds })
   } catch (err: any) {
     console.error('publish-day-sheet-assignments error:', err)
     return NextResponse.json({ error: err?.message || 'Server error' }, { status: 500 })
