@@ -85,6 +85,7 @@ export default function DashboardSidebar({
   }
 
   const dashboardActive = pathname === '/dashboard'
+  const messagesActive = pathname.startsWith('/dashboard/messages')
   const profileActive = pathname.startsWith('/dashboard/profile')
 
   const sections: Section[] = []
@@ -223,6 +224,13 @@ export default function DashboardSidebar({
             </div>
           )
         })}
+
+        <Link href="/dashboard/messages" onClick={closeAll}
+          className={`block px-3 py-1.5 mt-2 rounded-lg text-sm font-medium transition ${
+            messagesActive ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+          }`}>
+          💬 Messages
+        </Link>
 
         <Link href="/dashboard/profile" onClick={closeAll}
           className={`block px-3 py-1.5 mt-2 rounded-lg text-sm font-medium transition ${
