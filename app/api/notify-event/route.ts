@@ -69,6 +69,27 @@ export async function POST(req: NextRequest) {
     { auth: { persistSession: false, autoRefreshToken: false } },
   )
 
+  // Look up the company name once. Used as a suffix on every push
+  // notification's title so the recipient knows which company the
+  // ping is from (e.g. when an admin works for multiple companies).
+  // If the lookup fails, we fall back silently to no suffix.
+  const { data: companyRow } = await svc
+    .from('companies')
+    .select('name')
+    .eq('id', caller.company_id)
+    .maybeSingle()
+  const companyName: string = (companyRow?.name || '').trim()
+
+  // Helper: append " — Company Name" to a notification title. If
+  // the title already ends with the company name (defensive against
+  // accidental double-tagging) or company name is empty, returns
+  // the title unchanged.
+  const withCompanySuffix = (title: string): string => {
+    if (!companyName) return title
+    if (title.endsWith(` — ${companyName}`)) return title
+    return `${title} — ${companyName}`
+  }
+
   let targetUserId: string | null = null
   let payload: PushPayload | null = null
 
@@ -223,7 +244,7 @@ export async function POST(req: NextRequest) {
         : `/dashboard/messages/${thread.id}`
 
       const recipientPayload: PushPayload = {
-        title: isGroup ? titleForGroup : titleForDirect,
+        title: withCompanySuffix(isGroup ? titleForGroup : titleForDirect),
         body: bodyText,
         url,
         tone: 'info',
@@ -270,7 +291,7 @@ export async function POST(req: NextRequest) {
     const reg = (d.vehicle as any)?.registration || 'a vehicle'
     const detail = d.defect_note || d.description || d.item_text || 'Defect needs attention'
     payload = {
-      title: sev === 'critical' ? '🚨 Critical defect assigned' : 'Defect assigned to you',
+      title: withCompanySuffix(sev === 'critical' ? '🚨 Critical defect assigned' : 'Defect assigned to you'),
       body: `${reg} — ${truncate(detail, 80)}`,
       url: '/employee/services',
       tone,
@@ -301,7 +322,7 @@ export async function POST(req: NextRequest) {
       ? `WC ${formatDate(s.week_commencing)}`
       : s.scheduled_date ? formatDate(s.scheduled_date) : 'TBC'
     payload = {
-      title: `New ${typeLabel} assigned`,
+      title: withCompanySuffix(`New ${typeLabel} assigned`),
       body: `${reg} — ${dateLabel}`,
       url: '/employee/services',
       tone: 'info',
@@ -324,7 +345,7 @@ export async function POST(req: NextRequest) {
     targetUserId = h.user_id
     const dateRange = `${formatDate(h.start_date)}${h.end_date && h.end_date !== h.start_date ? ` – ${formatDate(h.end_date)}` : ''}`
     payload = {
-      title: h.status === 'approved' ? '✅ Holiday approved' : '❌ Holiday rejected',
+      title: withCompanySuffix(h.status === 'approved' ? '✅ Holiday approved' : '❌ Holiday rejected'),
       body: dateRange,
       url: '/employee/holidays',
       tone: 'info',
@@ -384,7 +405,7 @@ export async function POST(req: NextRequest) {
       ? ` ${String(sch.start_time).slice(0,5)}–${String(sch.end_time).slice(0,5)}`
       : ''
     payload = {
-      title: `Scheduled: ${sch.name || 'shift'}`,
+      title: withCompanySuffix(`Scheduled: ${sch.name || 'shift'}`),
       body: `${dateLabel}${timeRange}`,
       url: '/employee/schedules',
       tone: 'info',
