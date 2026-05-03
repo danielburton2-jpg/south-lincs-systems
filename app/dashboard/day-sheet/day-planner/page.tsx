@@ -715,7 +715,7 @@ export default function DayPlannerPage() {
                               href={`/dashboard/day-sheet/${sheet.id}`}
                               className="text-blue-700 hover:underline block"
                             >
-                              {sheet.job_description || sheet.customer_name}
+                              {sheet.customer_name || '(unnamed)'}
                             </Link>
                             {status === 'draft' && (
                               <span className="ml-1 text-[9px] text-slate-500 print-hide">draft</span>

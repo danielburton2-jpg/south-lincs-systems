@@ -20,9 +20,10 @@ const supabase = createClient()
  *     unroll into per-occurrence rows here — that'd be a different
  *     report.
  *   - "Completion" filter doesn't apply to day sheets; dropped.
- *   - "Drivers covered" column shows per-row how many of the sheet's
- *     occurrences in the report's date range have a driver assigned.
- *     A green tick when fully covered, otherwise X / Y.
+ *   - "Pax" and "Drivers covered" columns were removed in step 15
+ *     after early use feedback — too noisy for the at-a-glance view.
+ *     The pax field is still on the day-sheet edit page; coverage
+ *     is still surfaced on the Assign and Day View pages.
  *   - Linked-group siblings are surfaced by a small chip on the row
  *     showing how many other sheets are linked to it.
  */
@@ -59,9 +60,6 @@ const DAY_LABELS: Record<string, string> = {
   mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun',
 }
 const DAY_ORDER = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
-const DAY_FROM_INDEX: Record<number, string> = {
-  0: 'sun', 1: 'mon', 2: 'tue', 3: 'wed', 4: 'thu', 5: 'fri', 6: 'sat',
-}
 
 type DaySheet = {
   id: string
@@ -146,37 +144,6 @@ const sheetIntersectsRange = (s: DaySheet, from: string | null, to: string | nul
   return true
 }
 
-// Count occurrences of a sheet within [from, to]. Used to compute
-// driver-coverage ratios.
-const countOccurrencesInRange = (s: DaySheet, from: string, to: string): number => {
-  if (s.sheet_type === 'one_off') {
-    const sFrom = s.start_date
-    const sTo = s.end_date || s.start_date
-    if (sFrom > to) return 0
-    if (sTo < from) return 0
-    const start = sFrom < from ? from : sFrom
-    const end = sTo > to ? to : sTo
-    const startD = new Date(start + 'T00:00:00')
-    const endD = new Date(end + 'T00:00:00')
-    return Math.max(0, Math.round((endD.getTime() - startD.getTime()) / (1000 * 60 * 60 * 24)) + 1)
-  }
-  // Recurring: walk each day in [max(start, from), min(end||to, to)]
-  // and count those matching recurring_days.
-  const sStart = s.start_date > from ? s.start_date : from
-  const sEnd = s.end_date && s.end_date < to ? s.end_date : to
-  if (sStart > sEnd) return 0
-  const days = s.recurring_days || []
-  let count = 0
-  const cur = new Date(sStart + 'T00:00:00')
-  const last = new Date(sEnd + 'T00:00:00')
-  while (cur <= last) {
-    const slug = DAY_FROM_INDEX[cur.getDay()]
-    if (days.includes(slug)) count += 1
-    cur.setDate(cur.getDate() + 1)
-  }
-  return count
-}
-
 // CSV cell escaping — wrap in quotes if needed; double-up internal
 // quotes; replace newlines with spaces.
 const csvCell = (val: any): string => {
@@ -194,7 +161,6 @@ export default function DaySheetReportsPage() {
   const [allSheets, setAllSheets] = useState<DaySheet[]>([])
   const [users, setUsers] = useState<Profile[]>([])
   const [docCounts, setDocCounts] = useState<Record<string, number>>({})
-  const [coverageByRange, setCoverageByRange] = useState<Record<string, { covered: number; total: number }>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -280,52 +246,6 @@ export default function DaySheetReportsPage() {
   }, [companyId])
 
   useEffect(() => { loadData() }, [loadData])
-
-  // ── Driver coverage per sheet for the current date range ─────────
-  // Re-fetched whenever the date range changes so the coverage column
-  // reflects the active filter.
-  useEffect(() => {
-    let cancelled = false
-    const fetchCoverage = async () => {
-      if (!companyId || allSheets.length === 0) {
-        setCoverageByRange({})
-        return
-      }
-      const sheetIds = allSheets.map(s => s.id)
-      // Decide date bounds. If "all time" we need an upper bound for
-      // the totals math — use today.
-      const fromIso = fromDate || '1900-01-01'
-      const toIso = toDate || todayISO()
-      const { data } = await supabase
-        .from('day_sheet_assignments')
-        .select('day_sheet_id, assignment_date, user_id')
-        .in('day_sheet_id', sheetIds)
-        .gte('assignment_date', fromIso)
-        .lte('assignment_date', toIso)
-
-      if (cancelled) return
-
-      // Count "covered" = rows with user_id NOT NULL
-      const covered: Record<string, number> = {}
-      ;(data || []).forEach((a: any) => {
-        if (a.user_id) covered[a.day_sheet_id] = (covered[a.day_sheet_id] || 0) + 1
-      })
-
-      // Compute totals = expected occurrences in range
-      const totals: Record<string, number> = {}
-      for (const s of allSheets) {
-        totals[s.id] = countOccurrencesInRange(s, fromIso, toIso)
-      }
-
-      const out: Record<string, { covered: number; total: number }> = {}
-      for (const s of allSheets) {
-        out[s.id] = { covered: covered[s.id] || 0, total: totals[s.id] || 0 }
-      }
-      setCoverageByRange(out)
-    }
-    fetchCoverage()
-    return () => { cancelled = true }
-  }, [companyId, allSheets, fromDate, toDate])
 
   // ── Apply quick range ─────────────────────────────────────────────
   const applyQuickRange = (key: QuickRangeKey) => {
@@ -415,13 +335,11 @@ export default function DaySheetReportsPage() {
   const exportCSV = () => {
     if (filtered.length === 0) return
     const headers = [
-      'Customer', 'Description', 'Type', 'When', 'Start time', 'End time',
-      'Pax', 'Created by', 'Created at',
-      'Drivers covered', 'Total occurrences in range',
+      'Job', 'Description', 'Type', 'When', 'Start time', 'End time',
+      'Created by', 'Created at',
       'Documents attached',
     ]
     const rows = filtered.map(s => {
-      const cov = coverageByRange[s.id] || { covered: 0, total: 0 }
       return [
         s.customer_name,
         s.job_description || '',
@@ -429,11 +347,8 @@ export default function DaySheetReportsPage() {
         formatWhen(s),
         formatTime(s.start_time),
         formatTime(s.end_time),
-        s.passenger_count != null ? String(s.passenger_count) : '',
         s.created_by ? userMap.get(s.created_by) || '' : '',
         formatDateTime(s.created_at),
-        String(cov.covered),
-        String(cov.total),
         String(docCounts[s.id] || 0),
       ].map(csvCell).join(',')
     })
@@ -467,19 +382,15 @@ export default function DaySheetReportsPage() {
     doc.setTextColor(0)
 
     const head = [[
-      'Customer / Description', 'Type', 'When', 'Times', 'Pax',
-      'Drivers covered', 'Docs', 'Created by',
+      'Job / Description', 'Type', 'When', 'Times', 'Docs', 'Created by',
     ]]
     const body = filtered.map(s => {
-      const cov = coverageByRange[s.id] || { covered: 0, total: 0 }
       const desc = s.job_description ? `\n${s.job_description}` : ''
       return [
         `${s.customer_name}${desc}`,
         s.sheet_type === 'recurring' ? 'Recurring' : 'One-off',
         formatWhen(s),
         s.start_time ? `${formatTime(s.start_time)}${s.end_time ? '–' + formatTime(s.end_time) : ''}` : '',
-        s.passenger_count != null ? String(s.passenger_count) : '',
-        cov.total > 0 ? `${cov.covered} / ${cov.total}` : '—',
         String(docCounts[s.id] || 0),
         s.created_by ? userMap.get(s.created_by) || '' : '',
       ]
@@ -492,14 +403,16 @@ export default function DaySheetReportsPage() {
       styles: { fontSize: 8, cellPadding: 1.5, valign: 'top' },
       headStyles: { fillColor: [240, 240, 240], textColor: 30, fontSize: 8 },
       columnStyles: {
-        0: { cellWidth: 70 },
-        1: { cellWidth: 18 },
-        2: { cellWidth: 50 },
-        3: { cellWidth: 22 },
-        4: { cellWidth: 12 },
-        5: { cellWidth: 22 },
-        6: { cellWidth: 14 },
-        7: { cellWidth: 32 },
+        // Indices renumbered after Pax + Drivers-covered columns
+        // were removed. Widths redistributed: the freed 34mm goes
+        // to Job (more room for the description) and a touch to
+        // When (for multi-day ranges).
+        0: { cellWidth: 90 },   // Job / Description
+        1: { cellWidth: 20 },   // Type
+        2: { cellWidth: 60 },   // When
+        3: { cellWidth: 22 },   // Times
+        4: { cellWidth: 14 },   // Docs
+        5: { cellWidth: 36 },   // Created by
       },
       didDrawPage: () => {
         const pageCount = (doc as any).internal.getNumberOfPages()
@@ -550,7 +463,7 @@ export default function DaySheetReportsPage() {
         <div className="flex gap-2">
           <input
             type="text"
-            placeholder="Search by customer name or job description…"
+            placeholder="Search by job name or description…"
             value={search}
             onChange={e => setSearch(e.target.value)}
             className="flex-1 border border-slate-300 rounded-xl px-3 py-2 text-sm text-slate-900"
@@ -680,20 +593,16 @@ export default function DaySheetReportsPage() {
             <table className="w-full">
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Customer / job</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Job</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Type</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">When</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Times</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Pax</th>
-                  <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Drivers covered</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Docs</th>
                   <th className="px-4 py-3 text-left text-xs font-semibold text-slate-600 uppercase">Created by</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map(s => {
-                  const cov = coverageByRange[s.id] || { covered: 0, total: 0 }
-                  const fullyCovered = cov.total > 0 && cov.covered >= cov.total
                   const docCount = docCounts[s.id] || 0
                   return (
                     <tr
@@ -731,21 +640,6 @@ export default function DaySheetReportsPage() {
                           ? `${formatTime(s.start_time)}${s.end_time ? '–' + formatTime(s.end_time) : ''}`
                           : <span className="text-slate-300">—</span>}
                       </td>
-                      <td className="px-4 py-3 text-sm text-slate-700">
-                        {s.passenger_count != null
-                          ? s.passenger_count
-                          : <span className="text-slate-300">—</span>}
-                      </td>
-                      <td className="px-4 py-3 text-sm whitespace-nowrap">
-                        {cov.total === 0 ? (
-                          <span className="text-slate-300">—</span>
-                        ) : (
-                          <span className={`font-medium ${fullyCovered ? 'text-emerald-700' : 'text-amber-700'}`}>
-                            {fullyCovered && '✓ '}
-                            {cov.covered} / {cov.total}
-                          </span>
-                        )}
-                      </td>
                       <td className="px-4 py-3 text-sm text-slate-600">
                         {docCount > 0 ? (
                           <span className="flex items-center gap-1">📎 {docCount}</span>
@@ -768,7 +662,6 @@ export default function DaySheetReportsPage() {
       <div className="mt-4 text-xs text-slate-500 flex flex-wrap gap-4">
         <span>📅 one-off · 🔁 recurring</span>
         <span>📎 documents attached</span>
-        <span>Drivers covered = how many of this sheet&apos;s occurrences in your filter range have a driver assigned</span>
       </div>
     </div>
   )

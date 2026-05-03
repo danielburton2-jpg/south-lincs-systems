@@ -180,7 +180,7 @@ export default function DaySheetListPage() {
             type="search"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Customer, description, notes…"
+            placeholder="Job name, description, notes…"
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm"
           />
         </div>

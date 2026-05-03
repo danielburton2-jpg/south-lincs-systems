@@ -75,7 +75,7 @@ export default function NewDaySheetPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!companyId) return
-    if (!customerName.trim()) { setError('Customer name is required'); return }
+    if (!customerName.trim()) { setError('Job name is required'); return }
     if (!startDate) { setError('Start date is required'); return }
     if (sheetType === 'recurring' && recurringDays.length === 0) {
       setError('Pick at least one weekday for a recurring sheet'); return
@@ -230,7 +230,7 @@ export default function NewDaySheetPage() {
       <form onSubmit={handleSubmit} className="space-y-6">
         <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Customer name *</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Job name *</label>
             <input
               type="text"
               value={customerName}

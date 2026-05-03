@@ -733,12 +733,16 @@ export default function DaySheetAssignPage() {
                           {/* Job name itself is the link to the edit page.
                               Metadata (times, linked chip, separate Open
                               link) deliberately removed in step 5.8 to
-                              keep the column compact. */}
+                              keep the column compact.
+                              Always show the job name (stored in the
+                              customer_name column for legacy reasons).
+                              Never fall back to job_description, which
+                              can be many lines and breaks the grid. */}
                           <Link
                             href={`/dashboard/day-sheet/${s.id}`}
                             className="font-semibold text-slate-800 hover:text-blue-700 hover:underline text-xs leading-tight block"
                           >
-                            {s.job_description || s.customer_name}
+                            {s.customer_name || '(unnamed)'}
                           </Link>
                         </div>
                       </div>
