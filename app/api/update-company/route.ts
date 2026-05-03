@@ -6,11 +6,20 @@ import { calculateEndDate } from '@/lib/subscription'
 /**
  * POST /api/update-company
  *
- * Body: { id, ...basic fields, subscription_length, enabled_feature_ids }
+ * Body: { id, ...basic fields, subscription_length, enabled_feature_ids,
+ *         schedules_mode }
  *
  * If start_date OR subscription_length changes, end_date is recomputed.
  * Features sync is delete-and-insert.
+ *
+ * schedules_mode (added in migration 029) is one of:
+ *   - 'shift_patterns' (default, existing behaviour)
+ *   - 'day_sheet' (new trip-style planning)
+ * Validated against the same set the DB CHECK constraint enforces.
  */
+
+const VALID_SCHEDULES_MODES = ['shift_patterns', 'day_sheet'] as const
+
 export async function POST(request: Request) {
   try {
     const body = await request.json()
@@ -27,10 +36,21 @@ export async function POST(request: Request) {
       notes,
       enabled_feature_ids,
       vehicle_types,
+      schedules_mode,
     } = body
 
     if (!id) {
       return NextResponse.json({ error: 'id is required' }, { status: 400 })
+    }
+
+    // Validate schedules_mode if provided. Reject unknown values rather
+    // than silently coercing — saves debugging if the form ever sends
+    // something unexpected.
+    if (schedules_mode !== undefined && !VALID_SCHEDULES_MODES.includes(schedules_mode)) {
+      return NextResponse.json(
+        { error: `schedules_mode must be one of: ${VALID_SCHEDULES_MODES.join(', ')}` },
+        { status: 400 },
+      )
     }
 
     const supabase = createClient(
@@ -52,6 +72,7 @@ export async function POST(request: Request) {
     if (contact_email !== undefined)     updatePayload.contact_email     = contact_email || null
     if (notes !== undefined)             updatePayload.notes             = notes || null
     if (vehicle_types !== undefined)     updatePayload.vehicle_types     = Array.isArray(vehicle_types) ? vehicle_types : null
+    if (schedules_mode !== undefined)    updatePayload.schedules_mode    = schedules_mode
 
     // Recompute end_date if either of its inputs were sent.
     // To do that we need the current values from the DB for whichever

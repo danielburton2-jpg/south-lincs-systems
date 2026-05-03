@@ -8,11 +8,22 @@
  *   • Manager/user with EDIT on Holidays → shown, sub-item "Review Requests"
  *   • Manager/user with READ-only on Holidays → shown, sub-item "My Holidays"
  *
- * Schedules section visibility:
- *   • Admin → always shown, sub-items "Schedules" / "Calendar" / "Assign" / "Reports"
- *   • Manager/user with EDIT on Schedules → shown with full sub-items
- *   • Manager/user with READ-only on Schedules → shown with "Schedules" + "Calendar"
- *     (calendar is everyone's transparency view, list shows their own)
+ * Schedules section visibility (depends on company's schedules_mode):
+ *
+ *   When schedules_mode = 'shift_patterns' (default):
+ *     • Admin → "Schedules" / "Calendar" / "Assign" / "Reports"
+ *     • Manager/user with EDIT → all of the above
+ *     • Manager/user with READ-only → "Schedules" + "Calendar"
+ *
+ *   When schedules_mode = 'day_sheet' (added in migration 029):
+ *     • Section is labelled "Day Sheet" instead of "Schedules"
+ *     • Sub-items: "Day Sheets" (list — has its own + New button),
+ *       "Assign" (weekly driver-on-job grid),
+ *       "Day View" (per-day vehicle + notes; doubles as printout),
+ *       "Reports" (historical day sheets + filters + CSV/PDF export)
+ *
+ * The two modes are mutually exclusive — exactly one (or neither, if
+ * the Schedules feature isn't enabled at all) is visible at a time.
  *
  * Other sections:
  *   • Admin → MANAGE USERS (Add User / Edit User)
@@ -39,13 +50,30 @@ type Props = {
   hasHolidayAccess?: boolean
   schedulesCanEdit?: boolean
   schedulesCanViewAll?: boolean
+  /**
+   * True if Schedules feature is enabled for the user's company AND the
+   * user has any access to it. Mode-agnostic — kept for compatibility
+   * with any code that still reads it. The sidebar itself uses the two
+   * mode-specific flags below.
+   */
   hasSchedulesAccess?: boolean
+  /**
+   * True when the company is in 'shift_patterns' mode AND the user has
+   * Schedules access. Drives whether the existing Schedules section
+   * (Schedules / Calendar / Assign / Reports) is shown.
+   */
+  hasSchedulesShiftPatternsAccess?: boolean
+  /**
+   * True when the company is in 'day_sheet' mode AND the user has
+   * Schedules access. Drives whether the new Day Sheet section is shown.
+   */
+  hasSchedulesDaySheetAccess?: boolean
   hasVehiclesAccess?: boolean
   hasServicesAccess?: boolean
   hasDocumentsAccess?: boolean
 }
 
-type SubItem = { label: string; href: string }
+type SubItem = { label: string; href: string; disabled?: boolean }
 type Section = { label: string; basePath: string; subItems: SubItem[] }
 
 async function recordAudit(payload: any) {
@@ -61,7 +89,9 @@ async function recordAudit(payload: any) {
 export default function DashboardSidebar({
   user,
   holidaysCanEdit, hasHolidayAccess,
-  schedulesCanEdit, schedulesCanViewAll, hasSchedulesAccess,
+  schedulesCanEdit, schedulesCanViewAll,
+  hasSchedulesShiftPatternsAccess,
+  hasSchedulesDaySheetAccess,
   hasVehiclesAccess,
   hasServicesAccess,
   hasDocumentsAccess,
@@ -125,11 +155,11 @@ export default function DashboardSidebar({
     })
   }
 
-  // Schedules
-  // Trust the layout's `hasSchedulesAccess` value — it already encodes
-  // both the company-level enable and the per-user/role grant.
-  const showSchedules = hasSchedulesAccess
-  if (showSchedules) {
+  // Schedules — shift_patterns mode (existing behaviour)
+  // Shown only when the company is in shift_patterns mode AND the user
+  // has Schedules access. The day_sheet mode renders a separate section
+  // below, so the two are mutually exclusive in practice.
+  if (hasSchedulesShiftPatternsAccess) {
     const isAdmin = user.role === 'admin'
     const subItems: SubItem[] = [
       // Always show Schedules list — admins see all, non-admins see their own
@@ -150,19 +180,60 @@ export default function DashboardSidebar({
     })
   }
 
-  // Vehicles — admin-only for now. Granular per-user permissions can come
-  // when the driver-side checks workflow is built.
-  const showVehicles = user.role === 'admin' && hasVehiclesAccess
-  if (showVehicles) {
+  // Day Sheet mode — sub-items expand as the rollout progresses.
+  // The "Day View" entry is the per-day vehicle + notes page; it
+  // doubles as the printable day sheet (Print button on the page).
+  // "New Day Sheet" was removed — the Day Sheets list page has its
+  // own "+ New Day Sheet" button at the top, so the sidebar entry
+  // was redundant.
+  if (hasSchedulesDaySheetAccess) {
+    const subItems: SubItem[] = [
+      { label: 'Day Sheets', href: '/dashboard/day-sheet' },
+      { label: 'Assign', href: '/dashboard/day-sheet/assign' },
+      { label: 'Day View', href: '/dashboard/day-sheet/day-planner' },
+      { label: 'Reports', href: '/dashboard/day-sheet/reports' },
+    ]
     sections.push({
-      label: 'Vehicles',
-      basePath: '/dashboard/vehicles',
-      subItems: [
-        { label: 'Vehicles',  href: '/dashboard/vehicles' },
+      label: 'Day Sheet',
+      basePath: '/dashboard/day-sheet',
+      subItems,
+    })
+  }
+
+  // Vehicles — admin-only for now. Granular per-user permissions can
+  // come when the driver-side checks workflow is built.
+  //
+  // The Vehicles section is shown when EITHER:
+  //   • Vehicle checks (walkrounds) is enabled — full Vehicles +
+  //     Templates + Defects + Reports
+  //   • Day Sheet mode is enabled — vehicles are needed by the Day
+  //     Planner so planners can pick which vehicle each driver takes
+  //
+  // Walkround sub-items (Templates / Defects / Reports) only appear
+  // when the walkrounds feature itself is enabled. Day-sheet-only
+  // companies see just the basic Vehicles entry.
+  //
+  // Services & MOT does not currently grant vehicle access on its own
+  // — it always pairs with walkrounds in practice. If that ever
+  // changes we can extend the condition here.
+  const showVehicles =
+    user.role === 'admin' &&
+    (hasVehiclesAccess || hasSchedulesDaySheetAccess)
+  if (showVehicles) {
+    const subItems: SubItem[] = [
+      { label: 'Vehicles', href: '/dashboard/vehicles' },
+    ]
+    if (hasVehiclesAccess) {
+      subItems.push(
         { label: 'Templates', href: '/dashboard/vehicle-checks/templates' },
         { label: 'Defects',   href: '/dashboard/vehicle-checks/defects' },
         { label: 'Reports',   href: '/dashboard/vehicle-checks/reports' },
-      ],
+      )
+    }
+    sections.push({
+      label: 'Vehicles',
+      basePath: '/dashboard/vehicles',
+      subItems,
     })
   }
 
@@ -218,6 +289,23 @@ export default function DashboardSidebar({
                       && !isSchedulesRoot
                       && pathname.startsWith(item.href + '/')
                     const active = exact || startsWith
+
+                    // Disabled placeholder items (e.g. the Day Sheet
+                    // 'Coming soon' row) render as plain spans, not links —
+                    // they're informational only.
+                    if (item.disabled) {
+                      return (
+                        <li key={item.href + '-disabled'}>
+                          <span
+                            title="Available in a future release"
+                            className="block px-3 py-1.5 rounded-lg text-sm text-slate-500 italic cursor-not-allowed"
+                          >
+                            {item.label}
+                          </span>
+                        </li>
+                      )
+                    }
+
                     return (
                       <li key={item.href}>
                         <Link href={item.href} onClick={closeAll}

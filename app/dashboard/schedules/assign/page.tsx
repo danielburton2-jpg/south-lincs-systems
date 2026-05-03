@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import { logAuditClient } from '@/lib/auditClient'
 import { notifyEvent } from '@/lib/notifyEvent'
+import PublishPickerModal, { type PublishFilter } from '@/components/PublishPickerModal'
 
 const supabase = createClient()
 
@@ -65,6 +66,7 @@ export default function SchedulesAssignPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [publishing, setPublishing] = useState(false)
+  const [publishModalOpen, setPublishModalOpen] = useState(false)
   const [hasUnsaved, setHasUnsaved] = useState(false)
 
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeekMon(new Date()))
@@ -385,7 +387,69 @@ export default function SchedulesAssignPage() {
     ).length
   }, [cells])
 
+  // Build "publishable cells" — same approach as day-sheet/assign.
+  // Used by the picker modal for dropdown options and the live count.
+  const publishableCells = useMemo(() => {
+    const out: { scheduleId: string; date: string; userId: string | null }[] = []
+    for (const [k, c] of Object.entries(cells)) {
+      if (!c.assignment_id) continue
+      if (c.status !== 'draft' && !c.is_changed) continue
+      const [scheduleId, date] = k.split('|')
+      if (!scheduleId || !date) continue
+      out.push({ scheduleId, date, userId: c.user_id })
+    }
+    return out
+  }, [cells])
+
+  const availableDates = useMemo(() => {
+    const set = new Set<string>()
+    for (const c of publishableCells) set.add(c.date)
+    const sorted = Array.from(set).sort()
+    return sorted.map(iso => {
+      const d = new Date(iso + 'T00:00:00')
+      const label = d.toLocaleDateString('en-GB', {
+        weekday: 'long', day: 'numeric', month: 'long',
+      })
+      return { id: iso, label }
+    })
+  }, [publishableCells])
+
+  const availableUsers = useMemo(() => {
+    const set = new Set<string>()
+    for (const c of publishableCells) {
+      if (c.userId) set.add(c.userId)
+    }
+    return Array.from(set)
+      .map(id => {
+        const u = users.find((x: any) => x.id === id)
+        return { id, label: u?.full_name || '(unknown user)' }
+      })
+      .sort((a, b) => a.label.localeCompare(b.label))
+  }, [publishableCells, users])
+
+  const countFor = useCallback((filter: PublishFilter) => {
+    return publishableCells.filter(c => {
+      if (filter.date && c.date !== filter.date) return false
+      if (filter.userId && c.userId !== filter.userId) return false
+      return true
+    }).length
+  }, [publishableCells])
+
+  const weekRangeLabel = useMemo(() => {
+    const f = weekDates[0]
+    const t = weekDates[6]
+    const fStr = f.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    const tStr = t.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+    return `${fStr} – ${tStr}`
+  }, [weekDates])
+
   // === Publish ===
+  // Two phases:
+  //   1. handlePublish(): pre-flight checks (unsaved? nothing to do?),
+  //      then opens the picker modal so the planner picks scope.
+  //   2. submitPublish(filter): called by the modal once the planner
+  //      has picked. Builds a filtered query, fires notifications only
+  //      for the rows actually published.
   const handlePublish = async () => {
     if (hasUnsaved) {
       if (!confirm('You have unsaved changes. Save them as draft first, then publish?')) return
@@ -397,7 +461,11 @@ export default function SchedulesAssignPage() {
       return
     }
 
-    if (!confirm(`Publish ${unpublishedCount} assignment(s) for this week? Employees will see them on the calendar.`)) return
+    setPublishModalOpen(true)
+  }
+
+  const submitPublish = async (filter: PublishFilter) => {
+    if (!currentUser?.company_id) return
 
     setPublishing(true)
     const fromISO = isoDate(weekDates[0])
@@ -405,19 +473,25 @@ export default function SchedulesAssignPage() {
     const now = new Date().toISOString()
 
     try {
-      // Capture the IDs of rows we're ABOUT to publish, so we can ping
-      // each assignee after the bulk update succeeds. (The update doesn't
-      // return rows by default, and even with .select() the predicate
-      // would have already changed.)
-      const { data: toPublish } = await supabase
+      // Build the candidates query so we can ping each assignee after
+      // the bulk update succeeds. Same filter is applied to both
+      // candidates and update queries so they stay consistent.
+      let candQuery = supabase
         .from('schedule_assignments')
         .select('id')
         .eq('company_id', currentUser.company_id)
-        .gte('assignment_date', fromISO)
-        .lte('assignment_date', toISO)
         .or('status.eq.draft,is_changed.eq.true')
+      if (filter.date) {
+        candQuery = candQuery.eq('assignment_date', filter.date)
+      } else {
+        candQuery = candQuery.gte('assignment_date', fromISO).lte('assignment_date', toISO)
+      }
+      if (filter.userId) {
+        candQuery = candQuery.eq('user_id', filter.userId)
+      }
+      const { data: toPublish } = await candQuery
 
-      const { error } = await supabase
+      let updQuery = supabase
         .from('schedule_assignments')
         .update({
           status: 'published',
@@ -426,9 +500,17 @@ export default function SchedulesAssignPage() {
           published_by: currentUser.id,
         })
         .eq('company_id', currentUser.company_id)
-        .gte('assignment_date', fromISO)
-        .lte('assignment_date', toISO)
         .or('status.eq.draft,is_changed.eq.true')
+      if (filter.date) {
+        updQuery = updQuery.eq('assignment_date', filter.date)
+      } else {
+        updQuery = updQuery.gte('assignment_date', fromISO).lte('assignment_date', toISO)
+      }
+      if (filter.userId) {
+        updQuery = updQuery.eq('user_id', filter.userId)
+      }
+
+      const { error } = await updQuery
 
       if (error) {
         showMessage('Publish failed: ' + error.message, 'error')
@@ -436,15 +518,15 @@ export default function SchedulesAssignPage() {
         return
       }
 
-      // Phone push per assignee. Fail-silent — the update has already
-      // succeeded; we don't want a failed push to surface to the admin.
+      // Phone push per assignee — only those actually published.
+      // Fail-silent — the update has already succeeded.
       if (toPublish && toPublish.length > 0) {
-        // Don't await — fire-and-forget so a slow push provider doesn't
-        // hold up the UI redraw. Each call is wrapped in fail-silent.
         toPublish.forEach((row: any) => {
           notifyEvent({ kind: 'schedule_assigned', assignment_id: row.id })
         })
       }
+
+      const publishedCount = toPublish?.length || 0
 
       await logAuditClient({
         user: currentUser,
@@ -452,18 +534,22 @@ export default function SchedulesAssignPage() {
         entity: 'schedule_assignments',
         details: {
           week: `${fromISO} to ${toISO}`,
-          published_count: unpublishedCount,
+          published_count: publishedCount,
+          user_id: filter.userId || null,
+          date: filter.date || null,
         },
       })
 
+      setPublishModalOpen(false)
       await loadAll(currentUser.company_id, fromISO, toISO)
-      showMessage(`Published ${unpublishedCount} assignment(s). Now visible on the calendar.`, 'success')
+      showMessage(`Published ${publishedCount} assignment${publishedCount === 1 ? '' : 's'}. Now visible on the calendar.`, 'success')
     } catch (err: any) {
       showMessage('Publish failed: ' + (err?.message || 'unknown'), 'error')
     } finally {
       setPublishing(false)
     }
   }
+
 
   const tryChangeWeek = (newStart: Date) => {
     if (hasUnsaved) {
@@ -728,6 +814,17 @@ export default function SchedulesAssignPage() {
           <span><strong>Save</strong> stores silently. <strong>Publish</strong> makes live for employees.</span>
         </div>
       </div>
+
+      <PublishPickerModal
+        open={publishModalOpen}
+        onClose={() => { if (!publishing) setPublishModalOpen(false) }}
+        onPublish={submitPublish}
+        weekRangeLabel={weekRangeLabel}
+        availableDates={availableDates}
+        availableUsers={availableUsers}
+        countFor={countFor}
+        busy={publishing}
+      />
     </div>
   )
 }

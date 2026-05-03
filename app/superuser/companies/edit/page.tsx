@@ -1,9 +1,8 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh'
 
 type Company = {
   id: string
@@ -22,7 +21,7 @@ export default function CompaniesListPage() {
   const [error, setError] = useState('')
 
   // Initial load
-  const load = useCallback(async (q: string) => {
+  const load = async (q: string) => {
     setLoading(true)
     setError('')
     try {
@@ -38,31 +37,16 @@ export default function CompaniesListPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }
 
-  useEffect(() => { load('') }, [load])
+  useEffect(() => { load('') }, [])
 
   // Debounced search reload
   useEffect(() => {
     const t = setTimeout(() => load(search.trim()), 250)
     return () => clearTimeout(t)
-  }, [search, load])
-
-  // Realtime: refetch when companies or company_features change.
-  // No company_id filter (we're listing every company on the platform).
-  const reloadCurrentSearch = useCallback(() => {
-    load(search.trim())
-  }, [load, search])
-
-  useRealtimeRefresh(
-    'superuser-companies-list',
-    [
-      { table: 'companies',        companyId: null },
-      { table: 'company_features', companyId: null },
-    ],
-    reloadCurrentSearch,
-    true,
-  )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search])
 
   return (
     <div className="p-8 max-w-5xl">
@@ -142,3 +126,4 @@ export default function CompaniesListPage() {
     </div>
   )
 }
+

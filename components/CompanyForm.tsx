@@ -10,6 +10,15 @@
  *   • Override end date — separate field, takes priority over end_date
  *     when middleware decides if a company is expired
  *
+ * Schedules mode picker (added in migration 029):
+ *   • Only shown when the Schedules feature is ticked
+ *   • Radio choice between 'shift_patterns' (existing behaviour) and
+ *     'day_sheet' (new trip-style planning)
+ *   • Persisted on the companies table as `schedules_mode`
+ *   • If Schedules is unticked, the mode resets to 'shift_patterns' on
+ *     save (the field still has a value, it's just not in use until
+ *     Schedules is re-enabled)
+ *
  * The parser lives in lib/subscription.ts and is shared with the API
  * routes — same logic on both sides.
  */
@@ -27,6 +36,8 @@ export type Feature = {
   display_order: number
 }
 
+export type SchedulesMode = 'shift_patterns' | 'day_sheet'
+
 export type CompanyFormValues = {
   id?: string
   name: string
@@ -40,6 +51,7 @@ export type CompanyFormValues = {
   notes: string | null
   enabled_feature_ids?: string[]
   vehicle_types?: string[]
+  schedules_mode?: SchedulesMode
 }
 
 type Props = {
@@ -59,6 +71,7 @@ const EMPTY: CompanyFormValues = {
   notes: null,
   enabled_feature_ids: [],
   vehicle_types: [],
+  schedules_mode: 'shift_patterns',
 }
 
 // Catalogue of vehicle types — kept in sync with the Vehicles page.
@@ -120,6 +133,14 @@ export default function CompanyForm({ mode, initialValues }: Props) {
     (v.enabled_feature_ids || []).includes(vehicleChecksFeature.id)
   )
 
+  // Is the Schedules feature ticked? Drives whether we show the mode
+  // picker.
+  const schedulesFeature = features.find(f => f.slug === 'schedules')
+  const schedulesEnabled = !!(
+    schedulesFeature &&
+    (v.enabled_feature_ids || []).includes(schedulesFeature.id)
+  )
+
   const showMessage = (msg: string, type: 'success' | 'error') => {
     setMessage(msg)
     setMessageType(type)
@@ -162,6 +183,13 @@ export default function CompanyForm({ mode, initialValues }: Props) {
     setMessage('')
 
     const url = mode === 'create' ? '/api/create-company' : '/api/update-company'
+
+    // If Schedules is not ticked, send the default mode regardless of
+    // what's in state — keeps the DB tidy.
+    const effectiveMode: SchedulesMode = schedulesEnabled
+      ? (v.schedules_mode || 'shift_patterns')
+      : 'shift_patterns'
+
     const payload: any = {
       name: v.name.trim(),
       is_active: v.is_active,
@@ -174,6 +202,7 @@ export default function CompanyForm({ mode, initialValues }: Props) {
       notes: v.notes?.trim() || null,
       enabled_feature_ids: v.enabled_feature_ids || [],
       vehicle_types: v.vehicle_types || [],
+      schedules_mode: effectiveMode,
     }
     if (mode === 'edit') payload.id = v.id
 
@@ -421,6 +450,75 @@ export default function CompanyForm({ mode, initialValues }: Props) {
             </div>
           )}
         </section>
+
+        {/* Schedules mode picker — only when Schedules feature is ticked */}
+        {schedulesEnabled && (
+          <section className="bg-white border border-slate-200 rounded-xl shadow-sm p-6 space-y-4">
+            <div className="flex items-baseline justify-between">
+              <h2 className="text-lg font-semibold text-slate-800">Schedules mode</h2>
+              <p className="text-xs text-slate-500">
+                Pick one. Companies cannot use both modes at the same time.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              <label
+                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition ${
+                  v.schedules_mode === 'shift_patterns'
+                    ? 'border-blue-400 bg-blue-50'
+                    : 'border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="schedules_mode"
+                  value="shift_patterns"
+                  checked={v.schedules_mode === 'shift_patterns'}
+                  onChange={() => setField('schedules_mode', 'shift_patterns')}
+                  className="mt-0.5 w-4 h-4"
+                />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-800">Shift patterns</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Recurring or one-off shifts assigned to drivers via the weekly grid.
+                    The current behaviour for all existing companies.
+                  </p>
+                </div>
+              </label>
+
+              <label
+                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition ${
+                  v.schedules_mode === 'day_sheet'
+                    ? 'border-blue-400 bg-blue-50'
+                    : 'border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="schedules_mode"
+                  value="day_sheet"
+                  checked={v.schedules_mode === 'day_sheet'}
+                  onChange={() => setField('schedules_mode', 'day_sheet')}
+                  className="mt-0.5 w-4 h-4"
+                />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-800">Day sheet</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Trip-style planning. Customer + outbound + return jobs on a date,
+                    with a printable day-view that mirrors a paper running sheet.
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            {mode === 'edit' && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
+                ⚠️ Switching modes hides the data from the other mode but does not delete it.
+                Don&apos;t switch a live company without checking with them first.
+              </p>
+            )}
+          </section>
+        )}
 
         {/* Vehicle types — only when Vehicle Checks feature is ticked */}
         {vehicleChecksEnabled && (

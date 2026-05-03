@@ -15,6 +15,13 @@ const ALL_VEHICLE_TYPES = [
   { value: 'minibus', label: 'Minibus', icon: '🚐' },
 ] as const
 
+// Vehicle types where seat capacity is meaningful. Used to decide
+// whether the form shows the Seats input and whether the column is
+// rendered in the list row. HGVs (class_1/class_2) leave seats null.
+const SEATS_REQUIRED_TYPES = ['bus', 'coach', 'minibus'] as const
+const typeNeedsSeats = (t: string | null | undefined) =>
+  !!t && (SEATS_REQUIRED_TYPES as readonly string[]).includes(t)
+
 // Helper: format YYYY-MM-DD <-> Date safely
 const isoDate = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -54,6 +61,7 @@ export default function VehiclesPage() {
   const [openDefectsByVehicle, setOpenDefectsByVehicle] = useState<Record<string, number>>({})
   const [serviceDefaults, setServiceDefaults] = useState<Record<string, any>>({}) // keyed by vehicle_type
   const [hasServicesFeature, setHasServicesFeature] = useState(false)
+  const [hasWalkroundsFeature, setHasWalkroundsFeature] = useState(false)
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error'>('success')
@@ -72,6 +80,9 @@ export default function VehiclesPage() {
   const [name, setName] = useState('')
   const [active, setActive] = useState(true)
   const [notes, setNotes] = useState('')
+  // Seats — only meaningful for bus/coach/minibus. Stored as a string
+  // for input compatibility; coerced to int on save.
+  const [seats, setSeats] = useState<string>('')
 
   // NEW compliance fields (only shown if Services & MOT feature enabled)
   const [serviceIntervalWeeks, setServiceIntervalWeeks] = useState<string>('')   // empty string = use company default
@@ -159,7 +170,13 @@ export default function VehiclesPage() {
     const companyHasFeature = companyData?.company_features?.some(
       (cf: any) => cf.is_enabled && cf.features?.name === 'Vehicle Checks'
     )
-    if (!companyHasFeature) {
+    setHasWalkroundsFeature(!!companyHasFeature)
+    // Day-sheet mode companies need vehicle access too (the Day Planner
+    // picks vehicles per driver per day) even without the walkrounds
+    // feature enabled. So the guard accepts EITHER the walkrounds
+    // feature OR schedules_mode === 'day_sheet'.
+    const isDaySheetCompany = companyData?.schedules_mode === 'day_sheet'
+    if (!companyHasFeature && !isDaySheetCompany) {
       router.push('/dashboard')
       return
     }
@@ -207,6 +224,7 @@ export default function VehiclesPage() {
     setName('')
     setActive(true)
     setNotes('')
+    setSeats('')
     setServiceIntervalWeeks('')
     setLastServiceDate('')
     setMotExpiryDate('')
@@ -225,6 +243,7 @@ export default function VehiclesPage() {
     setName(vehicle.name || '')
     setActive(vehicle.active)
     setNotes(vehicle.notes || '')
+    setSeats(vehicle.seats != null ? String(vehicle.seats) : '')
     setServiceIntervalWeeks(vehicle.service_interval_weeks ? String(vehicle.service_interval_weeks) : '')
     setLastServiceDate(vehicle.last_service_date || '')
     setMotExpiryDate(vehicle.mot_expiry_date || '')
@@ -271,6 +290,16 @@ export default function VehiclesPage() {
       name: name.trim() || null,
       active,
       notes: notes.trim() || null,
+    }
+
+    // Seats — only persist for vehicle types where it's meaningful.
+    // For HGVs (class_1/class_2) we explicitly write null so a type
+    // change from bus -> class_2 clears any stale seat count.
+    if (typeNeedsSeats(vehicleType)) {
+      const seatsNum = seats ? parseInt(seats, 10) : null
+      payload.seats = (seatsNum && seatsNum > 0) ? seatsNum : null
+    } else {
+      payload.seats = null
     }
 
     // Compliance fields — only persist if the Services & MOT feature is on
@@ -452,24 +481,28 @@ export default function VehiclesPage() {
         <div className="flex justify-between items-center flex-wrap gap-3">
           <h2 className="text-xl font-semibold text-gray-800">Fleet Management</h2>
           <div className="flex gap-2 flex-wrap">
-            <button
-              onClick={() => router.push('/dashboard/vehicle-checks/templates')}
-              className="bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium"
-            >
-              📋 Checklists
-            </button>
-            <button
-              onClick={() => router.push('/dashboard/vehicle-checks/defects')}
-              className="bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium"
-            >
-              ⚠️ Defects
-            </button>
-            <button
-              onClick={() => router.push('/dashboard/vehicle-checks/reports')}
-              className="bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium"
-            >
-              📊 Reports
-            </button>
+            {hasWalkroundsFeature && (
+              <>
+                <button
+                  onClick={() => router.push('/dashboard/vehicle-checks/templates')}
+                  className="bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium"
+                >
+                  📋 Checklists
+                </button>
+                <button
+                  onClick={() => router.push('/dashboard/vehicle-checks/defects')}
+                  className="bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium"
+                >
+                  ⚠️ Defects
+                </button>
+                <button
+                  onClick={() => router.push('/dashboard/vehicle-checks/reports')}
+                  className="bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium"
+                >
+                  📊 Reports
+                </button>
+              </>
+            )}
             {hasServicesFeature && (
               <>
                 <button
@@ -553,6 +586,29 @@ export default function VehiclesPage() {
                   ))}
                 </div>
               </div>
+
+              {/* Seats — only shown for bus/coach/minibus. The Day Sheet
+                  vehicle picker (added later) filters by capacity, so this
+                  is what feeds that. HGVs leave it null. */}
+              {typeNeedsSeats(vehicleType) && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Seats <span className="text-gray-400">(optional, but needed for trip planning)</span>
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    inputMode="numeric"
+                    value={seats}
+                    onChange={(e) => setSeats(e.target.value)}
+                    className="w-full max-w-[12rem] border border-gray-300 rounded-lg px-3 py-2 text-gray-900"
+                    placeholder="e.g. 53"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Enter the maximum passenger capacity. Leave blank if not known.
+                  </p>
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -808,6 +864,11 @@ export default function VehiclesPage() {
                             <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                               {getTypeLabel(v.vehicle_type)}
                             </span>
+                            {typeNeedsSeats(v.vehicle_type) && v.seats != null && (
+                              <span className="text-xs bg-sky-100 text-sky-700 px-2 py-0.5 rounded-full font-medium">
+                                {v.seats} seats
+                              </span>
+                            )}
                             {!v.active && (
                               <span className="text-xs bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full font-medium">
                                 Inactive

@@ -20,6 +20,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import EmployeeDaySheetSchedule from '@/components/employee/EmployeeDaySheetSchedule'
 
 const supabase = createClient()
 
@@ -457,6 +458,13 @@ export default function EmployeeSchedulePage() {
         <p className="text-gray-500">Loading...</p>
       </main>
     )
+  }
+
+  // Day-sheet mode companies get a different driver-side view.
+  // Same route, different content. The shift-patterns view below
+  // is unchanged.
+  if (company?.schedules_mode === 'day_sheet') {
+    return <EmployeeDaySheetSchedule currentUser={currentUser} company={company} />
   }
 
   const todayIso = isoDate(new Date())

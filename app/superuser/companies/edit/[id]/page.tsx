@@ -36,6 +36,12 @@ export default function EditCompanyByIdPage() {
           notes: c.notes,
           enabled_feature_ids: data.enabled_feature_ids || [],
           vehicle_types: c.vehicle_types || [],
+          // Default to 'shift_patterns' for any company whose row was
+          // written before migration 029. The DB default also covers
+          // this, but be defensive in case anyone hand-rolls a row.
+          schedules_mode: c.schedules_mode === 'day_sheet'
+            ? 'day_sheet'
+            : 'shift_patterns',
         })
       } catch (e: any) {
         if (!cancelled) setError(e.message || 'Failed to load')

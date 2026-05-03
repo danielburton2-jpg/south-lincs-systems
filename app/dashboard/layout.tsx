@@ -23,6 +23,16 @@ import NotificationShell from '@/components/NotificationShell'
  * Vehicles is a special case: the page is admin-only, so we just need
  * to know whether the company has Vehicle Checks enabled — no per-user
  * tier yet.
+ *
+ * Schedules has two modes (added in migration 029):
+ *   • 'shift_patterns' — existing behaviour (default for every company)
+ *   • 'day_sheet'      — trip-style planning, mutually exclusive with
+ *                        shift patterns
+ *
+ * The single `hasSchedulesAccess` flag is now split into two derived
+ * flags so the sidebar can show the right section. The user's per-feature
+ * permissions (can_view, can_view_all, can_edit) apply to whichever mode
+ * the company is in.
  */
 
 export default async function DashboardLayout({
@@ -74,6 +84,22 @@ export default async function DashboardLayout({
   let hasVehiclesAccess     = false
   let hasServicesAccess     = false
   let hasDocumentsAccess    = false
+
+  // ── Schedules mode (companies.schedules_mode) ──────────────────
+  // Read once, default to 'shift_patterns' for any pre-029 row.
+  // Used below to derive the two mode-specific flags.
+  let schedulesMode: 'shift_patterns' | 'day_sheet' = 'shift_patterns'
+  if (profile.company_id) {
+    const { data: companyRow } = await supabase
+      .from('companies')
+      .select('schedules_mode')
+      .eq('id', profile.company_id)
+      .maybeSingle()
+
+    if (companyRow?.schedules_mode === 'day_sheet') {
+      schedulesMode = 'day_sheet'
+    }
+  }
 
   // ── Holidays: company gate first, then per-user for non-admins ─
   if (profile.company_id) {
@@ -140,6 +166,12 @@ export default async function DashboardLayout({
       }
     }
   }
+
+  // Derived mode-specific flags. A company is in exactly one mode, so
+  // at most one of these is true; both false means Schedules feature
+  // is off entirely (or the user has no permission).
+  const hasSchedulesShiftPatternsAccess = hasSchedulesAccess && schedulesMode === 'shift_patterns'
+  const hasSchedulesDaySheetAccess      = hasSchedulesAccess && schedulesMode === 'day_sheet'
 
   // ── Vehicles: company-level feature flag (regardless of role) ──
   // Lifted out of the else-branch so it always runs. The sidebar
@@ -228,6 +260,9 @@ export default async function DashboardLayout({
     company_id: profile.company_id,
     hasHolidayAccess,
     hasSchedulesAccess,
+    schedulesMode,
+    hasSchedulesShiftPatternsAccess,
+    hasSchedulesDaySheetAccess,
     hasVehiclesAccess,
     hasServicesAccess,
   })
@@ -252,6 +287,8 @@ export default async function DashboardLayout({
           schedulesCanEdit={schedulesCanEdit}
           schedulesCanViewAll={schedulesCanViewAll}
           hasSchedulesAccess={hasSchedulesAccess}
+          hasSchedulesShiftPatternsAccess={hasSchedulesShiftPatternsAccess}
+          hasSchedulesDaySheetAccess={hasSchedulesDaySheetAccess}
           hasVehiclesAccess={hasVehiclesAccess}
           hasServicesAccess={hasServicesAccess}
           hasDocumentsAccess={hasDocumentsAccess}
