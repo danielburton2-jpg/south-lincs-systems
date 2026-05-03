@@ -222,9 +222,31 @@ export default function ThreadView({ threadId, currentUserId, onBack, accent = '
         </button>
         <div className="flex-1 min-w-0">
           <p className="font-semibold text-sm text-slate-900 truncate">
-            {thread?.title || (members.length > 0 && thread?.target_kind === 'user_list'
-              ? members.filter(m => m.id !== currentUserId).map(m => m.full_name).join(', ') || 'Direct message'
-              : (thread?.target_kind === 'all_company' ? 'Everyone' : (thread?.target_job_title || 'Thread')))}
+            {(() => {
+              // Manual thread title takes priority
+              if (thread?.title) return thread.title
+
+              // user_list: show the OTHER members' names. While members
+              // are still loading, show a placeholder rather than the
+              // misleading 'Thread' label.
+              if (thread?.target_kind === 'user_list') {
+                const others = members.filter(m => m.id !== currentUserId)
+                if (others.length === 0) {
+                  // Either still loading or this thread genuinely has
+                  // no other members. The latter shouldn't happen.
+                  return loading ? 'Loading…' : 'Conversation'
+                }
+                return others.map(m => m.full_name).join(', ')
+              }
+
+              // job_title and all_company group threads
+              if (thread?.target_kind === 'all_company') return 'Everyone'
+              if (thread?.target_kind === 'job_title') return thread.target_job_title || 'Group'
+
+              // Genuinely unknown — only happens if thread metadata
+              // hasn't loaded yet
+              return loading ? 'Loading…' : 'Conversation'
+            })()}
           </p>
           {subtitleParts.length > 0 && (
             <p className="text-xs text-slate-500 truncate">{subtitleParts.join(' · ')}</p>

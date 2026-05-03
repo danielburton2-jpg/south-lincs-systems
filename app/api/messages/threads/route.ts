@@ -136,25 +136,44 @@ export async function GET(req: NextRequest) {
   }
 
   // Generate a display title for threads that don't have a manual one.
-  // For user_list threads we'd need member names — fetch them lazily here.
+  // For user_list threads we need the OTHER members' names so the row
+  // reads as "Daniel Burton" not "Direct message".
+  //
+  // We deliberately use two clean queries instead of the nested
+  // PostgREST relation `user:profiles(full_name)` — that returns
+  // either an object or an array depending on inferred cardinality
+  // and intermittently swallows the name. Two queries are surprise-
+  // free.
   const userListThreadIds = threads
     .filter(t => t.target_kind === 'user_list' && !t.title)
     .map(t => t.id)
   const memberMap = new Map<string, string[]>()  // threadId → [name, name, ...]
 
   if (userListThreadIds.length > 0) {
+    // 1. Pull the (thread_id, user_id) member rows
     const { data: members } = await svc
       .from('message_thread_members')
-      .select(`
-        thread_id, user_id,
-        user:profiles(full_name)
-      `)
+      .select('thread_id, user_id')
       .in('thread_id', userListThreadIds)
 
+    // 2. Pull the profile names for the union of all user_ids
+    const userIds = Array.from(new Set((members || []).map(m => m.user_id)))
+    let nameById = new Map<string, string>()
+    if (userIds.length > 0) {
+      const { data: profs } = await svc
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', userIds)
+      for (const p of (profs || [])) {
+        nameById.set(p.id, p.full_name || 'User')
+      }
+    }
+
+    // 3. Build the per-thread name list, excluding the caller
     for (const m of (members || [])) {
+      if (m.user_id === me.profile.id) continue
       const arr = memberMap.get(m.thread_id) || []
-      const name = (m.user as any)?.full_name || 'User'
-      if (m.user_id !== me.profile.id) arr.push(name)
+      arr.push(nameById.get(m.user_id) || 'User')
       memberMap.set(m.thread_id, arr)
     }
   }
@@ -166,7 +185,13 @@ export async function GET(req: NextRequest) {
       else if (t.target_kind === 'job_title') displayTitle = t.target_job_title || 'Group'
       else if (t.target_kind === 'user_list') {
         const names = memberMap.get(t.id) || []
-        if (names.length === 0) displayTitle = 'Direct message'
+        if (names.length === 0) {
+          // Should not normally happen — would mean the thread has no
+          // other members or the profile rows are missing. Fall back
+          // to a generic label that's still less confusing than the
+          // old "Direct message" placeholder.
+          displayTitle = 'Conversation'
+        }
         else if (names.length === 1) displayTitle = names[0]
         else if (names.length === 2) displayTitle = names.join(' & ')
         else displayTitle = `${names[0]}, ${names[1]} & ${names.length - 2} more`
