@@ -261,6 +261,75 @@ export function useNotificationsListener({ userId, companyId, role, scope }: Arg
       )
     }
 
+    // ── Messages — fires for ALL roles in BOTH scopes ──────────
+    // RLS gates which message rows realtime will deliver to this user
+    // (only threads they're a member of, including live job_title /
+    // all_company membership). So we don't need to filter again here.
+    //
+    // We DO need to:
+    //  • skip messages I sent myself
+    //  • look up sender name (not in realtime payload)
+    //  • use the right URL prefix based on my role
+    channel.on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'messages',
+      },
+      async (payload: any) => {
+        const m = payload?.new
+        if (!m) return
+        if (m.sender_id === userId) return  // self-action
+
+        // Stale-event guard
+        const eventTime = m.created_at ? new Date(m.created_at).getTime() : Date.now()
+        if (eventTime < mountedAtRef.current - 5000) return
+
+        // Don't double-toast if the user is currently looking at this thread.
+        // ThreadView marks-as-read on a debounce; the new message will appear
+        // inline. Detect by checking the URL.
+        if (typeof window !== 'undefined') {
+          const path = window.location.pathname
+          if (path.includes(`/messages/${m.thread_id}`)) return
+        }
+
+        // Look up sender name + thread context + my mute state.
+        // Three cheap parallel queries.
+        const [senderRes, threadRes, muteRes] = await Promise.all([
+          supabase.from('profiles').select('full_name').eq('id', m.sender_id).single(),
+          supabase.from('message_threads').select('id, target_kind, target_job_title, title').eq('id', m.thread_id).single(),
+          supabase.from('message_thread_mutes').select('thread_id').eq('thread_id', m.thread_id).eq('user_id', userId).maybeSingle(),
+        ])
+
+        // Muted threads — skip the toast. Lock-screen pushes are
+        // also suppressed server-side in /api/notify-event.
+        if (muteRes.data) return
+
+        const senderName = (senderRes.data as any)?.full_name || 'Someone'
+        const thread = threadRes.data as any
+        const isGroup = thread?.target_kind && thread.target_kind !== 'user_list'
+        const groupLabel = thread?.title || (
+          thread?.target_kind === 'all_company' ? 'Everyone' : (thread?.target_job_title || 'Group')
+        )
+
+        const title = isGroup ? `${senderName} · ${groupLabel}` : senderName
+        const body = (m.body || '[attachment]').toString()
+        const trimmed = body.length > 80 ? body.slice(0, 79) + '…' : body
+
+        const href = scope === 'employee'
+          ? `/employee/messages/${m.thread_id}`
+          : `/dashboard/messages/${m.thread_id}`
+
+        notify({
+          title,
+          body: trimmed,
+          href,
+          tone: 'info',
+        })
+      }
+    )
+
     channel.subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [userId, companyId, role, scope, notify])

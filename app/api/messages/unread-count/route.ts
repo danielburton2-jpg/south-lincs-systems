@@ -37,16 +37,42 @@ export async function GET(_req: NextRequest) {
   if (!user) return NextResponse.json({ count: 0 })
 
   // Fetch thread ids the user is a member of (RLS filters)
-  const { data: threads } = await supabase
+  const { data: threadsRaw } = await supabase
     .from('message_threads')
-    .select('id')
+    .select('id, last_message_at')
 
-  if (!threads || threads.length === 0) {
+  if (!threadsRaw || threadsRaw.length === 0) {
     return NextResponse.json({ count: 0 })
   }
-  const threadIds = threads.map(t => t.id)
 
   const svc = adminClient()
+
+  // Apply hide filter — same logic as the threads list endpoint.
+  // A hidden thread auto-resurfaces when last_message_at > hidden_at
+  // so this filter also drops "stale hidden" threads correctly.
+  const { data: hiddenRows } = await svc
+    .from('thread_hidden_by')
+    .select('thread_id, hidden_at')
+    .eq('user_id', user.id)
+    .in('thread_id', threadsRaw.map(t => t.id))
+
+  let threads = threadsRaw
+  if (hiddenRows && hiddenRows.length > 0) {
+    const hideAtById = new Map<string, string>(hiddenRows.map(r => [r.thread_id, r.hidden_at]))
+    threads = threadsRaw.filter(t => {
+      const h = hideAtById.get(t.id)
+      if (!h) return true
+      if (t.last_message_at && new Date(t.last_message_at) > new Date(h)) return true
+      return false
+    })
+  }
+
+  if (threads.length === 0) {
+    return NextResponse.json({ count: 0 })
+  }
+
+  const threadIds = threads.map(t => t.id)
+
   const { data: reads } = await svc
     .from('message_reads')
     .select('thread_id, last_read_at')

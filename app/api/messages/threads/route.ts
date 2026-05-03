@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
 
   // Using auth.supabase here is cleanest — RLS handles the membership
   // filter via is_thread_member().
-  const { data: threads, error } = await me.supabase
+  const { data: threadsRaw, error } = await me.supabase
     .from('message_threads')
     .select(`
       id, company_id, created_by, created_at,
@@ -89,8 +89,37 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  if (!threads || threads.length === 0) {
+  let threads = threadsRaw || []
+
+  if (threads.length === 0) {
     return NextResponse.json({ threads: [] })
+  }
+
+  // Apply per-user "hide from my list" filter. The hide auto-expires
+  // when fresh activity arrives (last_message_at > hidden_at), so a
+  // new message from the other person resurrects the thread. Only
+  // user_list threads can be hidden, but we apply the filter against
+  // every thread (no-op for non-hideable kinds).
+  const { data: hiddenRows } = await svc
+    .from('thread_hidden_by')
+    .select('thread_id, hidden_at')
+    .eq('user_id', me.profile.id)
+    .in('thread_id', threads.map(t => t.id))
+
+  if (hiddenRows && hiddenRows.length > 0) {
+    const hideAtById = new Map<string, string>(
+      hiddenRows.map(r => [r.thread_id, r.hidden_at])
+    )
+    threads = threads.filter(t => {
+      const hideAt = hideAtById.get(t.id)
+      if (!hideAt) return true
+      // Show if there's been new activity since hide
+      if (t.last_message_at && new Date(t.last_message_at) > new Date(hideAt)) return true
+      return false
+    })
+    if (threads.length === 0) {
+      return NextResponse.json({ threads: [] })
+    }
   }
 
   const threadIds = threads.map(t => t.id)

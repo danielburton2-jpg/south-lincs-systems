@@ -2,12 +2,9 @@
 /**
  * ThreadList
  *
- * Renders the user's list of message threads. Used on both
- * /dashboard/messages and /employee/messages. The page owns the
- * route navigation; this component just renders.
- *
- * Auto-loads on mount + subscribes to realtime changes on
- * message_threads / messages so the list updates without refresh.
+ * Renders the user's list of message threads. Adds a per-row action
+ * menu (… button) that, for 1-on-1 threads, offers "Remove from my
+ * list" — a personal hide that doesn't affect the other user.
  */
 import { useCallback, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase'
@@ -25,12 +22,8 @@ type Thread = {
 const supabase = createClient()
 
 type Props = {
-  /** Where to navigate when a row is tapped. Caller controls so the
-   *  same component works for /dashboard and /employee routes. */
   onOpenThread: (threadId: string) => void
-  /** Called when the user taps the "+ New" button. */
   onCompose: () => void
-  /** Visual accent — 'slate' for admin, 'indigo' for employee, etc. */
   accent?: 'slate' | 'indigo'
 }
 
@@ -38,6 +31,8 @@ export default function ThreadList({ onOpenThread, onCompose, accent = 'slate' }
   const [threads, setThreads] = useState<Thread[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null)
+  const [hidingId, setHidingId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -54,7 +49,8 @@ export default function ThreadList({ onOpenThread, onCompose, accent = 'slate' }
   }, [load])
 
   // Realtime — silently re-load when any messaging table changes for
-  // the current user. Coarse but cheap; the API does the heavy lifting.
+  // the current user. The hide table is also subscribed so explicit
+  // hide/unhide actions update the list.
   useEffect(() => {
     const channel = supabase
       .channel('thread-list')
@@ -70,9 +66,39 @@ export default function ThreadList({ onOpenThread, onCompose, accent = 'slate' }
         { event: '*', schema: 'public', table: 'message_thread_members' },
         () => load(),
       )
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'thread_hidden_by' },
+        () => load(),
+      )
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [load])
+
+  // Close the open row menu when clicking elsewhere
+  useEffect(() => {
+    if (!menuOpenId) return
+    const close = () => setMenuOpenId(null)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [menuOpenId])
+
+  const handleHide = async (threadId: string) => {
+    setMenuOpenId(null)
+    setHidingId(threadId)
+    try {
+      // Optimistic — remove from local list immediately
+      setThreads(prev => prev.filter(t => t.id !== threadId))
+      const res = await fetch(`/api/messages/threads/${threadId}/hide`, {
+        method: 'POST',
+      })
+      if (!res.ok) {
+        // Reload on failure to restore correct state
+        load()
+      }
+    } finally {
+      setHidingId(null)
+    }
+  }
 
   const filtered = threads.filter(t => {
     if (!search.trim()) return true
@@ -87,7 +113,6 @@ export default function ThreadList({ onOpenThread, onCompose, accent = 'slate' }
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header — search + compose */}
       <div className="px-4 py-3 border-b border-slate-200 bg-white sticky top-0 z-10">
         <div className="flex items-center gap-2">
           <input
@@ -107,7 +132,6 @@ export default function ThreadList({ onOpenThread, onCompose, accent = 'slate' }
         </div>
       </div>
 
-      {/* List */}
       <div className="flex-1 overflow-y-auto bg-white">
         {loading ? (
           <div className="p-8 text-slate-400 italic text-sm">Loading messages…</div>
@@ -126,7 +150,7 @@ export default function ThreadList({ onOpenThread, onCompose, accent = 'slate' }
         ) : (
           <ul className="divide-y divide-slate-100">
             {filtered.map(t => (
-              <li key={t.id}>
+              <li key={t.id} className={`relative ${hidingId === t.id ? 'opacity-50' : ''}`}>
                 <button
                   type="button"
                   onClick={() => onOpenThread(t.id)}
@@ -152,6 +176,39 @@ export default function ThreadList({ onOpenThread, onCompose, accent = 'slate' }
                     </span>
                   )}
                 </button>
+
+                {/* Row action menu trigger — only for user_list threads */}
+                {t.target_kind === 'user_list' && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setMenuOpenId(menuOpenId === t.id ? null : t.id)
+                    }}
+                    className="absolute top-3 right-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded p-1 text-sm"
+                    aria-label="Thread actions"
+                  >
+                    ⋯
+                  </button>
+                )}
+
+                {menuOpenId === t.id && (
+                  <div
+                    className="absolute top-10 right-2 z-20 bg-white rounded-lg shadow-lg border border-slate-200 py-1 min-w-[180px]"
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleHide(t.id)}
+                      className="w-full text-left px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      🗑 Remove from my list
+                    </button>
+                    <p className="px-3 pt-1 pb-2 text-[10px] text-slate-400 leading-tight">
+                      Doesn&apos;t affect the other person. New messages bring it back.
+                    </p>
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -162,15 +219,10 @@ export default function ThreadList({ onOpenThread, onCompose, accent = 'slate' }
 }
 
 function ThreadAvatar({ thread }: { thread: Thread }) {
-  // Icon depends on target kind. Live group threads get a group icon,
-  // 1-1 threads get an initials circle.
   let icon: React.ReactNode
-  if (thread.target_kind === 'all_company') {
-    icon = '🏢'
-  } else if (thread.target_kind === 'job_title') {
-    icon = '👥'
-  } else {
-    // Initial letter
+  if (thread.target_kind === 'all_company') icon = '🏢'
+  else if (thread.target_kind === 'job_title') icon = '👥'
+  else {
     const letter = (thread.display_title || '?').charAt(0).toUpperCase()
     icon = letter
   }

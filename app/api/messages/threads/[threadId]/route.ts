@@ -152,10 +152,104 @@ export async function GET(
     members = m || []
   }
 
+  // Is the caller currently muting this thread?
+  const { data: muteRow } = await svc
+    .from('message_thread_mutes')
+    .select('thread_id')
+    .eq('thread_id', threadId)
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  // Caller role drives admin-only UI features (edit/delete, manage
+  // members, mute toggle, edit title).
+  const { data: callerProfile } = await svc
+    .from('profiles')
+    .select('role')
+    .eq('id', user.id)
+    .single()
+
   return NextResponse.json({
     thread,
     members,
     messages: ordered,
     has_more: (messages || []).length === limit,
+    is_muted: !!muteRow,
+    caller_role: callerProfile?.role || 'user',
   })
+}
+
+// ───────────────────────── PATCH ─────────────────────────────
+//
+// PATCH /api/messages/threads/[threadId]
+//
+// Admin-only. Currently supports renaming the thread title.
+//
+// Body: { title: string | null }
+//   • title === null  → clear the manual title (revert to derived
+//                        display: members' names / job title / etc.)
+//   • title === ''    → same as null (treat empty as cleared)
+//   • title === '...' → set the manual title
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ threadId: string }> }
+) {
+  const { threadId } = await params
+
+  const cookieStore = await cookies()
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() { return cookieStore.getAll() },
+        setAll() { /* no-op */ },
+      },
+    },
+  )
+
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
+
+  const svc = adminClient()
+  const { data: caller } = await svc
+    .from('profiles')
+    .select('role, company_id')
+    .eq('id', user.id)
+    .single()
+  if (!caller || caller.role !== 'admin') {
+    return NextResponse.json({ error: 'Admins only' }, { status: 403 })
+  }
+
+  const { data: thread } = await svc
+    .from('message_threads')
+    .select('id, company_id')
+    .eq('id', threadId)
+    .single()
+  if (!thread) return NextResponse.json({ error: 'Thread not found' }, { status: 404 })
+  if (thread.company_id !== caller.company_id) {
+    return NextResponse.json({ error: 'Cross-company forbidden' }, { status: 403 })
+  }
+
+  const body = await req.json().catch(() => null)
+  if (!body) return NextResponse.json({ error: 'Bad request' }, { status: 400 })
+
+  // Build the patch — currently just title. New fields can layer in.
+  const update: Record<string, any> = {}
+  if ('title' in body) {
+    let t = body.title
+    if (typeof t === 'string') t = t.trim()
+    update.title = t === '' || t === null || t === undefined ? null : t
+  }
+  if (Object.keys(update).length === 0) {
+    return NextResponse.json({ error: 'No supported fields in body' }, { status: 400 })
+  }
+
+  const { error } = await svc
+    .from('message_threads')
+    .update(update)
+    .eq('id', threadId)
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true })
 }

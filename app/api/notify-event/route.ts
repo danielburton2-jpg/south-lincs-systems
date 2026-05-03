@@ -165,6 +165,21 @@ export async function POST(req: NextRequest) {
     // Filter out sender
     recipientIds = recipientIds.filter(id => id !== msg.sender_id)
 
+    // Filter out anyone who has muted this thread. The mute is per
+    // (user, thread) and only suppresses notifications — visibility
+    // and unread counts still update.
+    if (recipientIds.length > 0) {
+      const { data: mutes } = await svc
+        .from('message_thread_mutes')
+        .select('user_id')
+        .eq('thread_id', thread.id)
+        .in('user_id', recipientIds)
+      if (mutes && mutes.length > 0) {
+        const mutedSet = new Set(mutes.map(m => m.user_id))
+        recipientIds = recipientIds.filter(id => !mutedSet.has(id))
+      }
+    }
+
     console.log('[notify-event message_sent]', {
       message_id: msg.id,
       thread_id: thread.id,

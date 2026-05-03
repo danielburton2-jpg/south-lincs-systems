@@ -3,11 +3,18 @@
  * MessageComposer
  *
  * Text input + attachment picker + send button.
- * Used inside ThreadView. Owns staged-files state, image compression,
- * upload-to-signed-URL, and the final POST to messages-with-attachments.
  *
- * After successful send, fires notifyEvent({ kind: 'message_sent', ... })
- * so other thread members get an in-app toast and a phone push.
+ * Used inside ThreadView. Owns the staged-files state, image
+ * compression, upload-to-signed-URL flow, and the final POST to
+ * messages-with-attachments.
+ *
+ * After successful send, fires `notifyEvent({ kind: 'message_sent', ... })`
+ * so all OTHER thread members get an in-app toast (via realtime in
+ * useNotificationsListener) AND a phone push (if subscribed).
+ *
+ * Caller is responsible for re-fetching/optimistically displaying
+ * the new message — we just signal `onSent({ id, body })` and let the
+ * realtime channel deliver the rest.
  */
 import { useRef, useState } from 'react'
 import { notifyEvent } from '@/lib/notifyEvent'
@@ -19,16 +26,21 @@ const IMAGE_MAX_DIM = 1500
 const IMAGE_QUALITY = 0.82
 
 type Staged = {
+  /** local id for keying */
   localId: string
   file: File
+  /** Object URL for preview (revoked on remove) */
   previewUrl: string
+  /** Image bytes after client-side compression — undefined if not yet processed or non-image */
   compressedBlob?: Blob
   isImage: boolean
 }
 
 type Props = {
   threadId: string
+  /** Visual accent. */
   accent?: 'slate' | 'indigo'
+  /** Called after successful send so the parent can clear-and-scroll. */
   onSent?: (message: { id: string; body: string | null }) => void
 }
 
@@ -38,11 +50,13 @@ export default function MessageComposer({ threadId, accent = 'slate', onSent }: 
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
+  const [dragOver, setDragOver] = useState(false)
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const accentBg = accent === 'indigo' ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-slate-800 hover:bg-slate-900'
 
+  // ─────────────── file picking ───────────────
   const onFilesPicked = async (files: FileList | null) => {
     setError('')
     if (!files || files.length === 0) return
@@ -68,6 +82,8 @@ export default function MessageComposer({ threadId, accent = 'slate', onSent }: 
         try {
           compressedBlob = await compressImage(f)
         } catch {
+          // If compression fails (e.g. HEIC the canvas can't render),
+          // upload the original.
           compressedBlob = undefined
         }
       }
@@ -93,6 +109,7 @@ export default function MessageComposer({ threadId, accent = 'slate', onSent }: 
     })
   }
 
+  // ─────────────── send ───────────────
   const handleSend = async () => {
     setError('')
     const text = draft.trim()
@@ -104,6 +121,7 @@ export default function MessageComposer({ threadId, accent = 'slate', onSent }: 
     try {
       const messageId = crypto.randomUUID()
 
+      // 1. For each staged file: get a signed URL, upload, collect attachment metadata
       const attachmentMeta: Array<{
         storage_path: string
         filename: string
@@ -116,13 +134,17 @@ export default function MessageComposer({ threadId, accent = 'slate', onSent }: 
         const s = staged[i]
         setProgress(`Uploading ${i + 1} of ${staged.length}…`)
 
+        // Determine bytes to upload
         const blobToUpload: Blob = s.compressedBlob || s.file
         const sizeBytes = blobToUpload.size
+        // For compressed images we always upload as JPEG
         const uploadMime = s.compressedBlob ? 'image/jpeg' : s.file.type
+        // Filename: keep original; if compressed, rewrite extension
         const filename = s.compressedBlob
           ? s.file.name.replace(/\.(heic|heif|png|jpg|jpeg|webp)$/i, '') + '.jpg'
           : s.file.name
 
+        // Get a signed upload URL
         const signRes = await fetch(`/api/messages/threads/${threadId}/upload-url`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -136,6 +158,7 @@ export default function MessageComposer({ threadId, accent = 'slate', onSent }: 
         const signData = await signRes.json()
         if (!signRes.ok) throw new Error(signData.error || 'Could not get upload URL')
 
+        // PUT the file to the signed URL
         const putRes = await fetch(signData.signed_url, {
           method: 'PUT',
           headers: { 'Content-Type': uploadMime },
@@ -154,6 +177,7 @@ export default function MessageComposer({ threadId, accent = 'slate', onSent }: 
         })
       }
 
+      // 2. Create the message + attachments atomically
       setProgress('Sending…')
       const finalRes = await fetch(`/api/messages/threads/${threadId}/messages-with-attachments`, {
         method: 'POST',
@@ -167,11 +191,15 @@ export default function MessageComposer({ threadId, accent = 'slate', onSent }: 
       const finalData = await finalRes.json()
       if (!finalRes.ok) throw new Error(finalData.error || 'Could not send')
 
+      // Cleanup local previews
       for (const s of staged) URL.revokeObjectURL(s.previewUrl)
       setStaged([])
       setDraft('')
 
-      // Fire push notification — fail-silent
+      // Fire-and-forget push + in-app notification trigger. Server-side
+      // fans out to every thread member except the sender. Fail-silent
+      // because the message is already saved — a failed push must not
+      // surface a user-facing error.
       notifyEvent({ kind: 'message_sent', message_id: messageId })
 
       onSent?.({ id: messageId, body: text || null })
@@ -191,7 +219,37 @@ export default function MessageComposer({ threadId, accent = 'slate', onSent }: 
   }
 
   return (
-    <div className="border-t border-slate-200 bg-white px-3 py-2 sticky bottom-0">
+    <div
+      className={`border-t border-slate-200 px-3 py-2 sticky bottom-0 transition ${
+        dragOver ? 'bg-slate-100 ring-2 ring-slate-400 ring-inset' : 'bg-white'
+      }`}
+      onDragEnter={(e) => {
+        e.preventDefault()
+        if (e.dataTransfer?.types?.includes('Files')) setDragOver(true)
+      }}
+      onDragOver={(e) => {
+        e.preventDefault()
+        if (e.dataTransfer?.types?.includes('Files')) setDragOver(true)
+      }}
+      onDragLeave={(e) => {
+        // Only de-highlight when leaving the actual composer, not its children
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return
+        setDragOver(false)
+      }}
+      onDrop={(e) => {
+        e.preventDefault()
+        setDragOver(false)
+        if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+          onFilesPicked(e.dataTransfer.files)
+        }
+      }}
+    >
+      {dragOver && (
+        <p className="text-xs text-slate-600 text-center py-1 font-medium">
+          Drop files to attach
+        </p>
+      )}
+      {/* Staged previews */}
       {staged.length > 0 && (
         <div className="flex gap-2 overflow-x-auto pb-2 mb-1">
           {staged.map(s => (
@@ -243,6 +301,8 @@ export default function MessageComposer({ threadId, accent = 'slate', onSent }: 
   )
 }
 
+// ─────────────── helpers ───────────────
+
 function StagedPreview({ item, onRemove }: { item: Staged; onRemove: (id: string) => void }) {
   return (
     <div className="relative flex-shrink-0 group">
@@ -273,6 +333,14 @@ function StagedPreview({ item, onRemove }: { item: Staged; onRemove: (id: string
   )
 }
 
+/**
+ * Compress an image client-side: resize to IMAGE_MAX_DIM longest edge,
+ * encode as JPEG quality 0.82. Reduces a typical 6MB phone photo to
+ * ~300 KB without visible quality loss.
+ *
+ * Returns a Blob. If the input isn't decodable (e.g. HEIC on some
+ * browsers), throws — caller falls back to uploading raw.
+ */
 async function compressImage(file: File): Promise<Blob> {
   const dataUrl = await readFileAsDataUrl(file)
   const img = await loadImage(dataUrl)
