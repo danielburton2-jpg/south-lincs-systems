@@ -348,7 +348,7 @@ export async function POST(req: NextRequest) {
     // 1. Fetch the assignment
     const { data: a, error: aErr } = await svc
       .from('schedule_assignments')
-      .select('id, schedule_id, user_id')
+      .select('id, schedule_id, user_id, assignment_date, company_id')
       .eq('id', event.assignment_id)
       .single()
     if (aErr || !a) {
@@ -359,7 +359,7 @@ export async function POST(req: NextRequest) {
     // 2. Fetch the parent schedule for cross-company gate + payload data
     const { data: sch, error: sErr } = await svc
       .from('schedules')
-      .select('id, company_id, title, start_date, end_date, start_time, end_time')
+      .select('id, company_id, name, start_time, end_time')
       .eq('id', a.schedule_id)
       .single()
     if (sErr || !sch) {
@@ -377,15 +377,15 @@ export async function POST(req: NextRequest) {
 
     targetUserId = a.user_id
 
-    const dateRange = sch.start_date === sch.end_date
-      ? formatDate(sch.start_date)
-      : `${formatDate(sch.start_date)} – ${formatDate(sch.end_date)}`
+    // Body shows the SPECIFIC date this assignment is for plus the
+    // schedule's daily time window. Title shows the schedule name.
+    const dateLabel = formatDate(a.assignment_date)
     const timeRange = sch.start_time && sch.end_time
-      ? ` ${sch.start_time.slice(0,5)}–${sch.end_time.slice(0,5)}`
+      ? ` ${String(sch.start_time).slice(0,5)}–${String(sch.end_time).slice(0,5)}`
       : ''
     payload = {
-      title: `Scheduled: ${sch.title || 'shift'}`,
-      body: `${dateRange}${timeRange}`,
+      title: `Scheduled: ${sch.name || 'shift'}`,
+      body: `${dateLabel}${timeRange}`,
       url: '/employee/schedules',
       tone: 'info',
       tag: `schedule-${a.id}`,
@@ -395,6 +395,7 @@ export async function POST(req: NextRequest) {
       assignment_id: a.id,
       schedule_id: sch.id,
       target_user: targetUserId,
+      assignment_date: a.assignment_date,
     })
   }
 
