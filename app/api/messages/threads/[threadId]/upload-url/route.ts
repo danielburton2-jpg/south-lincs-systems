@@ -142,7 +142,7 @@ export async function POST(
   const { data: signed, error: signErr } = await svc
     .storage
     .from('message-attachments')
-    .createSignedUploadURL(storagePath)
+    .createSignedUploadUrl(storagePath)
 
   if (signErr || !signed) {
     return NextResponse.json({
