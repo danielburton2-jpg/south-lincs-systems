@@ -239,6 +239,21 @@ export default function EmployeeHome() {
           </button>
         )}
 
+        {/* Messages — always available, sits above the configurable feature grid */}
+        <button
+          onClick={() => router.push('/employee/messages')}
+          className="w-full bg-gradient-to-br from-violet-500 to-purple-600 text-white rounded-2xl shadow-md p-4 flex items-center gap-3 active:scale-[0.99] transition"
+        >
+          <span className="text-3xl" aria-hidden>💬</span>
+          <div className="flex-1 text-left">
+            <p className="text-xs text-white/85 leading-tight">Messages</p>
+            <p className="text-lg font-bold leading-tight">
+              Chat with your team
+            </p>
+          </div>
+          <span className="text-white/70 text-xl" aria-hidden>›</span>
+        </button>
+
         {/* APP GRID */}
         <section className="pt-3">
           <h2 className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3 px-1">
