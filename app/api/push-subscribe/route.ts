@@ -38,11 +38,10 @@ export async function POST(req: NextRequest) {
   if (!profile) return NextResponse.json({ error: 'No profile' }, { status: 401 })
   if (!profile.company_id) return NextResponse.json({ error: 'No company' }, { status: 400 })
 
-  // Web push is employee-only. Admin/manager attempts to register are
-  // rejected silently — their app shows an in-app toast instead.
-  if (profile.role !== 'user') {
-    return NextResponse.json({ error: 'Web push is only available for drivers' }, { status: 403 })
-  }
+  // Web push is now available to ALL roles (drivers, mechanics, managers,
+  // admins). Originally restricted to drivers only — opened up in zip 4
+  // of messaging because admins/managers also need lock-screen pings for
+  // new messages.
 
   const body = await req.json().catch(() => null)
   if (!body?.endpoint || !body?.keys?.p256dh || !body?.keys?.auth) {

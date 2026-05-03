@@ -29,6 +29,7 @@ type Event =
   | { kind: 'service_assigned';  schedule_id: string }
   | { kind: 'holiday_decided';   request_id: string }
   | { kind: 'schedule_assigned'; assignment_id: string }
+  | { kind: 'message_sent';      message_id: string }
 
 export async function POST(req: NextRequest) {
   const cookieStore = await cookies()
@@ -71,6 +72,114 @@ export async function POST(req: NextRequest) {
   let targetUserId: string | null = null
   let payload: PushPayload | null = null
 
+  // ─── message_sent — multi-recipient broadcast, skips role gate ───
+  // Different shape from the single-target events: we resolve all
+  // current thread members (live for job_title / all_company), filter
+  // out the sender, and push each one. Role gate doesn't apply here
+  // because messaging is everyone-to-everyone.
+  if (event.kind === 'message_sent') {
+    const { data: msg } = await svc
+      .from('messages')
+      .select(`
+        id, thread_id, sender_id, body, created_at,
+        thread:message_threads(id, company_id, target_kind, target_job_title, title),
+        sender:profiles!messages_sender_id_fkey(id, full_name)
+      `)
+      .eq('id', event.message_id)
+      .single()
+    if (!msg) {
+      return NextResponse.json({ error: 'Message not found' }, { status: 404 })
+    }
+    const thread = msg.thread as any
+    if (!thread || thread.company_id !== caller.company_id) {
+      return NextResponse.json({ error: 'Not allowed' }, { status: 403 })
+    }
+    if (msg.sender_id !== caller.id) {
+      return NextResponse.json({ error: 'Only the sender can trigger this' }, { status: 403 })
+    }
+
+    // Resolve recipients live based on thread kind
+    let recipientIds: string[] = []
+    if (thread.target_kind === 'user_list') {
+      const { data: members } = await svc
+        .from('message_thread_members')
+        .select('user_id')
+        .eq('thread_id', thread.id)
+      recipientIds = (members || []).map((m: any) => m.user_id)
+    } else if (thread.target_kind === 'job_title') {
+      const { data: people } = await svc
+        .from('profiles')
+        .select('id, job_title')
+        .eq('company_id', thread.company_id)
+      recipientIds = (people || [])
+        .filter((p: any) =>
+          (p.job_title || '').toLowerCase().trim() === (thread.target_job_title || '').toLowerCase().trim()
+          && (p.job_title || '').trim() !== ''
+        )
+        .map((p: any) => p.id)
+    } else {
+      // all_company
+      const { data: people } = await svc
+        .from('profiles')
+        .select('id')
+        .eq('company_id', thread.company_id)
+      recipientIds = (people || []).map((p: any) => p.id)
+    }
+
+    // Filter out sender
+    recipientIds = recipientIds.filter(id => id !== msg.sender_id)
+    if (recipientIds.length === 0) {
+      return NextResponse.json({ ok: true, skipped: 'no recipients' })
+    }
+
+    // Build the push payload. Title format: "Sender · ThreadName" for
+    // group threads, just "Sender" for 1-on-1. Recipient role drives
+    // the URL prefix (driver → /employee, others → /dashboard).
+    const senderName = (msg.sender as any)?.full_name || 'Someone'
+    const isGroup = thread.target_kind !== 'user_list'
+    const groupLabel = thread.title || (
+      thread.target_kind === 'all_company' ? 'Everyone' : (thread.target_job_title || 'Group')
+    )
+    const titleForGroup = `${senderName} · ${groupLabel}`
+    const titleForDirect = senderName
+
+    // Body: message body or [attachment] indicator
+    let bodyText = msg.body || '[attachment]'
+    if (bodyText.length > 80) bodyText = bodyText.slice(0, 79) + '…'
+
+    // For each recipient: lookup their role to pick URL prefix, then push
+    const pushResults = await Promise.all(recipientIds.map(async (uid) => {
+      const { data: rp } = await svc
+        .from('profiles')
+        .select('role')
+        .eq('id', uid)
+        .single()
+      const isDriver = rp?.role === 'user'
+      const url = isDriver
+        ? `/employee/messages/${thread.id}`
+        : `/dashboard/messages/${thread.id}`
+
+      const recipientPayload: PushPayload = {
+        title: isGroup ? titleForGroup : titleForDirect,
+        body: bodyText,
+        url,
+        tone: 'info',
+        tag: `message-${thread.id}`,
+      }
+      const sent = await sendPushToUser(uid, recipientPayload)
+      return sent
+    }))
+
+    const totalSent = pushResults.reduce((a, b) => a + b, 0)
+    return NextResponse.json({
+      ok: true,
+      kind: 'message_sent',
+      recipients: recipientIds.length,
+      sentCount: totalSent,
+    })
+  }
+
+  // ─── Single-target events (defect_assigned, etc.) ───
   if (event.kind === 'defect_assigned') {
     const { data: d } = await svc
       .from('vehicle_defects')

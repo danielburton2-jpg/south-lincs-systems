@@ -20,6 +20,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { useUnreadMessagesCount } from '@/lib/useUnreadMessagesCount'
 
 type Profile = {
   id: string
@@ -111,6 +112,7 @@ const todayLabel = () =>
 
 export default function EmployeeHome() {
   const router = useRouter()
+  const unreadMessages = useUnreadMessagesCount()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [company, setCompany] = useState<Company | null>(null)
   const [features, setFeatures] = useState<Feature[]>([])
@@ -248,9 +250,16 @@ export default function EmployeeHome() {
           <div className="flex-1 text-left">
             <p className="text-xs text-white/85 leading-tight">Messages</p>
             <p className="text-lg font-bold leading-tight">
-              Chat with your team
+              {unreadMessages > 0
+                ? `${unreadMessages} new ${unreadMessages === 1 ? 'message' : 'messages'}`
+                : 'Chat with your team'}
             </p>
           </div>
+          {unreadMessages > 0 && (
+            <span className="bg-white text-violet-700 text-xs font-bold rounded-full min-w-[24px] h-6 px-2 flex items-center justify-center">
+              {unreadMessages > 9 ? '9+' : unreadMessages}
+            </span>
+          )}
           <span className="text-white/70 text-xl" aria-hidden>›</span>
         </button>
 

@@ -3,6 +3,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { createClient } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
+import SoundToggle from '@/components/SoundToggle'
+import PushRegistration from '@/components/PushRegistration'
 const supabase = createClient()
 
 export default function DashboardProfile() {
@@ -195,6 +197,14 @@ export default function DashboardProfile() {
             </button>
           </div>
         </div>
+
+        {/* Phone push notifications (all roles can subscribe — message pings, etc.) */}
+        <PushRegistration
+          vapidPublicKey={process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || null}
+        />
+
+        {/* Sound notifications */}
+        <SoundToggle variant="card" />
 
         {/* Change Password */}
         {!showPasswordForm ? (
