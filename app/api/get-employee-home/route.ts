@@ -95,6 +95,23 @@ export async function GET() {
 
       const enabledFeatureIds = (ufRows || []).map(r => r.feature_id)
 
+      // Documents is a special case: it's a company-wide read-only
+      // feature with no per-user permission model. Every driver in a
+      // company that has Documents enabled sees the tile, even
+      // without an explicit user_features row.
+      if (profile.company_id) {
+        const { data: cf } = await svc
+          .from('company_features')
+          .select('feature_id, features!inner(slug)')
+          .eq('company_id', profile.company_id)
+          .eq('is_enabled', true)
+          .eq('features.slug', 'documents')
+          .maybeSingle()
+        if (cf?.feature_id && !enabledFeatureIds.includes(cf.feature_id)) {
+          enabledFeatureIds.push(cf.feature_id)
+        }
+      }
+
       if (enabledFeatureIds.length > 0) {
         const { data: fRows } = await svc
           .from('features')

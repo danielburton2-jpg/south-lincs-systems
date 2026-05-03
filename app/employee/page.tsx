@@ -85,6 +85,13 @@ const THEMES: Record<string, Theme> = {
     iconBg: 'bg-indigo-100',
     text: 'text-indigo-900',
   },
+  documents: {
+    emoji: '📁',
+    bg: 'bg-violet-50',
+    ring: 'ring-violet-200',
+    iconBg: 'bg-violet-100',
+    text: 'text-violet-900',
+  },
 }
 
 const DEFAULT_THEME: Theme = {

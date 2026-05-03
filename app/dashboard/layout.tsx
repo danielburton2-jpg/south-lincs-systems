@@ -68,6 +68,7 @@ export default async function DashboardLayout({
   // role on top of this.
   let hasVehiclesAccess     = false
   let hasServicesAccess     = false
+  let hasDocumentsAccess    = false
 
   // ── Non-admin: look up per-user feature toggles ─────────────
   if (profile.role !== 'admin') {
@@ -156,6 +157,31 @@ export default async function DashboardLayout({
     }
   }
 
+  // Documents — same per-company feature flag pattern.
+  if (profile.company_id) {
+    const { data: documentsFeature, error: dErr } = await supabase
+      .from('features').select('id').eq('slug', 'documents').single()
+
+    if (dErr) {
+      console.warn('[layout] documents feature lookup failed:', dErr.message)
+    }
+
+    if (documentsFeature) {
+      const { data: cf, error: cfErr } = await supabase
+        .from('company_features')
+        .select('is_enabled')
+        .eq('company_id', profile.company_id)
+        .eq('feature_id', documentsFeature.id)
+        .maybeSingle()
+
+      if (cfErr) {
+        console.warn('[layout] company_features lookup (documents) failed:', cfErr.message)
+      }
+
+      hasDocumentsAccess = !!cf?.is_enabled
+    }
+  }
+
   // Diagnostic line — visible in Vercel server logs / terminal.
   // Helps verify the sidebar is getting the right flags.
   console.log('[dashboard layout] flags:', {
@@ -189,6 +215,7 @@ export default async function DashboardLayout({
           hasSchedulesAccess={hasSchedulesAccess}
           hasVehiclesAccess={hasVehiclesAccess}
           hasServicesAccess={hasServicesAccess}
+          hasDocumentsAccess={hasDocumentsAccess}
         />
         <main className="flex-1 overflow-x-auto">
           {children}

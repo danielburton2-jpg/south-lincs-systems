@@ -25,6 +25,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
+import { useUnreadMessagesCount } from '@/lib/useUnreadMessagesCount'
 
 const supabase = createClient()
 
@@ -41,6 +42,7 @@ type Props = {
   hasSchedulesAccess?: boolean
   hasVehiclesAccess?: boolean
   hasServicesAccess?: boolean
+  hasDocumentsAccess?: boolean
 }
 
 type SubItem = { label: string; href: string }
@@ -62,6 +64,7 @@ export default function DashboardSidebar({
   schedulesCanEdit, schedulesCanViewAll, hasSchedulesAccess,
   hasVehiclesAccess,
   hasServicesAccess,
+  hasDocumentsAccess,
 }: Props) {
   const pathname = usePathname() || ''
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
@@ -86,7 +89,10 @@ export default function DashboardSidebar({
 
   const dashboardActive = pathname === '/dashboard'
   const messagesActive = pathname.startsWith('/dashboard/messages')
+  const documentsActive = pathname.startsWith('/dashboard/documents')
   const profileActive = pathname.startsWith('/dashboard/profile')
+
+  const unreadMessages = useUnreadMessagesCount()
 
   const sections: Section[] = []
 
@@ -226,11 +232,25 @@ export default function DashboardSidebar({
         })}
 
         <Link href="/dashboard/messages" onClick={closeAll}
-          className={`block px-3 py-1.5 mt-2 rounded-lg text-sm font-medium transition ${
+          className={`flex items-center justify-between px-3 py-1.5 mt-2 rounded-lg text-sm font-medium transition ${
             messagesActive ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
           }`}>
-          💬 Messages
+          <span>💬 Messages</span>
+          {unreadMessages > 0 && (
+            <span className="bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1.5 flex items-center justify-center">
+              {unreadMessages > 9 ? '9+' : unreadMessages}
+            </span>
+          )}
         </Link>
+
+        {hasDocumentsAccess && (
+          <Link href="/dashboard/documents" onClick={closeAll}
+            className={`block px-3 py-1.5 mt-2 rounded-lg text-sm font-medium transition ${
+              documentsActive ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+            }`}>
+            📁 Documents
+          </Link>
+        )}
 
         <Link href="/dashboard/profile" onClick={closeAll}
           className={`block px-3 py-1.5 mt-2 rounded-lg text-sm font-medium transition ${
