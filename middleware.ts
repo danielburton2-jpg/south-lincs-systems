@@ -6,6 +6,13 @@ export async function middleware(request: NextRequest) {
   const response = NextResponse.next()
   const { pathname } = request.nextUrl
 
+  // Bypass auth entirely for cron routes — they're called by Vercel's
+  // scheduler with no user cookie. Each cron route has its own
+  // CRON_SECRET bearer-token check, which is the real auth gate here.
+  if (pathname.startsWith('/api/cron/')) {
+    return response
+  }
+
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
