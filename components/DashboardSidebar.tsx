@@ -112,7 +112,9 @@ export default function DashboardSidebar({
   }
 
   // Holidays
-  const showHolidays = user.role === 'admin' || hasHolidayAccess
+  // Trust the layout's `hasHolidayAccess` value — it already encodes
+  // both the company-level enable and the per-user/role grant.
+  const showHolidays = hasHolidayAccess
   if (showHolidays) {
     const subLabel = (user.role === 'admin' || holidaysCanEdit)
       ? 'Review Requests'
@@ -124,7 +126,9 @@ export default function DashboardSidebar({
   }
 
   // Schedules
-  const showSchedules = user.role === 'admin' || hasSchedulesAccess
+  // Trust the layout's `hasSchedulesAccess` value — it already encodes
+  // both the company-level enable and the per-user/role grant.
+  const showSchedules = hasSchedulesAccess
   if (showSchedules) {
     const isAdmin = user.role === 'admin'
     const subItems: SubItem[] = [

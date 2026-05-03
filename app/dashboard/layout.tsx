@@ -57,11 +57,16 @@ export default async function DashboardLayout({
 
   // ── Permission flags ───────────────────────────────────────
   // Admins always full.
-  let holidaysCanEdit       = profile.role === 'admin'
-  let hasHolidayAccess      = profile.role === 'admin'
-  let schedulesCanEdit      = profile.role === 'admin'
-  let schedulesCanViewAll   = profile.role === 'admin'
-  let hasSchedulesAccess    = profile.role === 'admin'
+  // Default to false. Admin gets it ONLY if (a) the company has the
+  // feature enabled, AND for non-admins also (b) the user_features
+  // row grants them access. Old code defaulted admins to true which
+  // bypassed the company-level gate — that meant admins of e.g. a
+  // Holidays-only company saw Schedules in their sidebar.
+  let holidaysCanEdit       = false
+  let hasHolidayAccess      = false
+  let schedulesCanEdit      = false
+  let schedulesCanViewAll   = false
+  let hasSchedulesAccess    = false
 
   // Vehicles starts off for everyone — gets enabled below if the
   // company has the feature ticked. The sidebar still requires admin
@@ -70,35 +75,69 @@ export default async function DashboardLayout({
   let hasServicesAccess     = false
   let hasDocumentsAccess    = false
 
-  // ── Non-admin: look up per-user feature toggles ─────────────
-  if (profile.role !== 'admin') {
-    // Look up Holidays
+  // ── Holidays: company gate first, then per-user for non-admins ─
+  if (profile.company_id) {
     const { data: holidaysFeature } = await supabase
       .from('features').select('id').eq('slug', 'holidays').single()
+
     if (holidaysFeature) {
-      const { data: uf } = await supabase
-        .from('user_features')
-        .select('is_enabled, can_view, can_edit')
-        .eq('user_id', user.id)
+      const { data: cf } = await supabase
+        .from('company_features')
+        .select('is_enabled')
+        .eq('company_id', profile.company_id)
         .eq('feature_id', holidaysFeature.id)
         .maybeSingle()
-      holidaysCanEdit = !!uf?.can_edit
-      hasHolidayAccess = !!(uf?.can_view || uf?.can_edit || uf?.is_enabled)
-    }
 
-    // Look up Schedules
+      if (cf?.is_enabled) {
+        if (profile.role === 'admin') {
+          // Admin: company has it on → admin gets full access
+          hasHolidayAccess = true
+          holidaysCanEdit  = true
+        } else {
+          // Non-admin: still need a user_features row
+          const { data: uf } = await supabase
+            .from('user_features')
+            .select('is_enabled, can_view, can_edit')
+            .eq('user_id', user.id)
+            .eq('feature_id', holidaysFeature.id)
+            .maybeSingle()
+          holidaysCanEdit  = !!uf?.can_edit
+          hasHolidayAccess = !!(uf?.can_view || uf?.can_edit || uf?.is_enabled)
+        }
+      }
+    }
+  }
+
+  // ── Schedules: same pattern ────────────────────────────────────
+  if (profile.company_id) {
     const { data: schedulesFeature } = await supabase
       .from('features').select('id').eq('slug', 'schedules').single()
+
     if (schedulesFeature) {
-      const { data: uf } = await supabase
-        .from('user_features')
-        .select('is_enabled, can_view, can_view_all, can_edit')
-        .eq('user_id', user.id)
+      const { data: cf } = await supabase
+        .from('company_features')
+        .select('is_enabled')
+        .eq('company_id', profile.company_id)
         .eq('feature_id', schedulesFeature.id)
         .maybeSingle()
-      schedulesCanEdit = !!uf?.can_edit
-      schedulesCanViewAll = !!uf?.can_view_all
-      hasSchedulesAccess = !!(uf?.is_enabled || uf?.can_view || uf?.can_edit)
+
+      if (cf?.is_enabled) {
+        if (profile.role === 'admin') {
+          hasSchedulesAccess  = true
+          schedulesCanEdit    = true
+          schedulesCanViewAll = true
+        } else {
+          const { data: uf } = await supabase
+            .from('user_features')
+            .select('is_enabled, can_view, can_view_all, can_edit')
+            .eq('user_id', user.id)
+            .eq('feature_id', schedulesFeature.id)
+            .maybeSingle()
+          schedulesCanEdit    = !!uf?.can_edit
+          schedulesCanViewAll = !!uf?.can_view_all
+          hasSchedulesAccess  = !!(uf?.is_enabled || uf?.can_view || uf?.can_edit)
+        }
+      }
     }
   }
 
