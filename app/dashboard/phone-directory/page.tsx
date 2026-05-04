@@ -12,12 +12,11 @@
  * Admin-only. Non-admins are redirected.
  */
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
 import PhoneDirectoryAlertBanner from '@/components/PhoneDirectoryAlertBanner'
-import OnCallManager from '@/components/phone-directory/OnCallManager'
+import AdminPinGate from '@/components/admin/AdminPinGate'
 
 const supabase = createClient()
 
@@ -37,6 +36,14 @@ type UserRow = {
 }
 
 export default function AdminPhoneDirectoryPage() {
+  return (
+    <AdminPinGate title="Phone Directory · Manage">
+      <ManageContents />
+    </AdminPinGate>
+  )
+}
+
+function ManageContents() {
   const router = useRouter()
 
   const [companyId, setCompanyId] = useState<string | null>(null)
@@ -44,7 +51,6 @@ export default function AdminPhoneDirectoryPage() {
   const [error, setError] = useState('')
 
   const [entries, setEntries] = useState<Entry[]>([])
-  const [entriesVersion, setEntriesVersion] = useState(0)
   const [users, setUsers] = useState<UserRow[]>([])
 
   // Add form
@@ -91,7 +97,6 @@ export default function AdminPhoneDirectoryPage() {
         return
       }
       setEntries(data.entries || [])
-      setEntriesVersion(v => v + 1)
     } catch (e: any) {
       setError(e?.message || 'Failed to load entries')
     }
@@ -143,7 +148,6 @@ export default function AdminPhoneDirectoryPage() {
         return
       }
       setEntries(prev => [...prev, data.entry])
-      setEntriesVersion(v => v + 1)
       setNewName(''); setNewPhone(''); setNewNotes('')
     } finally {
       setAdding(false)
@@ -184,7 +188,6 @@ export default function AdminPhoneDirectoryPage() {
         return
       }
       setEntries(prev => prev.map(e => e.id === editingId ? data.entry : e))
-      setEntriesVersion(v => v + 1)
       cancelEdit()
     } finally {
       setEditing(false)
@@ -200,7 +203,6 @@ export default function AdminPhoneDirectoryPage() {
       return
     }
     setEntries(prev => prev.filter(e => e.id !== id))
-    setEntriesVersion(v => v + 1)
   }
 
   // ── Reset user PIN ───────────────────────────────────────────────
@@ -229,9 +231,7 @@ export default function AdminPhoneDirectoryPage() {
   return (
     <div className="p-6 max-w-4xl">
       <div className="mb-4">
-        <Link href="/dashboard" className="text-sm text-blue-600 hover:underline">← Back to dashboard</Link>
-        <h1 className="text-2xl font-bold text-slate-900 mt-2">Phone Directory</h1>
-        <p className="text-sm text-slate-500 mt-1">
+        <p className="text-sm text-slate-500">
           Numbers your drivers can tap to call. Drivers see the directory only after entering their PIN.
         </p>
       </div>
@@ -354,17 +354,6 @@ export default function AdminPhoneDirectoryPage() {
             {adding ? 'Adding…' : 'Add'}
           </button>
         </form>
-      </section>
-
-      {/* On-call rota */}
-      <section className="mt-6 bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
-        <h2 className="text-lg font-semibold text-slate-800 mb-1">On-call rota</h2>
-        <p className="text-xs text-slate-500 mb-3">
-          Pick someone (or a phone, like an on-call mobile) from the directory above
-          and assign them to a date range and time window. Drivers see them at the top of
-          their phone directory while on call.
-        </p>
-        <OnCallManager entries={entries} entriesVersion={entriesVersion} />
       </section>
 
       {/* Reset user PINs */}

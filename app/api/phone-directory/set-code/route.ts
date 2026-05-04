@@ -3,17 +3,13 @@
  *
  * First-time PIN setup. Body: { code }
  *
- *   - code: string of exactly 6 digits
- *
  * Behaviour:
  *   - Verifies caller is signed in
- *   - Verifies caller's company has the Phone Directory feature enabled
- *   - Verifies caller has access to the feature (admin OR user_features
- *     row enabled)
+ *   - Verifies caller's company has Phone Directory enabled
+ *   - Verifies caller has access (admin OR user_features enabled)
  *   - Refuses if a code is already set — admin must reset first
- *     (use /api/phone-directory/admin-reset-code)
- *   - Stores hash, sets unlock cookie so the user can immediately
- *     access the directory without re-entering on this same visit
+ *   - Stores hash, sets cookies (driver + admin if admin) so the
+ *     user can immediately access without re-entering
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -23,7 +19,10 @@ import { createClient } from '@supabase/supabase-js'
 import {
   hashCode,
   signUnlockToken,
+  signAdminToken,
   UNLOCK_COOKIE_NAME,
+  ADMIN_COOKIE_NAME,
+  cookieOptions,
 } from '@/lib/phoneCodeAuth'
 import { logAudit } from '@/lib/audit'
 
@@ -69,13 +68,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No company' }, { status: 400 })
   }
 
-  // Feature gate — same pattern as the existing employee feature checks.
   const featureOk = await checkFeatureAccess(svc, profile)
   if (!featureOk) {
     return NextResponse.json({ error: 'Phone Directory is not enabled for you' }, { status: 403 })
   }
 
-  // Refuse if a code is already set (must go via admin reset)
   const { data: existing } = await svc
     .from('phone_directory_codes')
     .select('user_id')
@@ -103,38 +100,38 @@ export async function POST(req: NextRequest) {
   await logAudit({
     action: 'PHONE_DIRECTORY_CODE_SET',
     entity: 'phone_directory_codes',
-    details: { user_id: user.id },
+    details: { user_id: user.id, role: profile.role },
     ip_address: req.headers.get('x-forwarded-for') || undefined,
   })
 
-  // Issue unlock token — they're already in, no need to re-enter.
-  const token = signUnlockToken(user.id)
+  // Same cookie logic as verify-code: always issue driver cookie;
+  // additionally issue admin cookie if admin.
   const res = NextResponse.json({ ok: true })
+  const driverToken = signUnlockToken(user.id)
   res.cookies.set({
     name: UNLOCK_COOKIE_NAME,
-    value: token.value,
-    httpOnly: true,
-    secure: true,
-    sameSite: 'lax',
-    path: '/',
-    maxAge: token.maxAgeSeconds,
+    value: driverToken.value,
+    ...cookieOptions(driverToken.maxAgeSeconds),
   })
+  if (profile.role === 'admin') {
+    const adminToken = signAdminToken(user.id)
+    res.cookies.set({
+      name: ADMIN_COOKIE_NAME,
+      value: adminToken.value,
+      ...cookieOptions(adminToken.maxAgeSeconds),
+    })
+  }
   return res
 }
 
-// Helper: returns true if profile.role==='admin' OR a user_features row
-// for the phone_directory feature has is_enabled=true.
 async function checkFeatureAccess(
   svc: ReturnType<typeof adminClient>,
   profile: { id: string; company_id: string; role: string },
 ): Promise<boolean> {
   if (profile.role === 'admin') return true
-
   const { data: feature } = await svc
     .from('features').select('id').eq('slug', 'phone_directory').single()
   if (!feature) return false
-
-  // Company must have it on
   const { data: cf } = await svc
     .from('company_features')
     .select('is_enabled')
@@ -142,8 +139,6 @@ async function checkFeatureAccess(
     .eq('feature_id', feature.id)
     .maybeSingle()
   if (!cf?.is_enabled) return false
-
-  // User must have it on
   const { data: uf } = await svc
     .from('user_features')
     .select('is_enabled')

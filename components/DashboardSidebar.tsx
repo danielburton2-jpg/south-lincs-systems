@@ -256,16 +256,18 @@ export default function DashboardSidebar({
     })
   }
 
-  // Phone Directory — admin-only, single page (no sub-pages yet).
-  // Same gate logic. Drivers consume the directory at /employee/phone-directory
-  // behind a per-user PIN; this entry is purely the management surface.
+  // Phone Directory — admin-only. The sub-pages are PIN-gated on
+  // every visit (AdminPinGate component on each page). The sidebar
+  // entry is just the navigation surface; clicking either sub-item
+  // brings up the PIN form first, then the actual page.
   const showPhoneDirectory = user.role === 'admin' && hasPhoneDirectoryAccess
   if (showPhoneDirectory) {
     sections.push({
       label: 'Phone Directory',
       basePath: '/dashboard/phone-directory',
       subItems: [
-        { label: 'Manage', href: '/dashboard/phone-directory' },
+        { label: 'Manage',       href: '/dashboard/phone-directory' },
+        { label: 'On-Call Rota', href: '/dashboard/phone-directory/on-call' },
       ],
     })
   }

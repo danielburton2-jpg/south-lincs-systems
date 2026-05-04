@@ -1,16 +1,17 @@
 /**
  * PATCH /api/phone-directory/entries/[id]
- *   Body: any subset of { name, phone_number, notes, sort_order }
+ *   Body: subset of { name, phone_number, notes, sort_order }
+ *   Admin only AND requires pd_admin cookie.
  *
  * DELETE /api/phone-directory/entries/[id]
- *
- * Both: admin only, scoped to caller's company.
+ *   Admin only AND requires pd_admin cookie.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { createClient } from '@supabase/supabase-js'
+import { verifyAdminToken, ADMIN_COOKIE_NAME } from '@/lib/phoneCodeAuth'
 import { logAudit } from '@/lib/audit'
 
 function adminClient() {
@@ -21,7 +22,7 @@ function adminClient() {
   )
 }
 
-async function adminCallerOrError(req: NextRequest) {
+async function adminCallerOrError() {
   const cookieStore = await cookies()
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -43,6 +44,13 @@ async function adminCallerOrError(req: NextRequest) {
     .single()
   if (!profile?.company_id) return { error: NextResponse.json({ error: 'No company' }, { status: 400 }) }
   if (profile.role !== 'admin') return { error: NextResponse.json({ error: 'Admins only' }, { status: 403 }) }
+
+  // Admin PIN gate
+  const adminToken = cookieStore.get(ADMIN_COOKIE_NAME)?.value
+  if (!verifyAdminToken(adminToken, profile.id)) {
+    return { error: NextResponse.json({ error: 'Admin PIN required', need_pin: true }, { status: 403 }) }
+  }
+
   return { profile, svc }
 }
 
@@ -53,7 +61,7 @@ export async function PATCH(
   const { id } = await ctx.params
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
 
-  const r = await adminCallerOrError(req)
+  const r = await adminCallerOrError()
   if ('error' in r) return r.error
   const { profile, svc } = r
 
@@ -80,7 +88,6 @@ export async function PATCH(
   }
   updates.updated_at = new Date().toISOString()
 
-  // Ensure same-company guard at API layer (RLS enforces it too)
   const { data: existing } = await svc
     .from('phone_directory_entries')
     .select('id, company_id')
@@ -115,7 +122,7 @@ export async function DELETE(
   const { id } = await ctx.params
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
 
-  const r = await adminCallerOrError(req)
+  const r = await adminCallerOrError()
   if ('error' in r) return r.error
   const { profile, svc } = r
 

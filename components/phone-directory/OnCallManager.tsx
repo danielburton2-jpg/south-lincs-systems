@@ -285,7 +285,7 @@ export default function OnCallManager({ entries, entriesVersion }: Props) {
                       <option value="">— Pick from directory —</option>
                       {entries.map(en => (
                         <option key={en.id} value={en.id}>
-                          {en.name} · {en.phone_number}
+                          {en.name}
                         </option>
                       ))}
                     </select>
@@ -338,9 +338,6 @@ export default function OnCallManager({ entries, entriesVersion }: Props) {
                       <p className="font-medium text-slate-800">
                         {s.phone_directory_entries?.name || '(deleted entry)'}
                       </p>
-                      <p className="text-xs text-slate-500">
-                        {s.phone_directory_entries?.phone_number || ''}
-                      </p>
                       <p className="text-xs text-slate-600 mt-1">
                         <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 mr-1">
                           {labelWindow(s.time_window)}
@@ -389,7 +386,7 @@ export default function OnCallManager({ entries, entriesVersion }: Props) {
                   <option value="">— Pick from directory —</option>
                   {entries.map(en => (
                     <option key={en.id} value={en.id}>
-                      {en.name} · {en.phone_number}
+                      {en.name}
                     </option>
                   ))}
                 </select>

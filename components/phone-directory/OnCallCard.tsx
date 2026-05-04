@@ -119,7 +119,6 @@ export default function OnCallCard() {
                   </span>
                 </div>
                 <p className="font-bold text-gray-900 text-lg truncate">{entry.name}</p>
-                <p className="text-sm text-gray-700">{entry.phone_number}</p>
                 {(slot.notes || entry.notes) && (
                   <p className="text-xs text-gray-500 mt-1 line-clamp-2">
                     {slot.notes || entry.notes}

@@ -1,32 +1,33 @@
 /**
  * GET /api/phone-directory/on-call
  *
- * Returns BOTH:
- *   slots:   all upcoming + recent slots, oldest at the bottom (admin
- *            management view). Includes joined entry data so the
- *            admin UI can render "Sarah Smith — 07700 900123".
- *   current: subset of slots that are active right now (today's date
- *            falls within range AND time_window matches now). Ordered by
- *            created_at ASC (oldest = primary, newer = backup).
- *   am_pm_split_time: the company's split time, so client-side
- *            display can mirror server logic.
+ * Returns slots + current + split time. Phone numbers ARE included
+ * in the response (the client needs them to construct tel: hrefs)
+ * but the on-call surfaces never DISPLAY them — only construct
+ * dial links. The display threat model is shoulder-surfing on the
+ * driver's screen, not network interception (admin already has full
+ * visibility on the Manage page).
  *
- * Driver-side requires a valid unlock cookie (same gate as entries).
- * Admin-side bypasses (admins manage and don't need the PIN).
+ * Driver: requires pd_unlock cookie.
+ * Admin: bypasses the cookie. Reads anyway for the on-call manager.
  *
  * POST /api/phone-directory/on-call
  *   Body: { phone_directory_entry_id, start_date, end_date, time_window, notes? }
- *   Admin only. Creates a new slot in caller's company.
- *
- * Overlap is allowed — no validation against existing slots. Multiple
- * matches at lookup time are surfaced primary-first.
+ *   Admin only AND requires pd_admin cookie.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { createClient } from '@supabase/supabase-js'
-import { verifyUnlockToken, UNLOCK_COOKIE_NAME } from '@/lib/phoneCodeAuth'
+import {
+  verifyUnlockToken,
+  verifyAdminToken,
+  signUnlockToken,
+  UNLOCK_COOKIE_NAME,
+  ADMIN_COOKIE_NAME,
+  cookieOptions,
+} from '@/lib/phoneCodeAuth'
 import { logAudit } from '@/lib/audit'
 
 function adminClient() {
@@ -63,8 +64,6 @@ async function getCallerProfile() {
 const VALID_WINDOWS = new Set(['all_day', 'am', 'pm'])
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
-// "HH:MM" (00:00–23:59) or "HH:MM:SS" with optional fractional seconds.
-// We only need HH:MM for the comparison so we just take the first 5 chars.
 function parseHHMM(timeStr: string): { h: number; m: number } | null {
   if (!timeStr || timeStr.length < 5) return null
   const h = parseInt(timeStr.slice(0, 2), 10)
@@ -74,24 +73,16 @@ function parseHHMM(timeStr: string): { h: number; m: number } | null {
   return { h, m }
 }
 
-// Build "today" in the server's local time. We deliberately use server
-// time rather than UTC here because companies operate in their local
-// time zone. Vercel servers run in UTC by default; for a UK-only fleet
-// company this is "close enough" — an hour's offset around midnight
-// is academic for an on-call rota. If multi-timezone becomes a thing
-// later, this is the place to add a company.timezone lookup.
 function todayIsoLocal(): string {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-// Returns 'am' or 'pm' for the current moment vs a split time.
 function currentWindow(splitTime: string | null): 'am' | 'pm' {
   const split = parseHHMM(splitTime || '12:00') || { h: 12, m: 0 }
   const now = new Date()
   const h = now.getHours()
   const m = now.getMinutes()
-  // AM = strictly before split. PM = at or after split.
   if (h < split.h) return 'am'
   if (h > split.h) return 'pm'
   return m < split.m ? 'am' : 'pm'
@@ -101,18 +92,18 @@ export async function GET(req: NextRequest) {
   const profile = await getCallerProfile()
   if (!profile) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
 
-  // Driver-side gate: require valid unlock cookie. Admins bypass.
+  let needsCookieRefresh = false
   if (profile.role !== 'admin') {
     const cookieStore = await cookies()
     const token = cookieStore.get(UNLOCK_COOKIE_NAME)?.value
     if (!verifyUnlockToken(token, profile.id)) {
       return NextResponse.json({ error: 'Unlock required' }, { status: 403 })
     }
+    needsCookieRefresh = true
   }
 
   const svc = adminClient()
 
-  // Need company.am_pm_split_time
   const { data: company } = await svc
     .from('companies')
     .select('am_pm_split_time')
@@ -120,10 +111,6 @@ export async function GET(req: NextRequest) {
     .single()
   const splitTime: string = company?.am_pm_split_time || '12:00'
 
-  // Pull all slots with their joined entry. Range filter: only
-  // include slots whose end_date is today-or-later, so the admin
-  // view stays clean of expired entries. (We keep the rows for the
-  // audit trail; we just don't surface them.)
   const today = todayIsoLocal()
   const { data: slots, error } = await svc
     .from('on_call_slots')
@@ -148,13 +135,24 @@ export async function GET(req: NextRequest) {
     (s.time_window === 'all_day' || s.time_window === now_window)
   )
 
-  return NextResponse.json({
+  const res = NextResponse.json({
     slots: slots || [],
     current,
     am_pm_split_time: splitTime,
     now_window,
     today,
   })
+
+  if (needsCookieRefresh) {
+    const fresh = signUnlockToken(profile.id)
+    res.cookies.set({
+      name: UNLOCK_COOKIE_NAME,
+      value: fresh.value,
+      ...cookieOptions(fresh.maxAgeSeconds),
+    })
+  }
+
+  return res
 }
 
 export async function POST(req: NextRequest) {
@@ -162,6 +160,12 @@ export async function POST(req: NextRequest) {
   if (!profile) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
   if (profile.role !== 'admin') {
     return NextResponse.json({ error: 'Admins only' }, { status: 403 })
+  }
+
+  const cookieStore = await cookies()
+  const adminToken = cookieStore.get(ADMIN_COOKIE_NAME)?.value
+  if (!verifyAdminToken(adminToken, profile.id)) {
+    return NextResponse.json({ error: 'Admin PIN required', need_pin: true }, { status: 403 })
   }
 
   const body = await req.json().catch(() => null)
@@ -186,7 +190,6 @@ export async function POST(req: NextRequest) {
 
   const svc = adminClient()
 
-  // Same-company guard on the entry itself
   const { data: entry } = await svc
     .from('phone_directory_entries')
     .select('id, company_id')

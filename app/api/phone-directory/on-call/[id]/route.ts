@@ -1,17 +1,18 @@
 /**
  * PATCH /api/phone-directory/on-call/[id]
- *   Body: any subset of { phone_directory_entry_id, start_date,
- *                         end_date, time_window, notes }
+ *   Body: subset of { phone_directory_entry_id, start_date,
+ *                     end_date, time_window, notes }
+ *   Admin only AND requires pd_admin cookie.
  *
  * DELETE /api/phone-directory/on-call/[id]
- *
- * Both: admin only, scoped to caller's company.
+ *   Admin only AND requires pd_admin cookie.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { createClient } from '@supabase/supabase-js'
+import { verifyAdminToken, ADMIN_COOKIE_NAME } from '@/lib/phoneCodeAuth'
 import { logAudit } from '@/lib/audit'
 
 function adminClient() {
@@ -41,6 +42,12 @@ async function adminCallerOrError() {
     .from('profiles').select('id, role, company_id').eq('id', user.id).single()
   if (!profile?.company_id) return { error: NextResponse.json({ error: 'No company' }, { status: 400 }) }
   if (profile.role !== 'admin') return { error: NextResponse.json({ error: 'Admins only' }, { status: 403 }) }
+
+  const adminToken = cookieStore.get(ADMIN_COOKIE_NAME)?.value
+  if (!verifyAdminToken(adminToken, profile.id)) {
+    return { error: NextResponse.json({ error: 'Admin PIN required', need_pin: true }, { status: 403 }) }
+  }
+
   return { profile, svc }
 }
 
@@ -62,7 +69,6 @@ export async function PATCH(
   const updates: Record<string, any> = {}
 
   if (body?.phone_directory_entry_id) {
-    // Verify the new entry is in the same company
     const { data: entry } = await svc
       .from('phone_directory_entries')
       .select('id, company_id')
@@ -98,7 +104,6 @@ export async function PATCH(
     return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
   }
 
-  // Same-company guard on the slot itself
   const { data: existing } = await svc
     .from('on_call_slots')
     .select('id, company_id, start_date, end_date')
@@ -108,8 +113,6 @@ export async function PATCH(
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  // If both dates being updated, verify ordering. If only one is, check
-  // against the existing other.
   const finalStart = updates.start_date || existing.start_date
   const finalEnd = updates.end_date || existing.end_date
   if (finalStart > finalEnd) {

@@ -6,17 +6,15 @@
  * Behaviour:
  *   - Looks up the user's stored hash. 404 if no code set yet.
  *   - Compares (constant-time scrypt). On match: resets failed_attempts,
- *     stamps last_unlocked_at, sets the unlock cookie, returns ok.
- *   - On miss: increments failed_attempts. If we just crossed 15
- *     (mod 15 — every 15 in a row), insert a phone_directory_alerts
- *     row so admin sees the banner. Always logs to audit.
- *   - Per-failure response delay (linear up to 10s) to slow scripted
- *     brute-force without locking the user out.
- *
- * The alert threshold logic: alert fires at the 15th, 30th, 45th, ...
- * consecutive failure. Counter resets on successful entry. So a real
- * driver who fails 4 times then gets it right won't trigger anything,
- * but a script grinding through PINs trips an alert every 15 attempts.
+ *     stamps last_unlocked_at, issues:
+ *       • For drivers (role !== 'admin'): the long-lived `pd_unlock`
+ *         cookie (8 hours) used by the driver phone-directory page.
+ *       • For admins: the short-lived `pd_admin` cookie (5 minutes)
+ *         used to gate admin write APIs. Admin pages always show
+ *         the PIN form on mount; this cookie just protects the API
+ *         beneath the form.
+ *   - On miss: increments failed_attempts. Alert at every 15th miss.
+ *     Per-failure response delay (linear up to 10s).
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -26,8 +24,11 @@ import { createClient } from '@supabase/supabase-js'
 import {
   verifyCode,
   signUnlockToken,
+  signAdminToken,
   throttleMsForFailures,
   UNLOCK_COOKIE_NAME,
+  ADMIN_COOKIE_NAME,
+  cookieOptions,
 } from '@/lib/phoneCodeAuth'
 import { logAudit } from '@/lib/audit'
 
@@ -79,14 +80,10 @@ export async function POST(req: NextRequest) {
 
   const { data: profile } = await svc
     .from('profiles')
-    .select('id, full_name')
+    .select('id, full_name, role')
     .eq('id', user.id)
     .single()
 
-  // Apply throttle delay BEFORE checking, based on the failures we'd
-  // be about to see if this attempt is wrong. (We could throttle
-  // after, but doing it before means a scripted attacker can't avoid
-  // the delay by hammering then bailing on the response.)
   const throttle = throttleMsForFailures(row.failed_attempts)
   if (throttle > 0) await sleep(throttle)
 
@@ -101,27 +98,43 @@ export async function POST(req: NextRequest) {
       .eq('user_id', user.id)
 
     await logAudit({
-      action: 'PHONE_DIRECTORY_UNLOCKED',
+      action: profile?.role === 'admin'
+        ? 'PHONE_DIRECTORY_ADMIN_UNLOCKED'
+        : 'PHONE_DIRECTORY_UNLOCKED',
       entity: 'phone_directory_codes',
-      details: { user_id: user.id },
+      details: { user_id: user.id, role: profile?.role || null },
       ip_address: req.headers.get('x-forwarded-for') || undefined,
     })
 
-    const token = signUnlockToken(user.id)
     const res = NextResponse.json({ ok: true })
+
+    // Always issue the driver unlock cookie too — admins MAY also use
+    // the employee surface (e.g. for testing) and shouldn't have to
+    // re-enter just because they happen to also be admin. The admin
+    // cookie below is additive.
+    const driverToken = signUnlockToken(user.id)
     res.cookies.set({
       name: UNLOCK_COOKIE_NAME,
-      value: token.value,
-      httpOnly: true,
-      secure: true,
-      sameSite: 'lax',
-      path: '/',
-      maxAge: token.maxAgeSeconds,
+      value: driverToken.value,
+      ...cookieOptions(driverToken.maxAgeSeconds),
     })
+
+    // For admins, also issue the short-lived admin cookie that gates
+    // admin write APIs. The admin pages always re-prompt on mount;
+    // this cookie just protects the API beneath that prompt.
+    if (profile?.role === 'admin') {
+      const adminToken = signAdminToken(user.id)
+      res.cookies.set({
+        name: ADMIN_COOKIE_NAME,
+        value: adminToken.value,
+        ...cookieOptions(adminToken.maxAgeSeconds),
+      })
+    }
+
     return res
   }
 
-  // Wrong code — increment, log, possibly raise alert
+  // Wrong code
   const newCount = (row.failed_attempts || 0) + 1
   await svc
     .from('phone_directory_codes')
@@ -134,13 +147,10 @@ export async function POST(req: NextRequest) {
   await logAudit({
     action: 'PHONE_DIRECTORY_BAD_CODE',
     entity: 'phone_directory_codes',
-    details: { user_id: user.id, failed_attempts: newCount },
+    details: { user_id: user.id, failed_attempts: newCount, role: profile?.role || null },
     ip_address: req.headers.get('x-forwarded-for') || undefined,
   })
 
-  // Alert at every Nth multiple of the threshold (15, 30, 45...)
-  // so a determined attacker trips the banner repeatedly even if
-  // admin keeps dismissing.
   if (newCount > 0 && newCount % ALERT_THRESHOLD === 0) {
     await svc.from('phone_directory_alerts').insert({
       company_id: row.company_id,

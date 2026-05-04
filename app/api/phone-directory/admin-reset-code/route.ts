@@ -3,16 +3,17 @@
  *
  * Body: { user_id }
  *
- * Admin clears a user's PIN so they can set a new one on next access.
- * Also resets failed_attempts to 0. Audit logged.
+ * Admin clears a user's PIN. Also resets failed_attempts and
+ * dismisses any active alerts for that user. Audit logged.
  *
- * Admin only, scoped to caller's company.
+ * Admin only AND requires pd_admin cookie.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { createClient } from '@supabase/supabase-js'
+import { verifyAdminToken, ADMIN_COOKIE_NAME } from '@/lib/phoneCodeAuth'
 import { logAudit } from '@/lib/audit'
 
 function adminClient() {
@@ -48,11 +49,16 @@ export async function POST(req: NextRequest) {
   if (!caller?.company_id) return NextResponse.json({ error: 'No company' }, { status: 400 })
   if (caller.role !== 'admin') return NextResponse.json({ error: 'Admins only' }, { status: 403 })
 
+  // Admin gate
+  const adminToken = cookieStore.get(ADMIN_COOKIE_NAME)?.value
+  if (!verifyAdminToken(adminToken, caller.id)) {
+    return NextResponse.json({ error: 'Admin PIN required', need_pin: true }, { status: 403 })
+  }
+
   const body = await req.json().catch(() => null)
   const targetUserId: string = body?.user_id || ''
   if (!targetUserId) return NextResponse.json({ error: 'user_id is required' }, { status: 400 })
 
-  // Same-company gate: refuse to reset codes for users in other companies
   const { data: target } = await svc
     .from('profiles')
     .select('id, company_id, full_name')
@@ -62,9 +68,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'User not found in your company' }, { status: 404 })
   }
 
-  // Delete the row entirely — they'll set a new code on next access.
-  // Also dismiss any active alerts for this user (the reset implies
-  // admin is aware and dealing with it).
   await svc
     .from('phone_directory_codes')
     .delete()
