@@ -16,6 +16,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRealtimeRefresh } from '@/lib/useRealtimeRefresh'
+import PhoneDirectoryAlertBanner from '@/components/PhoneDirectoryAlertBanner'
 
 type Stats = {
   company: {
@@ -177,6 +178,12 @@ export default function DashboardPage() {
           </p>
         </div>
       )}
+
+      {/* Phone Directory alert banner — fail-silent / null-renders when
+          the user is not admin or there are no active alerts. Just
+          dismisses; admin clicks through to the Phone Directory page
+          if they want to actually reset a user's PIN. */}
+      <PhoneDirectoryAlertBanner />
 
       {/* Two compact glance tiles — Holidays pending + Open defects.
           Each gates on the respective feature so a company without

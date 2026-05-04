@@ -84,6 +84,7 @@ export default async function DashboardLayout({
   let hasVehiclesAccess     = false
   let hasServicesAccess     = false
   let hasDocumentsAccess    = false
+  let hasPhoneDirectoryAccess = false
 
   // ── Schedules mode (companies.schedules_mode) ──────────────────
   // Read once, default to 'shift_patterns' for any pre-029 row.
@@ -253,6 +254,38 @@ export default async function DashboardLayout({
     }
   }
 
+  // Phone Directory — per-company AND per-user gate (admins implicit).
+  // Drives the sidebar entry on the admin side and the home tile on
+  // the employee side. Both surfaces re-check independently; this just
+  // unlocks the sidebar.
+  if (profile.company_id) {
+    const { data: phoneDirFeature } = await supabase
+      .from('features').select('id').eq('slug', 'phone_directory').single()
+
+    if (phoneDirFeature) {
+      const { data: cf } = await supabase
+        .from('company_features')
+        .select('is_enabled')
+        .eq('company_id', profile.company_id)
+        .eq('feature_id', phoneDirFeature.id)
+        .maybeSingle()
+
+      if (cf?.is_enabled) {
+        if (profile.role === 'admin') {
+          hasPhoneDirectoryAccess = true
+        } else {
+          const { data: uf } = await supabase
+            .from('user_features')
+            .select('is_enabled')
+            .eq('user_id', user.id)
+            .eq('feature_id', phoneDirFeature.id)
+            .maybeSingle()
+          hasPhoneDirectoryAccess = !!uf?.is_enabled
+        }
+      }
+    }
+  }
+
   // Diagnostic line — visible in Vercel server logs / terminal.
   // Helps verify the sidebar is getting the right flags.
   console.log('[dashboard layout] flags:', {
@@ -265,6 +298,7 @@ export default async function DashboardLayout({
     hasSchedulesDaySheetAccess,
     hasVehiclesAccess,
     hasServicesAccess,
+    hasPhoneDirectoryAccess,
   })
 
   return (
@@ -292,6 +326,7 @@ export default async function DashboardLayout({
           hasVehiclesAccess={hasVehiclesAccess}
           hasServicesAccess={hasServicesAccess}
           hasDocumentsAccess={hasDocumentsAccess}
+          hasPhoneDirectoryAccess={hasPhoneDirectoryAccess}
         />
         <main className="flex-1 overflow-x-auto">
           {children}

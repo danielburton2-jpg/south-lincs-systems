@@ -71,6 +71,7 @@ type Props = {
   hasVehiclesAccess?: boolean
   hasServicesAccess?: boolean
   hasDocumentsAccess?: boolean
+  hasPhoneDirectoryAccess?: boolean
 }
 
 type SubItem = { label: string; href: string; disabled?: boolean }
@@ -95,6 +96,7 @@ export default function DashboardSidebar({
   hasVehiclesAccess,
   hasServicesAccess,
   hasDocumentsAccess,
+  hasPhoneDirectoryAccess,
 }: Props) {
   const pathname = usePathname() || ''
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({})
@@ -250,6 +252,20 @@ export default function DashboardSidebar({
         { label: 'Templates', href: '/dashboard/services/templates' },
         { label: 'Settings',  href: '/dashboard/services/settings' },
         { label: 'Reports',   href: '/dashboard/services/reports' },
+      ],
+    })
+  }
+
+  // Phone Directory — admin-only, single page (no sub-pages yet).
+  // Same gate logic. Drivers consume the directory at /employee/phone-directory
+  // behind a per-user PIN; this entry is purely the management surface.
+  const showPhoneDirectory = user.role === 'admin' && hasPhoneDirectoryAccess
+  if (showPhoneDirectory) {
+    sections.push({
+      label: 'Phone Directory',
+      basePath: '/dashboard/phone-directory',
+      subItems: [
+        { label: 'Manage', href: '/dashboard/phone-directory' },
       ],
     })
   }

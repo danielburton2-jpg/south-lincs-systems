@@ -92,6 +92,13 @@ const THEMES: Record<string, Theme> = {
     iconBg: 'bg-violet-100',
     text: 'text-violet-900',
   },
+  phone_directory: {
+    emoji: '📞',
+    bg: 'bg-emerald-50',
+    ring: 'ring-emerald-200',
+    iconBg: 'bg-emerald-100',
+    text: 'text-emerald-900',
+  },
 }
 
 const DEFAULT_THEME: Theme = {
