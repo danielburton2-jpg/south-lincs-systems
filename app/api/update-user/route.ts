@@ -5,15 +5,16 @@ import { logAudit } from '@/lib/audit'
 /**
  * POST /api/update-user
  *
- * Multi-purpose: full edit, freeze toggle, soft delete.
+ * Multi-purpose: full edit, freeze toggle, soft delete, restore.
  *
  * Body shapes:
  *   • Freeze:       { user_id, toggle_freeze: bool, actor_*, company_name }
  *   • Soft delete:  { user_id, delete: true, actor_*, company_name }
+ *   • Restore:      { user_id, restore: true, actor_*, company_name }
  *   • Full edit:    { user_id, full_name, email, role, ...all the fields, actor_*, company_name }
  *
- * Action flags (toggle_freeze, delete) take priority — if either is
- * set, the request is treated as a state-change-only and the other
+ * Action flags (toggle_freeze, delete, restore) take priority — if any
+ * is set, the request is treated as a state-change-only and the other
  * fields are ignored.
  */
 export async function POST(request: Request) {
@@ -35,6 +36,7 @@ export async function POST(request: Request) {
       // Action-only flags
       toggle_freeze,
       delete: shouldDelete,
+      restore: shouldRestore,
       // Audit
       actor_id,
       actor_email,
@@ -86,6 +88,34 @@ export async function POST(request: Request) {
         user_email: actor_email,
         user_role: actor_role,
         action: 'SOFT_DELETE_USER',
+        entity: 'profile',
+        entity_id: user_id,
+        details: { company_name },
+        ip_address: request.headers.get('x-forwarded-for') || undefined,
+      })
+
+      return NextResponse.json({ success: true })
+    }
+
+    // ─── Action: restore (un-delete) ─────────────────────────────
+    // Only superusers should reach this in practice — the client-side
+    // pages only show the Restore button to superusers. We don't
+    // double-check here because the rest of /api/update-user already
+    // trusts the actor_* fields without server-side authz, and we
+    // want to stay consistent. (If you ever harden authz on this
+    // route, make sure restore is gated to superusers specifically.)
+    if (shouldRestore) {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ is_deleted: false })
+        .eq('id', user_id)
+      if (error) return NextResponse.json({ error: error.message }, { status: 400 })
+
+      await logAudit({
+        user_id: actor_id,
+        user_email: actor_email,
+        user_role: actor_role,
+        action: 'RESTORE_USER',
         entity: 'profile',
         entity_id: user_id,
         details: { company_name },

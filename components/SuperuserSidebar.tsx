@@ -90,6 +90,7 @@ export default function SuperuserSidebar({ user }: Props) {
   }
 
   const dashboardActive = pathname === '/superuser'
+  const superusersActive = pathname === '/superuser/superusers' || pathname.startsWith('/superuser/superusers/')
 
   return (
     <aside className="w-64 bg-slate-900 text-slate-100 flex flex-col flex-shrink-0">
@@ -109,6 +110,18 @@ export default function SuperuserSidebar({ user }: Props) {
           }`}
         >
           Dashboard
+        </Link>
+
+        <Link
+          href="/superuser/superusers"
+          onClick={closeAll}
+          className={`block px-3 py-2 mb-2 rounded-lg text-sm font-medium transition ${
+            superusersActive
+              ? 'bg-slate-800 text-white'
+              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+          }`}
+        >
+          Superusers
         </Link>
 
         {SECTIONS.map((section) => {

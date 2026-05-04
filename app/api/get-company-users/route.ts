@@ -4,15 +4,19 @@ import { NextResponse } from 'next/server'
 /**
  * POST /api/get-company-users
  *
- * Body: { company_id }
+ * Body: { company_id, include_deleted? }
  *
  * Returns:
- *   • users — profiles for this company (excluding soft-deleted),
- *     each with their user_features and manager_job_titles attached
+ *   • users — profiles for this company, each with their user_features
+ *     and manager_job_titles attached
+ *
+ * If `include_deleted` is true, returns all users (active and
+ * soft-deleted). Otherwise (default) only active users. The page
+ * uses this flag to power its "Show removed users" toggle.
  */
 export async function POST(request: Request) {
   try {
-    const { company_id } = await request.json()
+    const { company_id, include_deleted } = await request.json()
     if (!company_id) {
       return NextResponse.json({ error: 'company_id is required' }, { status: 400 })
     }
@@ -22,12 +26,17 @@ export async function POST(request: Request) {
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
     )
 
-    const { data: users, error } = await supabase
+    let query = supabase
       .from('profiles')
       .select('*')
       .eq('company_id', company_id)
-      .eq('is_deleted', false)
       .order('created_at', { ascending: true })
+
+    if (!include_deleted) {
+      query = query.eq('is_deleted', false)
+    }
+
+    const { data: users, error } = await query
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 400 })

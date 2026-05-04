@@ -19,6 +19,7 @@ export default function CompaniesListPage() {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [info, setInfo] = useState('')
 
   // Initial load
   const load = async (q: string) => {
@@ -48,6 +49,30 @@ export default function CompaniesListPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search])
 
+  // Reactivate an inactive company. Mirror of soft-delete-restore for
+  // users, except companies use is_active rather than is_deleted.
+  // Doesn't re-enable any subscription dates — admin can adjust those
+  // by clicking into the company's edit form afterwards.
+  const handleReactivate = async (c: Company, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!confirm(`Reactivate ${c.name}?\n\nThe company will be marked active. Subscription dates aren't changed — adjust them in the edit form if needed.`)) return
+    setInfo('')
+    setError('')
+    try {
+      const res = await fetch('/api/update-company', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: c.id, is_active: true }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to reactivate')
+      setInfo(`${c.name} reactivated.`)
+      await load(search.trim())
+    } catch (err: any) {
+      setError(err.message || 'Failed to reactivate')
+    }
+  }
+
   return (
     <div className="p-8 max-w-5xl">
       <div className="flex justify-between items-baseline mb-6">
@@ -76,6 +101,12 @@ export default function CompaniesListPage() {
         </div>
       )}
 
+      {info && (
+        <div className="mb-4 p-3 bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg">
+          {info}
+        </div>
+      )}
+
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
         {loading ? (
           <p className="p-8 text-slate-400 italic text-center">Loading…</p>
@@ -89,28 +120,40 @@ export default function CompaniesListPage() {
               const effectiveEnd = c.override_end_date || c.end_date
               const isExpired = effectiveEnd && new Date(effectiveEnd) < new Date()
               return (
-                <li key={c.id}>
-                  <button
-                    onClick={() => router.push(`/superuser/companies/edit/${c.id}`)}
-                    className="w-full text-left p-4 hover:bg-slate-50 transition flex items-center justify-between"
-                  >
-                    <div>
-                      <p className="font-medium text-slate-800">{c.name}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">
-                        {c.start_date ? `From ${c.start_date}` : 'No start date'}
-                        {effectiveEnd ? ` — to ${effectiveEnd}` : ''}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {!c.is_active && (
-                        <span className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full">Inactive</span>
-                      )}
-                      {isExpired && (
-                        <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">Expired</span>
-                      )}
-                      <span className="text-slate-400">›</span>
-                    </div>
-                  </button>
+                <li key={c.id} className={c.is_active ? '' : 'bg-slate-50'}>
+                  <div className="flex items-stretch">
+                    <button
+                      onClick={() => router.push(`/superuser/companies/edit/${c.id}`)}
+                      className="flex-1 text-left p-4 hover:bg-slate-100 transition flex items-center justify-between min-w-0"
+                    >
+                      <div className="min-w-0">
+                        <p className={`font-medium truncate ${c.is_active ? 'text-slate-800' : 'text-slate-500'}`}>
+                          {c.name}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {c.start_date ? `From ${c.start_date}` : 'No start date'}
+                          {effectiveEnd ? ` — to ${effectiveEnd}` : ''}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        {!c.is_active && (
+                          <span className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full">Inactive</span>
+                        )}
+                        {isExpired && (
+                          <span className="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">Expired</span>
+                        )}
+                        <span className="text-slate-400">›</span>
+                      </div>
+                    </button>
+                    {!c.is_active && (
+                      <button
+                        onClick={(e) => handleReactivate(c, e)}
+                        className="flex-shrink-0 px-4 my-2 mr-2 bg-green-100 hover:bg-green-200 text-green-700 text-xs font-medium rounded-lg transition"
+                      >
+                        Reactivate
+                      </button>
+                    )}
+                  </div>
                 </li>
               )
             })}

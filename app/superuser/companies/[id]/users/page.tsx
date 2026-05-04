@@ -49,6 +49,7 @@ type User = {
   full_year_entitlement: number | null
   working_days: any
   is_frozen: boolean
+  is_deleted: boolean
   extra_fields: Record<string, any> | null
   user_features: { feature_id: string; is_enabled: boolean; can_view: boolean; can_edit: boolean; can_view_reports: boolean }[]
   manager_titles: string[]
@@ -96,6 +97,7 @@ export default function CompanyUsersPage() {
   const [editingUser, setEditingUser] = useState<User | null>(null)
   const [message, setMessage] = useState('')
   const [messageType, setMessageType] = useState<'success' | 'error'>('success')
+  const [showRemoved, setShowRemoved] = useState(false)
 
   // Add form state
   const [newName, setNewName] = useState('')
@@ -167,11 +169,11 @@ export default function CompanyUsersPage() {
     const res = await fetch('/api/get-company-users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ company_id: companyId }),
+      body: JSON.stringify({ company_id: companyId, include_deleted: showRemoved }),
     })
     const data = await res.json()
     if (res.ok && Array.isArray(data.users)) setUsers(data.users)
-  }, [companyId])
+  }, [companyId, showRemoved])
 
   const fetchHrFields = useCallback(async () => {
     const res = await fetch(`/api/company-user-fields?company_id=${companyId}`)
@@ -429,6 +431,29 @@ export default function CompanyUsersPage() {
       return
     }
     showMessage('User removed', 'success')
+    fetchUsers()
+  }
+
+  const handleRestore = async (u: User) => {
+    if (!confirm(`Restore ${u.full_name || u.email} to ${company?.name || 'this company'}?\n\nThey'll appear in the active users list.`)) return
+    const res = await fetch('/api/update-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: u.id,
+        restore: true,
+        actor_id: currentUser?.id,
+        actor_email: currentUser?.email,
+        actor_role: currentUser?.role,
+        company_name: company?.name,
+      }),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      showMessage('Error restoring user: ' + (data.error || 'unknown'), 'error')
+      return
+    }
+    showMessage('User restored', 'success')
     fetchUsers()
   }
 
@@ -862,22 +887,46 @@ export default function CompanyUsersPage() {
 
       {/* USER LIST */}
       <div className="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
-        <h3 className="text-lg font-semibold text-slate-800 mb-4">All Users ({users.length})</h3>
+        <div className="flex items-baseline justify-between mb-4 gap-3 flex-wrap">
+          <h3 className="text-lg font-semibold text-slate-800">
+            {showRemoved ? 'All Users' : 'Active Users'} ({users.length})
+          </h3>
+          <label className="text-xs text-slate-600 inline-flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={showRemoved}
+              onChange={e => setShowRemoved(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            Show removed users
+          </label>
+        </div>
         {users.length === 0 ? (
-          <p className="text-sm text-slate-400 italic">No users yet. Add one above.</p>
+          <p className="text-sm text-slate-400 italic">
+            {showRemoved ? 'No users.' : 'No users yet. Add one above.'}
+          </p>
         ) : (
           <ul className="space-y-3">
             {users.map(u => (
               <li key={u.id} className={`border rounded-xl p-4 ${
-                u.is_frozen ? 'border-orange-300 bg-orange-50' : 'border-slate-200'
+                u.is_deleted
+                  ? 'border-slate-300 bg-slate-50 opacity-75'
+                  : u.is_frozen
+                    ? 'border-orange-300 bg-orange-50'
+                    : 'border-slate-200'
               }`}>
                 <div className="flex justify-between items-start gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-medium text-slate-800">{u.full_name || u.email}</p>
+                      <p className={`font-medium ${u.is_deleted ? 'text-slate-500 line-through' : 'text-slate-800'}`}>
+                        {u.full_name || u.email}
+                      </p>
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${roleBadgeColor(u.role)}`}>
                         {u.role}
                       </span>
+                      {u.is_deleted && (
+                        <span className="text-xs bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full">Removed</span>
+                      )}
                       {u.employee_number && (
                         <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
                           {u.employee_number}
@@ -893,11 +942,11 @@ export default function CompanyUsersPage() {
                           🏖️ {u.holiday_entitlement} days
                         </span>
                       )}
-                      {u.is_frozen && (
+                      {!u.is_deleted && u.is_frozen && (
                         <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full">Frozen</span>
                       )}
                     </div>
-                    <p className="text-sm text-slate-500 mt-0.5">{u.email}</p>
+                    <p className={`text-sm mt-0.5 ${u.is_deleted ? 'text-slate-400' : 'text-slate-500'}`}>{u.email}</p>
                     {u.user_features && u.user_features.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1">
                         {u.role === 'admin' ? (
@@ -918,22 +967,31 @@ export default function CompanyUsersPage() {
                     )}
                   </div>
                   <div className="flex gap-2 flex-shrink-0">
-                    <button onClick={() => startEdit(u)}
-                      className="text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg">
-                      Edit
-                    </button>
-                    <button onClick={() => handleFreeze(u)}
-                      className={`text-sm px-3 py-1.5 rounded-lg ${
-                        u.is_frozen
-                          ? 'bg-green-100 hover:bg-green-200 text-green-700'
-                          : 'bg-orange-100 hover:bg-orange-200 text-orange-700'
-                      }`}>
-                      {u.is_frozen ? 'Unfreeze' : 'Freeze'}
-                    </button>
-                    <button onClick={() => handleSoftDelete(u)}
-                      className="text-sm bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1.5 rounded-lg">
-                      Remove
-                    </button>
+                    {u.is_deleted ? (
+                      <button onClick={() => handleRestore(u)}
+                        className="text-sm bg-green-100 hover:bg-green-200 text-green-700 px-3 py-1.5 rounded-lg font-medium">
+                        Restore
+                      </button>
+                    ) : (
+                      <>
+                        <button onClick={() => startEdit(u)}
+                          className="text-sm bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg">
+                          Edit
+                        </button>
+                        <button onClick={() => handleFreeze(u)}
+                          className={`text-sm px-3 py-1.5 rounded-lg ${
+                            u.is_frozen
+                              ? 'bg-green-100 hover:bg-green-200 text-green-700'
+                              : 'bg-orange-100 hover:bg-orange-200 text-orange-700'
+                          }`}>
+                          {u.is_frozen ? 'Unfreeze' : 'Freeze'}
+                        </button>
+                        <button onClick={() => handleSoftDelete(u)}
+                          className="text-sm bg-red-100 hover:bg-red-200 text-red-700 px-3 py-1.5 rounded-lg">
+                          Remove
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               </li>
