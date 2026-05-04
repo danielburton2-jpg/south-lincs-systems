@@ -50,7 +50,7 @@ async function getCallerProfile() {
   const svc = adminClient()
   const { data: profile } = await svc
     .from('profiles')
-    .select('id, role, company_id')
+    .select('id, email, role, company_id')
     .eq('id', user.id)
     .single()
   return profile && profile.company_id ? profile : null
@@ -128,6 +128,9 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
   await logAudit({
+    user_id: profile.id,
+    user_email: profile.email,
+    user_role: profile.role,
     action: 'PHONE_DIRECTORY_ENTRY_CREATED',
     entity: 'phone_directory_entry',
     details: { id: data.id, name, phone_number },

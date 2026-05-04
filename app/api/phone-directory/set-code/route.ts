@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
   const svc = adminClient()
   const { data: profile } = await svc
     .from('profiles')
-    .select('id, company_id, role, full_name')
+    .select('id, email, company_id, role, full_name')
     .eq('id', user.id)
     .single()
   if (!profile?.company_id) {
@@ -98,6 +98,9 @@ export async function POST(req: NextRequest) {
   }
 
   await logAudit({
+    user_id: profile.id,
+    user_email: profile.email,
+    user_role: profile.role,
     action: 'PHONE_DIRECTORY_CODE_SET',
     entity: 'phone_directory_codes',
     details: { user_id: user.id, role: profile.role },

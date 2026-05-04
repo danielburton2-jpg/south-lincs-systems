@@ -42,7 +42,7 @@ async function adminCallerOrError() {
   if (!user) return { error: NextResponse.json({ error: 'Not signed in' }, { status: 401 }) }
   const svc = adminClient()
   const { data: profile } = await svc
-    .from('profiles').select('id, role, company_id').eq('id', user.id).single()
+    .from('profiles').select('id, email, role, company_id').eq('id', user.id).single()
   if (!profile?.company_id) return { error: NextResponse.json({ error: 'No company' }, { status: 400 }) }
   if (profile.role !== 'admin') return { error: NextResponse.json({ error: 'Admins only' }, { status: 403 }) }
 
@@ -151,6 +151,9 @@ export async function PATCH(
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
   await logAudit({
+    user_id: profile.id,
+    user_email: profile.email,
+    user_role: profile.role,
     action: 'ON_CALL_SLOT_UPDATED',
     entity: 'on_call_slot',
     details: { id, updates },
@@ -187,6 +190,9 @@ export async function DELETE(
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
   await logAudit({
+    user_id: profile.id,
+    user_email: profile.email,
+    user_role: profile.role,
     action: 'ON_CALL_SLOT_DELETED',
     entity: 'on_call_slot',
     details: { id },

@@ -39,7 +39,7 @@ async function adminCallerOrError() {
   const svc = adminClient()
   const { data: profile } = await svc
     .from('profiles')
-    .select('id, role, company_id')
+    .select('id, email, role, company_id')
     .eq('id', user.id)
     .single()
   if (!profile?.company_id) return { error: NextResponse.json({ error: 'No company' }, { status: 400 }) }
@@ -106,6 +106,9 @@ export async function PATCH(
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
   await logAudit({
+    user_id: profile.id,
+    user_email: profile.email,
+    user_role: profile.role,
     action: 'PHONE_DIRECTORY_ENTRY_UPDATED',
     entity: 'phone_directory_entry',
     details: { id, updates },
@@ -142,6 +145,9 @@ export async function DELETE(
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
   await logAudit({
+    user_id: profile.id,
+    user_email: profile.email,
+    user_role: profile.role,
     action: 'PHONE_DIRECTORY_ENTRY_DELETED',
     entity: 'phone_directory_entry',
     details: { id, name: existing.name, phone_number: existing.phone_number },

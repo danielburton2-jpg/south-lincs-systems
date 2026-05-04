@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
 
   const svc = adminClient()
   const { data: profile } = await svc
-    .from('profiles').select('id, role, company_id').eq('id', user.id).single()
+    .from('profiles').select('id, email, role, company_id').eq('id', user.id).single()
   if (!profile?.company_id) return NextResponse.json({ error: 'No company' }, { status: 400 })
   if (profile.role !== 'admin') return NextResponse.json({ error: 'Admins only' }, { status: 403 })
 
@@ -59,6 +59,9 @@ export async function POST(req: NextRequest) {
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
   await logAudit({
+    user_id: profile.id,
+    user_email: profile.email,
+    user_role: profile.role,
     action: 'ON_CALL_SPLIT_TIME_CHANGED',
     entity: 'company',
     details: { company_id: profile.company_id, am_pm_split_time },

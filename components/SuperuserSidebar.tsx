@@ -91,6 +91,7 @@ export default function SuperuserSidebar({ user }: Props) {
 
   const dashboardActive = pathname === '/superuser'
   const superusersActive = pathname === '/superuser/superusers' || pathname.startsWith('/superuser/superusers/')
+  const auditActive = pathname === '/superuser/audit' || pathname.startsWith('/superuser/audit/')
 
   return (
     <aside className="w-64 bg-slate-900 text-slate-100 flex flex-col flex-shrink-0">
@@ -122,6 +123,18 @@ export default function SuperuserSidebar({ user }: Props) {
           }`}
         >
           Superusers
+        </Link>
+
+        <Link
+          href="/superuser/audit"
+          onClick={closeAll}
+          className={`block px-3 py-2 mb-2 rounded-lg text-sm font-medium transition ${
+            auditActive
+              ? 'bg-slate-800 text-white'
+              : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+          }`}
+        >
+          Audit log
         </Link>
 
         {SECTIONS.map((section) => {

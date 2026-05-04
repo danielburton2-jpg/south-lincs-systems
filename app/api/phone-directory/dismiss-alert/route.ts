@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
   const svc = adminClient()
   const { data: caller } = await svc
     .from('profiles')
-    .select('id, role, company_id')
+    .select('id, email, role, company_id')
     .eq('id', user.id)
     .single()
   if (!caller?.company_id) return NextResponse.json({ error: 'No company' }, { status: 400 })
@@ -72,6 +72,9 @@ export async function POST(req: NextRequest) {
     .eq('id', alert_id)
 
   await logAudit({
+    user_id: caller.id,
+    user_email: caller.email,
+    user_role: caller.role,
     action: 'PHONE_DIRECTORY_ALERT_DISMISSED',
     entity: 'phone_directory_alert',
     details: { alert_id },

@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
   const svc = adminClient()
   const { data: caller } = await svc
     .from('profiles')
-    .select('id, role, company_id')
+    .select('id, email, role, company_id')
     .eq('id', user.id)
     .single()
   if (!caller || caller.role !== 'admin') {
@@ -98,6 +98,9 @@ export async function POST(req: NextRequest) {
   }
 
   await logAudit({
+    user_id: caller.id,
+    user_email: caller.email,
+    user_role: caller.role,
     action: 'ATTACH_DAY_SHEET_DOCUMENT',
     entity: 'day_sheet_document',
     details: { day_sheet_id, document_id },

@@ -77,3 +77,51 @@ export async function logAudit(p: AuditPayload): Promise<void> {
     console.error('[audit] EXCEPTION:', err)
   }
 }
+
+/**
+ * Look up an actor's email + role for audit purposes.
+ *
+ * Returns the three fields ready to spread into a `logAudit({...})`
+ * call: `{ user_id, user_email, user_role }`. Uses the service-role
+ * client (bypasses RLS) so it works regardless of the caller's auth
+ * context.
+ *
+ * If `userId` is null/undefined, returns an empty object — safe to
+ * spread, just produces no actor info. If the profile lookup fails
+ * for any reason, returns at least `{ user_id }` so the actor's id
+ * is still recorded even when their profile can't be read.
+ *
+ * Use this in API routes that already know the caller's id (from
+ * `supabase.auth.getUser()`) but don't otherwise need to load the
+ * profile. Avoids the audit row ending up with null user_email and
+ * user_role columns, which makes the /superuser/audit viewer harder
+ * to use.
+ *
+ * Usage:
+ *   const { data: { user } } = await supabase.auth.getUser()
+ *   const actor = await getActorFields(user?.id)
+ *   await logAudit({
+ *     ...actor,
+ *     action: 'CREATE_THING',
+ *     entity: 'thing',
+ *     details: { ... },
+ *   })
+ */
+export async function getActorFields(
+  userId: string | null | undefined,
+): Promise<{ user_id?: string; user_email?: string; user_role?: string }> {
+  if (!userId) return {}
+  try {
+    const { data: profile } = await (svc().from('profiles') as any)
+      .select('email, role')
+      .eq('id', userId)
+      .single()
+    return {
+      user_id: userId,
+      user_email: profile?.email || undefined,
+      user_role: profile?.role || undefined,
+    }
+  } catch {
+    return { user_id: userId }
+  }
+}

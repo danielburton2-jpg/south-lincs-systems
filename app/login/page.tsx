@@ -80,10 +80,28 @@ function LoginForm() {
       return
     }
 
-    // Success — record it with the real user id
+    // Success — record it with the real user id, email, and role.
+    // We fetch the profile here BEFORE recording the audit so the
+    // user_role column is filled in. Without this lookup, every
+    // LOGIN_SUCCESS row ends up with role=null, which makes the
+    // /superuser/audit viewer harder to filter and read.
+    let user_role: string | undefined
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', data.user.id)
+        .single()
+      user_role = profile?.role || undefined
+    } catch {
+      // Profile lookup failed — record the audit anyway with
+      // whatever we have.
+    }
+
     await recordAudit({
       user_id: data.user.id,
       user_email: data.user.email,
+      user_role,
       action: 'LOGIN_SUCCESS',
       entity: 'auth',
       entity_id: data.user.id,

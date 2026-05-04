@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
 
   const { data: profile } = await svc
     .from('profiles')
-    .select('id, full_name, role')
+    .select('id, email, full_name, role')
     .eq('id', user.id)
     .single()
 
@@ -98,6 +98,9 @@ export async function POST(req: NextRequest) {
       .eq('user_id', user.id)
 
     await logAudit({
+      user_id: user.id,
+      user_email: profile?.email || undefined,
+      user_role: profile?.role || undefined,
       action: profile?.role === 'admin'
         ? 'PHONE_DIRECTORY_ADMIN_UNLOCKED'
         : 'PHONE_DIRECTORY_UNLOCKED',
@@ -145,6 +148,9 @@ export async function POST(req: NextRequest) {
     .eq('user_id', user.id)
 
   await logAudit({
+    user_id: user.id,
+    user_email: profile?.email || undefined,
+    user_role: profile?.role || undefined,
     action: 'PHONE_DIRECTORY_BAD_CODE',
     entity: 'phone_directory_codes',
     details: { user_id: user.id, failed_attempts: newCount, role: profile?.role || null },
