@@ -4,16 +4,15 @@
  * Returns slots + current + split time. Phone numbers ARE included
  * in the response (the client needs them to construct tel: hrefs)
  * but the on-call surfaces never DISPLAY them — only construct
- * dial links. The display threat model is shoulder-surfing on the
- * driver's screen, not network interception (admin already has full
- * visibility on the Manage page).
+ * dial links.
  *
  * Driver: requires pd_unlock cookie.
  * Admin: bypasses the cookie. Reads anyway for the on-call manager.
  *
  * POST /api/phone-directory/on-call
  *   Body: { phone_directory_entry_id, start_date, end_date, time_window, notes? }
- *   Admin only AND requires pd_admin cookie.
+ *   Admin only. (No PIN gate — the on-call surface never exposes phone
+ *   numbers, so admin role + login session is the gate.)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -22,11 +21,7 @@ import { cookies } from 'next/headers'
 import { createClient } from '@supabase/supabase-js'
 import {
   verifyUnlockToken,
-  verifyAdminToken,
-  signUnlockToken,
   UNLOCK_COOKIE_NAME,
-  ADMIN_COOKIE_NAME,
-  cookieOptions,
 } from '@/lib/phoneCodeAuth'
 import { logAudit } from '@/lib/audit'
 
@@ -92,14 +87,12 @@ export async function GET(req: NextRequest) {
   const profile = await getCallerProfile()
   if (!profile) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
 
-  let needsCookieRefresh = false
   if (profile.role !== 'admin') {
     const cookieStore = await cookies()
     const token = cookieStore.get(UNLOCK_COOKIE_NAME)?.value
     if (!verifyUnlockToken(token, profile.id)) {
       return NextResponse.json({ error: 'Unlock required' }, { status: 403 })
     }
-    needsCookieRefresh = true
   }
 
   const svc = adminClient()
@@ -135,24 +128,14 @@ export async function GET(req: NextRequest) {
     (s.time_window === 'all_day' || s.time_window === now_window)
   )
 
-  const res = NextResponse.json({
+  // No cookie re-issue here — see entries/route.ts for the explanation.
+  return NextResponse.json({
     slots: slots || [],
     current,
     am_pm_split_time: splitTime,
     now_window,
     today,
   })
-
-  if (needsCookieRefresh) {
-    const fresh = signUnlockToken(profile.id)
-    res.cookies.set({
-      name: UNLOCK_COOKIE_NAME,
-      value: fresh.value,
-      ...cookieOptions(fresh.maxAgeSeconds),
-    })
-  }
-
-  return res
 }
 
 export async function POST(req: NextRequest) {
@@ -162,11 +145,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Admins only' }, { status: 403 })
   }
 
-  const cookieStore = await cookies()
-  const adminToken = cookieStore.get(ADMIN_COOKIE_NAME)?.value
-  if (!verifyAdminToken(adminToken, profile.id)) {
-    return NextResponse.json({ error: 'Admin PIN required', need_pin: true }, { status: 403 })
-  }
+  // No PIN gate on the on-call surface — the page never shows phone
+  // numbers, so there's nothing for the PIN to protect (admin role +
+  // login session is the gate). Step 19 decision.
 
   const body = await req.json().catch(() => null)
   const phone_directory_entry_id: string = body?.phone_directory_entry_id || ''

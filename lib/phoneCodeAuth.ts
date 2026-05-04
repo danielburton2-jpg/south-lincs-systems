@@ -100,9 +100,12 @@ function verifyToken(token: string | undefined, userId: string): boolean {
 }
 
 // ── Driver unlock cookie ────────────────────────────────────────────
-// 8 hours — covers a full shift. Re-issued on every successful
-// entries GET so the cookie's lifetime extends with use.
-const DRIVER_TOKEN_TTL_MS = 1000 * 60 * 60 * 8
+// Short TTL — the driver page form re-prompts on every mount (per
+// the step 19 decision), so the cookie's only job is to gate the
+// API for ~5 minutes after a successful PIN entry. Plenty of time
+// for the driver to view the directory and call several numbers
+// without the API expiring mid-session.
+const DRIVER_TOKEN_TTL_MS = 1000 * 60 * 5
 export const UNLOCK_COOKIE_NAME = 'pd_unlock'
 
 export const signUnlockToken = (userId: string) =>

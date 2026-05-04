@@ -1,9 +1,9 @@
 /**
  * GET /api/phone-directory/entries
- *   - Driver: requires valid pd_unlock cookie. On success, the cookie
- *     is RE-ISSUED so its 8-hour life rolls forward with use. (This
- *     also recovers from any one-off browser cookie drop — every
- *     successful read leaves the cookie freshly set.)
+ *   - Driver: requires valid pd_unlock cookie. Cookie is short-lived
+ *     (5 min, set by verify-code/set-code). The driver page UI
+ *     re-prompts on every mount — this cookie is just the API gate
+ *     so the directory keeps loading for ~5 minutes after PIN entry.
  *   - Admin: bypasses the unlock cookie. Reads anyway because admins
  *     manage the directory; their gate is on writes.
  *
@@ -20,10 +20,8 @@ import { createClient } from '@supabase/supabase-js'
 import {
   verifyUnlockToken,
   verifyAdminToken,
-  signUnlockToken,
   UNLOCK_COOKIE_NAME,
   ADMIN_COOKIE_NAME,
-  cookieOptions,
 } from '@/lib/phoneCodeAuth'
 import { logAudit } from '@/lib/audit'
 
@@ -62,15 +60,12 @@ export async function GET(req: NextRequest) {
   const profile = await getCallerProfile()
   if (!profile) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
 
-  let needsCookieRefresh = false
-
   if (profile.role !== 'admin') {
     const cookieStore = await cookies()
     const token = cookieStore.get(UNLOCK_COOKIE_NAME)?.value
     if (!verifyUnlockToken(token, profile.id)) {
       return NextResponse.json({ error: 'Unlock required' }, { status: 403 })
     }
-    needsCookieRefresh = true
   }
 
   const svc = adminClient()
@@ -83,22 +78,14 @@ export async function GET(req: NextRequest) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
-  const res = NextResponse.json({ entries: data || [] })
-
-  // Re-issue the driver cookie on every successful read. This rolls
-  // the 8-hour clock forward while the driver is actively using the
-  // directory, and recovers from any one-off browser drop (e.g.
-  // Safari ITP eating an old cookie).
-  if (needsCookieRefresh) {
-    const fresh = signUnlockToken(profile.id)
-    res.cookies.set({
-      name: UNLOCK_COOKIE_NAME,
-      value: fresh.value,
-      ...cookieOptions(fresh.maxAgeSeconds),
-    })
-  }
-
-  return res
+  // Note: in step 18 we re-issued the unlock cookie on every successful
+  // read to roll the 8-hour TTL forward. In step 19 the cookie's TTL
+  // dropped to 5 minutes and the driver UI re-prompts on every page
+  // mount. Re-issuing on each read would defeat the "fresh PIN per
+  // visit" rule (a driver scrolling/refreshing would never expire),
+  // so we deliberately don't extend it. The cookie's only job now
+  // is to keep the API working for ~5 minutes after PIN entry.
+  return NextResponse.json({ entries: data || [] })
 }
 
 export async function POST(req: NextRequest) {

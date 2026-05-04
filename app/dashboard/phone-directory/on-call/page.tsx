@@ -3,23 +3,17 @@
 /**
  * /dashboard/phone-directory/on-call
  *
- * Standalone admin page for the on-call rota. Wrapped in
- * AdminPinGate so admin types their PIN on every fresh visit.
+ * Standalone admin page for the on-call rota. NOT PIN-gated —
+ * the on-call surface never exposes phone numbers (just names),
+ * so admin role + login session is the gate. Step 19 decision.
  *
- * The actual on-call manager UI lives in
- * components/phone-directory/OnCallManager.tsx — it's reused both
- * here and (historically) in the Manage page (no longer; the rota
- * was moved out for clearer sidebar navigation).
- *
- * Note on entries: the OnCallManager needs the directory entries
- * list to render its picker. We fetch them on mount so the manager
- * gets a fresh list. (Admins might add a new entry on the Manage
- * page, then come here to assign them.)
+ * The OnCallManager component does the heavy lifting; this page
+ * fetches the directory entries it needs as a picker.
  */
 
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase'
-import AdminPinGate from '@/components/admin/AdminPinGate'
 import OnCallManager from '@/components/phone-directory/OnCallManager'
 import PhoneDirectoryAlertBanner from '@/components/PhoneDirectoryAlertBanner'
 
@@ -33,14 +27,6 @@ type Entry = {
 }
 
 export default function AdminOnCallPage() {
-  return (
-    <AdminPinGate title="Phone Directory · On-Call Rota">
-      <OnCallContents />
-    </AdminPinGate>
-  )
-}
-
-function OnCallContents() {
   const [entries, setEntries] = useState<Entry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -48,7 +34,6 @@ function OnCallContents() {
   useEffect(() => {
     let cancelled = false
     const init = async () => {
-      // Confirm admin role before fetching
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
       const { data: profile } = await supabase
@@ -63,7 +48,6 @@ function OnCallContents() {
         return
       }
 
-      // Fetch the directory entries (admins bypass the unlock cookie)
       try {
         const res = await fetch('/api/phone-directory/entries')
         if (cancelled) return
@@ -90,13 +74,18 @@ function OnCallContents() {
   return (
     <div className="p-6 max-w-4xl">
       <div className="mb-4">
-        <p className="text-sm text-slate-500">
+        <Link href="/dashboard" className="text-sm text-blue-600 hover:underline">← Back to dashboard</Link>
+        <h1 className="text-2xl font-bold text-slate-900 mt-2">On-Call Rota</h1>
+        <p className="text-sm text-slate-500 mt-1">
           Pick someone (or a phone, like an on-call mobile) from the directory
           and assign them to a date range and time window. Drivers see the
           person on call at the top of their phone directory while on call.
-          Phone numbers are never shown on the on-call surfaces — only names —
-          but the directory the rota points at still has the numbers behind
-          the scenes for tap-to-call.
+          Phone numbers are never shown on the on-call surfaces — only names.
+          Edit numbers on the{' '}
+          <Link href="/dashboard/phone-directory" className="text-blue-600 hover:underline">
+            Manage page
+          </Link>
+          .
         </p>
       </div>
 

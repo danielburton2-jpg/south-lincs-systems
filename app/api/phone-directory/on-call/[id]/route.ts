@@ -2,17 +2,16 @@
  * PATCH /api/phone-directory/on-call/[id]
  *   Body: subset of { phone_directory_entry_id, start_date,
  *                     end_date, time_window, notes }
- *   Admin only AND requires pd_admin cookie.
+ *   Admin only. (No PIN gate — see route.ts.)
  *
  * DELETE /api/phone-directory/on-call/[id]
- *   Admin only AND requires pd_admin cookie.
+ *   Admin only. (No PIN gate — see route.ts.)
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { createClient } from '@supabase/supabase-js'
-import { verifyAdminToken, ADMIN_COOKIE_NAME } from '@/lib/phoneCodeAuth'
 import { logAudit } from '@/lib/audit'
 
 function adminClient() {
@@ -43,10 +42,8 @@ async function adminCallerOrError() {
   if (!profile?.company_id) return { error: NextResponse.json({ error: 'No company' }, { status: 400 }) }
   if (profile.role !== 'admin') return { error: NextResponse.json({ error: 'Admins only' }, { status: 403 }) }
 
-  const adminToken = cookieStore.get(ADMIN_COOKIE_NAME)?.value
-  if (!verifyAdminToken(adminToken, profile.id)) {
-    return { error: NextResponse.json({ error: 'Admin PIN required', need_pin: true }, { status: 403 }) }
-  }
+  // No PIN gate — see route.ts comment. The on-call surface never
+  // shows phone numbers, so admin role + login session is the gate.
 
   return { profile, svc }
 }

@@ -3,15 +3,13 @@
  *
  * Body: { am_pm_split_time }   // "HH:MM"
  *
- * Sets companies.am_pm_split_time. Admin only AND requires pd_admin
- * cookie.
+ * Sets companies.am_pm_split_time. Admin only.
  */
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { createClient } from '@supabase/supabase-js'
-import { verifyAdminToken, ADMIN_COOKIE_NAME } from '@/lib/phoneCodeAuth'
 import { logAudit } from '@/lib/audit'
 
 function adminClient() {
@@ -45,10 +43,8 @@ export async function POST(req: NextRequest) {
   if (!profile?.company_id) return NextResponse.json({ error: 'No company' }, { status: 400 })
   if (profile.role !== 'admin') return NextResponse.json({ error: 'Admins only' }, { status: 403 })
 
-  const adminToken = cookieStore.get(ADMIN_COOKIE_NAME)?.value
-  if (!verifyAdminToken(adminToken, profile.id)) {
-    return NextResponse.json({ error: 'Admin PIN required', need_pin: true }, { status: 403 })
-  }
+  // No PIN gate — split time is set on the on-call surface, which
+  // never exposes phone numbers. Admin role is enough.
 
   const body = await req.json().catch(() => null)
   const am_pm_split_time: string = body?.am_pm_split_time || ''

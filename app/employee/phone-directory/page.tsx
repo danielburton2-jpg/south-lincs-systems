@@ -114,22 +114,13 @@ export default function EmployeePhoneDirectoryPage() {
         .maybeSingle()
       if (cancelled) return
 
-      if (!codeRow) {
-        setMode('setup')
-        return
-      }
-
-      // Code exists. Try to load entries — if the unlock cookie is
-      // valid we go straight to unlocked; if not we go to unlock form.
-      const res = await fetch('/api/phone-directory/entries')
-      if (cancelled) return
-      if (res.ok) {
-        const data = await res.json()
-        setEntries(data.entries || [])
-        setMode('unlocked')
-      } else {
-        setMode('unlock')
-      }
+      // Step 19: always require the driver to enter their PIN on
+      // every fresh page mount. We deliberately skip the
+      // try-load-entries-and-skip-the-form shortcut from earlier
+      // versions. Mode is 'setup' if no PIN exists, 'unlock' if it
+      // does. The user enters the PIN, the verify-code API issues
+      // the short-lived cookie, then loadEntries() runs.
+      setMode(codeRow ? 'unlock' : 'setup')
     }
     init()
     return () => { cancelled = true }
