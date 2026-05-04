@@ -3,26 +3,36 @@
 /**
  * OnCallManager — admin section dropped into the on-call rota page.
  *
- *   - List of upcoming + active slots, with edit/delete inline
- *   - Add-slot form
+ * Add/edit form shape (step 21):
+ *   1. Pick someone from the directory (names only)
+ *   2. Pick "This week" or "Next week" — a Mon–Sun range
+ *   3. Tick days (past days disabled)
+ *   4. All day, OR a time range
+ *   5. Notes (optional)
+ *   6. Add slot(s) — creates one slot per ticked day, all with the
+ *      same time
  *
- * Each slot has either is_all_day=true OR a start_time + end_time
- * pair. Times can cross midnight (e.g. 22:00–06:00 means evening
- * through next morning).
+ * Edit form: same shape. The slot's existing day is pre-ticked, time
+ * pre-filled. Saving DELETES the original slot and creates new slots
+ * from whatever is ticked. So:
+ *   - Same single tick + new time → replaces with updated time
+ *   - Same single tick + extra ticks → original stays + new slots
+ *   - Different tick(s) → original deleted, new slots created
+ *   - No ticks → original deleted, nothing created
  *
- * Phone numbers are NEVER displayed on this surface — only names.
+ * Multi-add semantics: stops on first failure. Earlier slots stay
+ * created; admin gets an error pointing at the failing day and can
+ * retry from there.
  *
- * Overlapping slots are allowed by design — the API doesn't prevent
- * them. If admin saves an overlapping slot the driver sees both with
- * the older one labelled Primary.
+ * Phone numbers NEVER displayed on this surface — only names.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 type Entry = {
   id: string
   name: string
-  phone_number: string  // present in the data but never rendered here
+  phone_number: string  // present in the data but never rendered
   notes: string | null
 }
 
@@ -40,17 +50,36 @@ type Slot = {
 }
 
 type Props = {
-  /** Directory entries the admin can pick from. Passed in to avoid
-   *  re-fetching them — the parent page already loaded them. */
   entries: Entry[]
-  /** Reload signal: when entries change above, the admin form's
-   *  picker should reflect that. */
   entriesVersion: number
 }
 
-const todayIso = () => {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+// ── Date helpers ────────────────────────────────────────────────────
+const isoDate = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+// Returns the Monday of the week containing `d`. JS getDay() returns
+// 0 for Sunday, which is annoying — Sunday should map to "the Monday
+// 6 days ago" (the start of the week JUST ENDING), not "the Monday
+// in 1 day's time".
+const mondayOf = (d: Date): Date => {
+  const wd = d.getDay()
+  const offset = wd === 0 ? 6 : wd - 1
+  const m = new Date(d)
+  m.setDate(m.getDate() - offset)
+  m.setHours(0, 0, 0, 0)
+  return m
+}
+
+// "Mon 5 May"
+const formatDayLabel = (d: Date): string => {
+  return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+}
+
+// "5 May – 11 May"
+const formatWeekRange = (start: Date, end: Date): string => {
+  const fmt = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  return `${fmt(start)} – ${fmt(end)}`
 }
 
 const formatDateRange = (s: Slot) => {
@@ -61,11 +90,8 @@ const formatDateRange = (s: Slot) => {
   return s.start_date === s.end_date ? fmt(s.start_date) : `${fmt(s.start_date)} – ${fmt(s.end_date)}`
 }
 
-// "06:30:00" -> "06:30". Handles already-trimmed input gracefully.
 const trimSeconds = (t: string | null) => (t ? t.slice(0, 5) : '')
 
-// "06:00" + "09:00" -> "06:00–09:00"
-// "22:00" + "06:00" -> "22:00–06:00 (overnight)"
 const formatTimeRange = (s: Slot): string => {
   if (s.is_all_day) return 'All day'
   const start = trimSeconds(s.start_time)
@@ -75,31 +101,49 @@ const formatTimeRange = (s: Slot): string => {
   return `${start}–${end}${overnight ? ' (overnight)' : ''}`
 }
 
+// ── Form-shape used by both add and edit ───────────────────────────
+type FormState = {
+  entryId: string
+  weekChoice: 'this' | 'next'
+  // Map of ISO date → ticked. Only dates in the current Mon-Sun
+  // window are present. Past dates are still in the map but
+  // rendered disabled.
+  ticked: Record<string, boolean>
+  isAllDay: boolean
+  startTime: string
+  endTime: string
+  notes: string
+}
+
+const emptyFormState = (): FormState => ({
+  entryId: '',
+  weekChoice: 'this',
+  ticked: {},
+  isAllDay: true,
+  startTime: '09:00',
+  endTime: '17:00',
+  notes: '',
+})
+
 export default function OnCallManager({ entries, entriesVersion }: Props) {
   const [slots, setSlots] = useState<Slot[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
-  // Add form
-  const [newEntryId, setNewEntryId] = useState('')
-  const [newStartDate, setNewStartDate] = useState(todayIso())
-  const [newEndDate, setNewEndDate] = useState(todayIso())
-  const [newAllDay, setNewAllDay] = useState(true)
-  const [newStartTime, setNewStartTime] = useState('09:00')
-  const [newEndTime, setNewEndTime] = useState('17:00')
-  const [newNotes, setNewNotes] = useState('')
+  // ADD form state
+  const [addForm, setAddForm] = useState<FormState>(emptyFormState)
   const [adding, setAdding] = useState(false)
 
-  // Edit state
+  // EDIT form state — only populated when editingId is set
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [editEntryId, setEditEntryId] = useState('')
-  const [editStartDate, setEditStartDate] = useState('')
-  const [editEndDate, setEditEndDate] = useState('')
-  const [editAllDay, setEditAllDay] = useState(true)
-  const [editStartTime, setEditStartTime] = useState('09:00')
-  const [editEndTime, setEditEndTime] = useState('17:00')
-  const [editNotes, setEditNotes] = useState('')
+  const [editForm, setEditForm] = useState<FormState>(emptyFormState)
   const [editing, setEditing] = useState(false)
+
+  const todayMidnight = useMemo(() => {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    return d
+  }, [])
 
   const load = async () => {
     try {
@@ -119,96 +163,205 @@ export default function OnCallManager({ entries, entriesVersion }: Props) {
   }
 
   useEffect(() => { load() }, [])
-
-  // If parent's entries change, refresh slots so any cascade-deleted
-  // ones disappear.
   useEffect(() => {
     if (entriesVersion > 0) load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entriesVersion])
 
-  // ── Add slot ─────────────────────────────────────────────────────
-  const handleAdd = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!newEntryId) { alert('Pick someone or something from the directory'); return }
-    if (newStartDate > newEndDate) { alert('End date must be on or after start date'); return }
-    if (!newAllDay && newStartTime === newEndTime) {
-      alert('Start and end times cannot be the same'); return
-    }
-    setAdding(true)
-    try {
+  // ── Helpers for the day picker ────────────────────────────────────
+  // Returns array of { iso, label, isPast } for the 7 days in the
+  // selected week.
+  const daysForWeek = (weekChoice: 'this' | 'next') => {
+    const baseMonday = mondayOf(new Date())
+    if (weekChoice === 'next') baseMonday.setDate(baseMonday.getDate() + 7)
+    return Array.from({ length: 7 }).map((_, i) => {
+      const d = new Date(baseMonday)
+      d.setDate(d.getDate() + i)
+      return {
+        iso: isoDate(d),
+        label: formatDayLabel(d),
+        isPast: d < todayMidnight,
+      }
+    })
+  }
+
+  const weekRange = (weekChoice: 'this' | 'next'): string => {
+    const days = daysForWeek(weekChoice)
+    return formatWeekRange(
+      new Date(days[0].iso + 'T00:00:00'),
+      new Date(days[6].iso + 'T00:00:00'),
+    )
+  }
+
+  // When admin switches from "This week" to "Next week" (or vice
+  // versa), we clear the ticks — they're for a different set of dates.
+  const setWeekChoice = (form: FormState, setForm: (f: FormState) => void) => (next: 'this' | 'next') => {
+    setForm({ ...form, weekChoice: next, ticked: {} })
+  }
+
+  const toggleDay = (form: FormState, setForm: (f: FormState) => void) => (iso: string) => {
+    setForm({ ...form, ticked: { ...form.ticked, [iso]: !form.ticked[iso] } })
+  }
+
+  // List of ISO dates that are ticked AND not in the past.
+  const tickedFutureDates = (form: FormState): string[] => {
+    const days = daysForWeek(form.weekChoice)
+    return days
+      .filter(d => !d.isPast && form.ticked[d.iso])
+      .map(d => d.iso)
+  }
+
+  // Validate the time-range portion. Returns error message or null.
+  const validateTimes = (form: FormState): string | null => {
+    if (form.isAllDay) return null
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.startTime)) return 'Start time must be HH:MM'
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(form.endTime)) return 'End time must be HH:MM'
+    if (form.startTime === form.endTime) return 'Start and end times cannot be the same'
+    return null
+  }
+
+  // Sequentially POST one slot per ticked date. Stop on first
+  // failure. Returns { created, failedDate, error } where created is
+  // an array of new Slot objects.
+  const createSlotsForDates = async (
+    form: FormState,
+    dates: string[],
+  ): Promise<{ created: Slot[]; failedDate?: string; error?: string }> => {
+    const created: Slot[] = []
+    for (const date of dates) {
       const res = await fetch('/api/phone-directory/on-call', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          phone_directory_entry_id: newEntryId,
-          start_date: newStartDate,
-          end_date: newEndDate,
-          is_all_day: newAllDay,
-          start_time: newAllDay ? null : newStartTime,
-          end_time: newAllDay ? null : newEndTime,
-          notes: newNotes.trim() || null,
+          phone_directory_entry_id: form.entryId,
+          start_date: date,
+          end_date: date,
+          is_all_day: form.isAllDay,
+          start_time: form.isAllDay ? null : form.startTime,
+          end_time: form.isAllDay ? null : form.endTime,
+          notes: form.notes.trim() || null,
         }),
       })
       const data = await res.json()
       if (!res.ok) {
-        alert(data?.error || 'Add failed')
+        return { created, failedDate: date, error: data?.error || 'Save failed' }
+      }
+      created.push(data.slot)
+    }
+    return { created }
+  }
+
+  // ── ADD ──────────────────────────────────────────────────────────
+  const handleAdd = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!addForm.entryId) { alert('Pick someone from the directory'); return }
+    const dates = tickedFutureDates(addForm)
+    if (dates.length === 0) {
+      alert('Tick at least one day in the chosen week')
+      return
+    }
+    const timeError = validateTimes(addForm)
+    if (timeError) { alert(timeError); return }
+
+    setAdding(true)
+    try {
+      const result = await createSlotsForDates(addForm, dates)
+      if (result.created.length > 0) {
+        setSlots(prev => [...prev, ...result.created]
+          .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.created_at.localeCompare(b.created_at)))
+      }
+      if (result.failedDate) {
+        alert(
+          `Created ${result.created.length} slot(s). Then failed on ${result.failedDate}: ${result.error}. ` +
+          `You can retry from that day.`
+        )
         return
       }
-      setSlots(prev => [...prev, data.slot]
-        .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.created_at.localeCompare(b.created_at)))
-      setNewNotes('')
-      // Keep the dates and times — admin often adds several similar slots
+      // All good — reset notes and ticks but keep entry/week/times
+      // (admin often adds several similar batches in a row)
+      setAddForm({ ...addForm, ticked: {}, notes: '' })
     } finally {
       setAdding(false)
     }
   }
 
-  // ── Edit slot ────────────────────────────────────────────────────
+  // ── EDIT ─────────────────────────────────────────────────────────
+  // When admin clicks "Edit" on a slot, populate the edit form. The
+  // slot's date is pre-ticked. We figure out which week (this/next)
+  // the slot's date belongs to so the picker shows the right week.
   const startEdit = (s: Slot) => {
+    const slotDate = s.start_date  // single-day slots, start = end
+    const slotMonday = mondayOf(new Date(slotDate + 'T00:00:00'))
+    const thisMonday = mondayOf(new Date())
+    const nextMonday = new Date(thisMonday); nextMonday.setDate(nextMonday.getDate() + 7)
+
+    let weekChoice: 'this' | 'next' = 'this'
+    if (slotMonday.getTime() === nextMonday.getTime()) weekChoice = 'next'
+    // If the slot is in any other week (past, or further future),
+    // we can't show it in our two-week picker. We default to 'this'
+    // and pre-tick nothing — admin will see the slot is unticked
+    // and can choose what to do (delete by saving with no ticks, or
+    // pick a day in the next two weeks to move it to).
+    const inPickerRange =
+      slotMonday.getTime() === thisMonday.getTime() ||
+      slotMonday.getTime() === nextMonday.getTime()
+
     setEditingId(s.id)
-    setEditEntryId(s.phone_directory_entry_id)
-    setEditStartDate(s.start_date)
-    setEditEndDate(s.end_date)
-    setEditAllDay(s.is_all_day)
-    setEditStartTime(trimSeconds(s.start_time) || '09:00')
-    setEditEndTime(trimSeconds(s.end_time) || '17:00')
-    setEditNotes(s.notes || '')
+    setEditForm({
+      entryId: s.phone_directory_entry_id,
+      weekChoice,
+      ticked: inPickerRange ? { [slotDate]: true } : {},
+      isAllDay: s.is_all_day,
+      startTime: trimSeconds(s.start_time) || '09:00',
+      endTime: trimSeconds(s.end_time) || '17:00',
+      notes: s.notes || '',
+    })
   }
+
   const cancelEdit = () => {
     setEditingId(null)
-    setEditEntryId(''); setEditStartDate(''); setEditEndDate('')
-    setEditAllDay(true); setEditStartTime('09:00'); setEditEndTime('17:00')
-    setEditNotes('')
+    setEditForm(emptyFormState())
   }
+
   const saveEdit = async () => {
     if (!editingId) return
-    if (!editEntryId) { alert('Pick someone'); return }
-    if (editStartDate > editEndDate) { alert('End date must be on or after start date'); return }
-    if (!editAllDay && editStartTime === editEndTime) {
-      alert('Start and end times cannot be the same'); return
-    }
+    if (!editForm.entryId) { alert('Pick someone'); return }
+    const dates = tickedFutureDates(editForm)
+    const timeError = validateTimes(editForm)
+    if (timeError) { alert(timeError); return }
+
     setEditing(true)
     try {
-      const res = await fetch(`/api/phone-directory/on-call/${editingId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phone_directory_entry_id: editEntryId,
-          start_date: editStartDate,
-          end_date: editEndDate,
-          is_all_day: editAllDay,
-          start_time: editAllDay ? null : editStartTime,
-          end_time: editAllDay ? null : editEndTime,
-          notes: editNotes.trim() || null,
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) {
-        alert(data?.error || 'Save failed')
+      // Strategy: delete the original, then create slots for each
+      // ticked date. If the create step partially fails we report it.
+      // Order matters: delete first so admin doesn't end up with
+      // duplicates if create succeeds.
+      const delRes = await fetch(`/api/phone-directory/on-call/${editingId}`, { method: 'DELETE' })
+      if (!delRes.ok) {
+        const data = await delRes.json().catch(() => ({}))
+        alert(data?.error || 'Could not delete the original slot — edit aborted')
         return
       }
-      setSlots(prev => prev.map(s => s.id === editingId ? data.slot : s))
+      // Optimistically remove from local state
+      setSlots(prev => prev.filter(s => s.id !== editingId))
+
+      if (dates.length === 0) {
+        // Admin unticked everything — they wanted to remove the slot.
+        cancelEdit()
+        return
+      }
+
+      const result = await createSlotsForDates(editForm, dates)
+      if (result.created.length > 0) {
+        setSlots(prev => [...prev, ...result.created]
+          .sort((a, b) => a.start_date.localeCompare(b.start_date) || a.created_at.localeCompare(b.created_at)))
+      }
+      if (result.failedDate) {
+        alert(
+          `Original slot deleted. Created ${result.created.length} new slot(s). ` +
+          `Then failed on ${result.failedDate}: ${result.error}. You can re-add the missing day(s) manually.`
+        )
+      }
       cancelEdit()
     } finally {
       setEditing(false)
@@ -248,83 +401,20 @@ export default function OnCallManager({ entries, entriesVersion }: Props) {
             {slots.map(s => (
               <li key={s.id} className="p-3">
                 {editingId === s.id ? (
-                  <div className="space-y-2">
-                    <select
-                      value={editEntryId}
-                      onChange={e => setEditEntryId(e.target.value)}
-                      className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2"
-                    >
-                      <option value="">— Pick from directory —</option>
-                      {entries.map(en => (
-                        <option key={en.id} value={en.id}>
-                          {en.name}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="flex gap-2">
-                      <input
-                        type="date"
-                        value={editStartDate}
-                        onChange={e => setEditStartDate(e.target.value)}
-                        className="flex-1 text-sm border border-slate-300 rounded-lg px-3 py-2"
-                      />
-                      <input
-                        type="date"
-                        value={editEndDate}
-                        onChange={e => setEditEndDate(e.target.value)}
-                        className="flex-1 text-sm border border-slate-300 rounded-lg px-3 py-2"
-                      />
-                    </div>
-                    <label className="flex items-center gap-2 text-sm text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={editAllDay}
-                        onChange={e => setEditAllDay(e.target.checked)}
-                      />
-                      All day
-                    </label>
-                    {!editAllDay && (
-                      <div className="flex gap-2 items-center">
-                        <input
-                          type="time"
-                          value={editStartTime}
-                          onChange={e => setEditStartTime(e.target.value)}
-                          className="flex-1 text-sm border border-slate-300 rounded-lg px-3 py-2"
-                        />
-                        <span className="text-slate-500">to</span>
-                        <input
-                          type="time"
-                          value={editEndTime}
-                          onChange={e => setEditEndTime(e.target.value)}
-                          className="flex-1 text-sm border border-slate-300 rounded-lg px-3 py-2"
-                        />
-                      </div>
-                    )}
-                    {!editAllDay && editStartTime > editEndTime && (
-                      <p className="text-xs text-amber-700">
-                        Crosses midnight — this slot will run from {editStartTime} through {editEndTime} the next morning.
-                      </p>
-                    )}
-                    <textarea
-                      value={editNotes}
-                      onChange={e => setEditNotes(e.target.value)}
-                      placeholder="Notes (optional)"
-                      rows={2}
-                      className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2"
-                    />
-                    <div className="flex gap-2">
-                      <button
-                        onClick={saveEdit}
-                        disabled={editing}
-                        className="px-3 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50"
-                      >Save</button>
-                      <button
-                        onClick={cancelEdit}
-                        disabled={editing}
-                        className="px-3 py-1.5 text-sm rounded bg-slate-100 hover:bg-slate-200 text-slate-700"
-                      >Cancel</button>
-                    </div>
-                  </div>
+                  <FormBlock
+                    form={editForm}
+                    setForm={setEditForm}
+                    entries={entries}
+                    daysForWeek={daysForWeek}
+                    weekRange={weekRange}
+                    setWeekChoice={setWeekChoice(editForm, setEditForm)}
+                    toggleDay={toggleDay(editForm, setEditForm)}
+                    submitLabel={editing ? 'Saving…' : 'Save changes'}
+                    onSubmit={saveEdit}
+                    onCancel={cancelEdit}
+                    disabled={editing}
+                    showCancel
+                  />
                 ) : (
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -361,110 +451,200 @@ export default function OnCallManager({ entries, entriesVersion }: Props) {
 
       {/* Add form */}
       <div>
-        <p className="text-sm font-medium text-slate-700 mb-2">Add a new on-call slot</p>
-        <form onSubmit={handleAdd} className="space-y-3 bg-slate-50 border border-slate-200 rounded-lg p-3">
-          {entries.length === 0 ? (
-            <p className="text-sm text-slate-500 italic">
-              Add at least one number to the directory before assigning on-call.
-            </p>
-          ) : (
-            <>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Who&apos;s on call?</label>
-                <select
-                  value={newEntryId}
-                  onChange={e => setNewEntryId(e.target.value)}
-                  className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2"
-                >
-                  <option value="">— Pick from directory —</option>
-                  {entries.map(en => (
-                    <option key={en.id} value={en.id}>
-                      {en.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex gap-2">
-                <div className="flex-1">
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Start date</label>
-                  <input
-                    type="date"
-                    value={newStartDate}
-                    onChange={e => setNewStartDate(e.target.value)}
-                    className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2"
-                  />
-                </div>
-                <div className="flex-1">
-                  <label className="block text-xs font-medium text-slate-600 mb-1">End date</label>
-                  <input
-                    type="date"
-                    value={newEndDate}
-                    onChange={e => setNewEndDate(e.target.value)}
-                    className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="flex items-center gap-2 text-sm text-slate-700 mb-2">
-                  <input
-                    type="checkbox"
-                    checked={newAllDay}
-                    onChange={e => setNewAllDay(e.target.checked)}
-                  />
-                  All day
-                </label>
-                {!newAllDay && (
-                  <>
-                    <div className="flex gap-2 items-center">
-                      <div className="flex-1">
-                        <label className="block text-xs font-medium text-slate-600 mb-1">From</label>
-                        <input
-                          type="time"
-                          value={newStartTime}
-                          onChange={e => setNewStartTime(e.target.value)}
-                          className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2"
-                        />
-                      </div>
-                      <div className="flex-1">
-                        <label className="block text-xs font-medium text-slate-600 mb-1">To</label>
-                        <input
-                          type="time"
-                          value={newEndTime}
-                          onChange={e => setNewEndTime(e.target.value)}
-                          className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2"
-                        />
-                      </div>
-                    </div>
-                    {newStartTime > newEndTime && (
-                      <p className="text-xs text-amber-700 mt-2">
-                        Crosses midnight — slot will run from {newStartTime} through {newEndTime} the next morning,
-                        each day in the date range.
-                      </p>
-                    )}
-                  </>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Notes (optional)</label>
-                <textarea
-                  value={newNotes}
-                  onChange={e => setNewNotes(e.target.value)}
-                  placeholder="e.g. handover phone, escalate after 3 rings"
-                  rows={2}
+        <p className="text-sm font-medium text-slate-700 mb-2">Add new on-call slot(s)</p>
+        {entries.length === 0 ? (
+          <p className="text-sm text-slate-500 italic bg-slate-50 border border-slate-200 rounded-lg p-3">
+            Add at least one number to the directory before assigning on-call.
+          </p>
+        ) : (
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+            <FormBlock
+              form={addForm}
+              setForm={setAddForm}
+              entries={entries}
+              daysForWeek={daysForWeek}
+              weekRange={weekRange}
+              setWeekChoice={setWeekChoice(addForm, setAddForm)}
+              toggleDay={toggleDay(addForm, setAddForm)}
+              submitLabel={adding ? 'Adding…' : 'Add'}
+              onSubmit={handleAdd}
+              disabled={adding}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Form block — used by both add and edit ─────────────────────────
+type FormBlockProps = {
+  form: FormState
+  setForm: (f: FormState) => void
+  entries: Entry[]
+  daysForWeek: (wc: 'this' | 'next') => { iso: string; label: string; isPast: boolean }[]
+  weekRange: (wc: 'this' | 'next') => string
+  setWeekChoice: (next: 'this' | 'next') => void
+  toggleDay: (iso: string) => void
+  submitLabel: string
+  onSubmit: (e: React.FormEvent) => void
+  onCancel?: () => void
+  disabled: boolean
+  showCancel?: boolean
+}
+
+function FormBlock({
+  form, setForm, entries, daysForWeek, weekRange,
+  setWeekChoice, toggleDay,
+  submitLabel, onSubmit, onCancel, disabled, showCancel,
+}: FormBlockProps) {
+  const days = daysForWeek(form.weekChoice)
+  const overnight = !form.isAllDay && form.startTime > form.endTime
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-3">
+      <div>
+        <label className="block text-xs font-medium text-slate-600 mb-1">Who&apos;s on call?</label>
+        <select
+          value={form.entryId}
+          onChange={e => setForm({ ...form, entryId: e.target.value })}
+          className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2"
+        >
+          <option value="">— Pick from directory —</option>
+          {entries.map(en => (
+            <option key={en.id} value={en.id}>{en.name}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Week toggle */}
+      <div>
+        <label className="block text-xs font-medium text-slate-600 mb-1">Week</label>
+        <div className="flex gap-2">
+          {(['this', 'next'] as const).map(wc => (
+            <button
+              key={wc}
+              type="button"
+              onClick={() => setWeekChoice(wc)}
+              className={`flex-1 text-sm px-3 py-2 rounded-lg border ${
+                form.weekChoice === wc
+                  ? 'bg-blue-50 border-blue-400 text-blue-800 font-medium'
+                  : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
+              }`}
+            >
+              {wc === 'this' ? 'This week' : 'Next week'}
+              <span className="block text-xs text-slate-500 font-normal mt-0.5">
+                {weekRange(wc)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Day picker */}
+      <div>
+        <label className="block text-xs font-medium text-slate-600 mb-1">Days</label>
+        <div className="grid grid-cols-7 gap-1">
+          {days.map(d => {
+            const checked = !!form.ticked[d.iso]
+            return (
+              <label
+                key={d.iso}
+                className={`flex flex-col items-center justify-center px-1 py-2 rounded-lg border text-xs select-none ${
+                  d.isPast
+                    ? 'bg-slate-50 border-slate-200 text-slate-300 cursor-not-allowed'
+                    : checked
+                      ? 'bg-blue-100 border-blue-500 text-blue-900 font-medium cursor-pointer'
+                      : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50 cursor-pointer'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={d.isPast}
+                  onChange={() => !d.isPast && toggleDay(d.iso)}
+                  className="sr-only"
+                />
+                <span>{d.label.split(' ')[0]}</span>
+                <span className="text-[10px] mt-0.5">{d.label.split(' ').slice(1).join(' ')}</span>
+              </label>
+            )
+          })}
+        </div>
+        <p className="text-xs text-slate-500 mt-1">Past days are disabled.</p>
+      </div>
+
+      {/* All-day / time range */}
+      <div>
+        <label className="flex items-center gap-2 text-sm text-slate-700 mb-2">
+          <input
+            type="checkbox"
+            checked={form.isAllDay}
+            onChange={e => setForm({ ...form, isAllDay: e.target.checked })}
+          />
+          All day
+        </label>
+        {!form.isAllDay && (
+          <>
+            <div className="flex gap-2 items-end">
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-slate-600 mb-1">From</label>
+                <input
+                  type="time"
+                  value={form.startTime}
+                  onChange={e => setForm({ ...form, startTime: e.target.value })}
                   className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2"
                 />
               </div>
-              <button
-                type="submit"
-                disabled={adding || !newEntryId}
-                className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50"
-              >
-                {adding ? 'Adding…' : 'Add slot'}
-              </button>
-            </>
-          )}
-        </form>
+              <div className="flex-1">
+                <label className="block text-xs font-medium text-slate-600 mb-1">To</label>
+                <input
+                  type="time"
+                  value={form.endTime}
+                  onChange={e => setForm({ ...form, endTime: e.target.value })}
+                  className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2"
+                />
+              </div>
+            </div>
+            {overnight && (
+              <p className="text-xs text-amber-700 mt-2">
+                Crosses midnight — each ticked day will run from {form.startTime} through {form.endTime} the next morning.
+              </p>
+            )}
+          </>
+        )}
       </div>
-    </div>
+
+      <div>
+        <label className="block text-xs font-medium text-slate-600 mb-1">Notes (optional)</label>
+        <textarea
+          value={form.notes}
+          onChange={e => setForm({ ...form, notes: e.target.value })}
+          placeholder="e.g. handover phone, escalate after 3 rings"
+          rows={2}
+          className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2"
+        />
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          type="submit"
+          disabled={disabled || !form.entryId}
+          className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50"
+        >
+          {submitLabel}
+        </button>
+        {showCancel && onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={disabled}
+            className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium px-4 py-2 rounded-lg"
+          >
+            Cancel
+          </button>
+        )}
+      </div>
+    </form>
   )
 }
