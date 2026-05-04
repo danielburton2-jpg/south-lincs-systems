@@ -1,7 +1,11 @@
 /**
  * PATCH /api/phone-directory/on-call/[id]
- *   Body: subset of { phone_directory_entry_id, start_date,
- *                     end_date, time_window, notes }
+ *   Body: subset of {
+ *     phone_directory_entry_id, start_date, end_date,
+ *     is_all_day, start_time, end_time, notes
+ *   }
+ *   To switch to all-day: send is_all_day=true (times will be cleared).
+ *   To switch to timed:   send is_all_day=false AND both times.
  *   Admin only. (No PIN gate — see route.ts.)
  *
  * DELETE /api/phone-directory/on-call/[id]
@@ -48,7 +52,7 @@ async function adminCallerOrError() {
   return { profile, svc }
 }
 
-const VALID_WINDOWS = new Set(['all_day', 'am', 'pm'])
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 export async function PATCH(
@@ -88,15 +92,33 @@ export async function PATCH(
     }
     updates.end_date = body.end_date
   }
-  if (body?.time_window) {
-    if (!VALID_WINDOWS.has(body.time_window)) {
-      return NextResponse.json({ error: 'Window must be all_day, am, or pm' }, { status: 400 })
-    }
-    updates.time_window = body.time_window
-  }
   if (body?.notes !== undefined) {
     updates.notes = body.notes ? String(body.notes).trim() : null
   }
+
+  // Time fields. Three patterns:
+  //  - Caller sends is_all_day=true → set is_all_day, null the times
+  //  - Caller sends is_all_day=false → set is_all_day, require both times
+  //  - Caller sends neither → leave times alone
+  if (body?.is_all_day === true) {
+    updates.is_all_day = true
+    updates.start_time = null
+    updates.end_time = null
+  } else if (body?.is_all_day === false) {
+    if (!body.start_time || !HHMM_RE.test(body.start_time)) {
+      return NextResponse.json({ error: 'Start time must be HH:MM (24-hour)' }, { status: 400 })
+    }
+    if (!body.end_time || !HHMM_RE.test(body.end_time)) {
+      return NextResponse.json({ error: 'End time must be HH:MM (24-hour)' }, { status: 400 })
+    }
+    if (body.start_time === body.end_time) {
+      return NextResponse.json({ error: 'Start and end times cannot be the same' }, { status: 400 })
+    }
+    updates.is_all_day = false
+    updates.start_time = body.start_time
+    updates.end_time = body.end_time
+  }
+
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
   }
@@ -122,7 +144,7 @@ export async function PATCH(
     .eq('id', id)
     .select(`
       id, company_id, phone_directory_entry_id, start_date, end_date,
-      time_window, notes, created_at,
+      is_all_day, start_time, end_time, notes, created_at,
       phone_directory_entries ( id, name, phone_number, notes )
     `)
     .single()

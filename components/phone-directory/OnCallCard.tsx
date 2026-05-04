@@ -25,7 +25,9 @@ type Slot = {
   id: string
   start_date: string
   end_date: string
-  time_window: 'all_day' | 'am' | 'pm'
+  is_all_day: boolean
+  start_time: string | null
+  end_time: string | null
   notes: string | null
   created_at: string
   phone_directory_entries: Entry | null
@@ -33,9 +35,8 @@ type Slot = {
 
 type ApiShape = {
   current?: Slot[]
-  now_window?: 'am' | 'pm'
-  am_pm_split_time?: string
   today?: string
+  now_hhmm?: string
 }
 
 function cleanPhoneForTel(raw: string): string {
@@ -79,8 +80,15 @@ export default function OnCallCard() {
   if (errored) return null  // Fail silent — directory still works
 
   const current = data?.current || []
-  const labelForWindow = (w: Slot['time_window']) =>
-    w === 'all_day' ? 'all day' : w === 'am' ? 'this morning' : 'this afternoon'
+  // "this morning" / "this afternoon" / "all day" → time-range
+  // formatted for the driver. Useful info: "until 21:30" tells them
+  // how long this person is still on for.
+  const formatActiveLabel = (s: Slot): string => {
+    if (s.is_all_day) return 'on call all day'
+    if (!s.start_time || !s.end_time) return 'on call'
+    const end = s.end_time.slice(0, 5)
+    return `on call until ${end}`
+  }
 
   if (current.length === 0) {
     return (
@@ -115,7 +123,7 @@ export default function OnCallCard() {
                 <div className="flex items-center gap-2 mb-0.5">
                   <span className="text-emerald-700 text-xs font-bold uppercase tracking-wide">
                     {isPrimary && current.length > 1 ? 'Primary · ' : ''}
-                    {labelForWindow(slot.time_window)}
+                    {formatActiveLabel(slot)}
                   </span>
                 </div>
                 <p className="font-bold text-gray-900 text-lg truncate">{entry.name}</p>
