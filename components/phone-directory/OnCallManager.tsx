@@ -1,28 +1,30 @@
 'use client'
 
 /**
- * OnCallManager — admin section dropped into the on-call rota page.
+ * OnCallManager — admin section for the on-call rota.
  *
- * Add/edit form shape (step 21):
- *   1. Pick someone from the directory (names only)
- *   2. Pick "This week" or "Next week" — a Mon–Sun range
- *   3. Tick days (past days disabled)
- *   4. All day, OR a time range
- *   5. Notes (optional)
- *   6. Add slot(s) — creates one slot per ticked day, all with the
- *      same time
+ * Two surfaces stacked vertically:
  *
- * Edit form: same shape. The slot's existing day is pre-ticked, time
- * pre-filled. Saving DELETES the original slot and creates new slots
- * from whatever is ticked. So:
+ * 1. Week-grid view (top) — shows existing slots laid out as
+ *    a Mon–Sun grid with time-range rows and clickable name pills.
+ *    Arrow navigator at the top right; admin can move freely
+ *    backward and forward (it's a read-only viewer for past weeks
+ *    and a scheduler for future weeks). Click a name to edit
+ *    that slot (form drops in below the grid).
+ *
+ * 2. Add form (bottom) — directory pick, week navigator (back arrow
+ *    stops at this week — admin can't backdate), day picker,
+ *    all-day or time range, notes. Creates one slot per ticked day.
+ *
+ * Edit form: same FormBlock as the add form. Saving DELETES the
+ * original slot and creates new slots from whatever is ticked.
  *   - Same single tick + new time → replaces with updated time
  *   - Same single tick + extra ticks → original stays + new slots
  *   - Different tick(s) → original deleted, new slots created
  *   - No ticks → original deleted, nothing created
  *
  * Multi-add semantics: stops on first failure. Earlier slots stay
- * created; admin gets an error pointing at the failing day and can
- * retry from there.
+ * created; admin gets an error pointing at the failing day.
  *
  * Phone numbers NEVER displayed on this surface — only names.
  */
@@ -104,9 +106,12 @@ const formatTimeRange = (s: Slot): string => {
 // ── Form-shape used by both add and edit ───────────────────────────
 type FormState = {
   entryId: string
-  weekChoice: 'this' | 'next'
-  // Map of ISO date → ticked. Only dates in the current Mon-Sun
-  // window are present. Past dates are still in the map but
+  // ISO date of the Monday of the visible week. The week is
+  // always Mon–Sun. Forward navigation unlimited; back navigation
+  // stops at this-week's Monday in the form (admin can't schedule
+  // backwards). The grid-side viewer has no such limit.
+  weekMonday: string
+  // Map of ISO date → ticked. Past dates are still in the map but
   // rendered disabled.
   ticked: Record<string, boolean>
   isAllDay: boolean
@@ -115,15 +120,89 @@ type FormState = {
   notes: string
 }
 
+// Returns the Monday of "this week" as ISO. Used as the form's
+// initial week and as the back-arrow lower bound.
+const thisWeekMondayIso = (): string => {
+  const m = mondayOf(new Date())
+  return isoDate(m)
+}
+
 const emptyFormState = (): FormState => ({
   entryId: '',
-  weekChoice: 'this',
+  weekMonday: thisWeekMondayIso(),
   ticked: {},
   isAllDay: true,
   startTime: '09:00',
   endTime: '17:00',
   notes: '',
 })
+
+// ── WeekNavigator ──────────────────────────────────────────────────
+// Arrow controls used in both the form and the grid:
+//
+//     <  Week of 4 May – 10 May  >
+//
+// `minMondayIso` (optional) disables the back-arrow when the current
+// Monday is at or before that floor. The form passes this-week's
+// Monday so admin can't navigate to a past week. The grid passes
+// nothing — it's a viewer, unlimited both directions.
+type WeekNavigatorProps = {
+  mondayIso: string
+  rangeLabel: string
+  minMondayIso?: string
+  onStep: (delta: number) => void
+  /** Jump straight back to this-week's Monday. The button only
+   *  shows when the navigator is on a non-current week. */
+  onJumpToToday: () => void
+  size?: 'normal' | 'small'
+}
+
+function WeekNavigator({ mondayIso, rangeLabel, minMondayIso, onStep, onJumpToToday, size = 'normal' }: WeekNavigatorProps) {
+  const backDisabled = !!minMondayIso && mondayIso <= minMondayIso
+  const showTodayButton = mondayIso !== thisWeekMondayIso()
+  const btnBase = size === 'small'
+    ? 'w-7 h-7 text-sm'
+    : 'w-9 h-9 text-base'
+  const todayBtnClasses = size === 'small'
+    ? 'h-7 px-2 text-xs'
+    : 'h-9 px-3 text-sm'
+  const labelClasses = size === 'small'
+    ? 'text-xs text-slate-700'
+    : 'text-sm text-slate-800 font-medium'
+  return (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => onStep(-1)}
+        disabled={backDisabled}
+        aria-label="Previous week"
+        className={`${btnBase} flex items-center justify-center rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-30 disabled:cursor-not-allowed`}
+      >
+        ‹
+      </button>
+      <span className={`${labelClasses} min-w-[10rem] text-center`}>
+        Week of {rangeLabel}
+      </span>
+      <button
+        type="button"
+        onClick={() => onStep(1)}
+        aria-label="Next week"
+        className={`${btnBase} flex items-center justify-center rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50`}
+      >
+        ›
+      </button>
+      {showTodayButton && (
+        <button
+          type="button"
+          onClick={onJumpToToday}
+          className={`${todayBtnClasses} rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 font-medium`}
+        >
+          Today
+        </button>
+      )}
+    </div>
+  )
+}
 
 export default function OnCallManager({ entries, entriesVersion }: Props) {
   const [slots, setSlots] = useState<Slot[]>([])
@@ -169,11 +248,10 @@ export default function OnCallManager({ entries, entriesVersion }: Props) {
   }, [entriesVersion])
 
   // ── Helpers for the day picker ────────────────────────────────────
-  // Returns array of { iso, label, isPast } for the 7 days in the
-  // selected week.
-  const daysForWeek = (weekChoice: 'this' | 'next') => {
-    const baseMonday = mondayOf(new Date())
-    if (weekChoice === 'next') baseMonday.setDate(baseMonday.getDate() + 7)
+  // Returns array of { iso, label, isPast } for the 7 days starting
+  // at the given Monday (ISO date string).
+  const daysForWeek = (mondayIso: string) => {
+    const baseMonday = new Date(mondayIso + 'T00:00:00')
     return Array.from({ length: 7 }).map((_, i) => {
       const d = new Date(baseMonday)
       d.setDate(d.getDate() + i)
@@ -185,18 +263,26 @@ export default function OnCallManager({ entries, entriesVersion }: Props) {
     })
   }
 
-  const weekRange = (weekChoice: 'this' | 'next'): string => {
-    const days = daysForWeek(weekChoice)
+  const weekRange = (mondayIso: string): string => {
+    const days = daysForWeek(mondayIso)
     return formatWeekRange(
       new Date(days[0].iso + 'T00:00:00'),
       new Date(days[6].iso + 'T00:00:00'),
     )
   }
 
-  // When admin switches from "This week" to "Next week" (or vice
-  // versa), we clear the ticks — they're for a different set of dates.
-  const setWeekChoice = (form: FormState, setForm: (f: FormState) => void) => (next: 'this' | 'next') => {
-    setForm({ ...form, weekChoice: next, ticked: {} })
+  // Step a form's visible week by `delta` weeks. Clears ticks (they
+  // were for a different set of dates).
+  const stepFormWeek = (form: FormState, setForm: (f: FormState) => void) => (delta: number) => {
+    const cur = new Date(form.weekMonday + 'T00:00:00')
+    cur.setDate(cur.getDate() + delta * 7)
+    setForm({ ...form, weekMonday: isoDate(cur), ticked: {} })
+  }
+
+  // Reset a form's visible week to this-week's Monday. Clears ticks
+  // (they were for a different set of dates).
+  const jumpFormWeekToToday = (form: FormState, setForm: (f: FormState) => void) => () => {
+    setForm({ ...form, weekMonday: thisWeekMondayIso(), ticked: {} })
   }
 
   const toggleDay = (form: FormState, setForm: (f: FormState) => void) => (iso: string) => {
@@ -205,7 +291,7 @@ export default function OnCallManager({ entries, entriesVersion }: Props) {
 
   // List of ISO dates that are ticked AND not in the past.
   const tickedFutureDates = (form: FormState): string[] => {
-    const days = daysForWeek(form.weekChoice)
+    const days = daysForWeek(form.weekMonday)
     return days
       .filter(d => !d.isPast && form.ticked[d.iso])
       .map(d => d.iso)
@@ -286,31 +372,32 @@ export default function OnCallManager({ entries, entriesVersion }: Props) {
   }
 
   // ── EDIT ─────────────────────────────────────────────────────────
-  // When admin clicks "Edit" on a slot, populate the edit form. The
-  // slot's date is pre-ticked. We figure out which week (this/next)
-  // the slot's date belongs to so the picker shows the right week.
+  // When admin clicks "Edit" on a slot, populate the edit form.
+  // The form's visible week jumps to the slot's week. The slot's
+  // date is pre-ticked unless it's in a past week (in which case
+  // the past-day rule disables that day too — admin would need to
+  // tick a future day to "move" the slot).
   const startEdit = (s: Slot) => {
     const slotDate = s.start_date  // single-day slots, start = end
     const slotMonday = mondayOf(new Date(slotDate + 'T00:00:00'))
-    const thisMonday = mondayOf(new Date())
-    const nextMonday = new Date(thisMonday); nextMonday.setDate(nextMonday.getDate() + 7)
+    const slotMondayIso = isoDate(slotMonday)
+    const thisMondayIso = thisWeekMondayIso()
 
-    let weekChoice: 'this' | 'next' = 'this'
-    if (slotMonday.getTime() === nextMonday.getTime()) weekChoice = 'next'
-    // If the slot is in any other week (past, or further future),
-    // we can't show it in our two-week picker. We default to 'this'
-    // and pre-tick nothing — admin will see the slot is unticked
-    // and can choose what to do (delete by saving with no ticks, or
-    // pick a day in the next two weeks to move it to).
-    const inPickerRange =
-      slotMonday.getTime() === thisMonday.getTime() ||
-      slotMonday.getTime() === nextMonday.getTime()
+    // If the slot is in a past week, the form's back-arrow lower
+    // bound (this week's Monday) means admin can't navigate back to
+    // it. We open the form on this-week's Monday in that case, with
+    // nothing ticked — admin can navigate forward to find a new
+    // home for the slot, or save with no ticks to delete it.
+    const slotInThisWeekOrLater = slotMondayIso >= thisMondayIso
+    const formMonday = slotInThisWeekOrLater ? slotMondayIso : thisMondayIso
+    const slotDay = new Date(slotDate + 'T00:00:00')
+    const slotDayIsPast = slotDay < todayMidnight
 
     setEditingId(s.id)
     setEditForm({
       entryId: s.phone_directory_entry_id,
-      weekChoice,
-      ticked: inPickerRange ? { [slotDate]: true } : {},
+      weekMonday: formMonday,
+      ticked: (slotInThisWeekOrLater && !slotDayIsPast) ? { [slotDate]: true } : {},
       isAllDay: s.is_all_day,
       startTime: trimSeconds(s.start_time) || '09:00',
       endTime: trimSeconds(s.end_time) || '17:00',
@@ -391,63 +478,25 @@ export default function OnCallManager({ entries, entriesVersion }: Props) {
         </div>
       )}
 
-      {/* Existing slots */}
-      <div>
-        <p className="text-sm font-medium text-slate-700 mb-2">Active and upcoming slots</p>
-        {slots.length === 0 ? (
-          <p className="text-sm text-slate-400 italic">No on-call slots set up yet.</p>
-        ) : (
-          <ul className="divide-y divide-slate-100 border border-slate-100 rounded-lg">
-            {slots.map(s => (
-              <li key={s.id} className="p-3">
-                {editingId === s.id ? (
-                  <FormBlock
-                    form={editForm}
-                    setForm={setEditForm}
-                    entries={entries}
-                    daysForWeek={daysForWeek}
-                    weekRange={weekRange}
-                    setWeekChoice={setWeekChoice(editForm, setEditForm)}
-                    toggleDay={toggleDay(editForm, setEditForm)}
-                    submitLabel={editing ? 'Saving…' : 'Save changes'}
-                    onSubmit={saveEdit}
-                    onCancel={cancelEdit}
-                    disabled={editing}
-                    showCancel
-                  />
-                ) : (
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="font-medium text-slate-800">
-                        {s.phone_directory_entries?.name || '(deleted entry)'}
-                      </p>
-                      <p className="text-xs text-slate-600 mt-1">
-                        <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 mr-1">
-                          {formatTimeRange(s)}
-                        </span>
-                        {formatDateRange(s)}
-                      </p>
-                      {s.notes && (
-                        <p className="text-xs text-slate-500 mt-1">{s.notes}</p>
-                      )}
-                    </div>
-                    <div className="flex gap-2 flex-shrink-0">
-                      <button
-                        onClick={() => startEdit(s)}
-                        className="text-xs text-blue-600 hover:underline"
-                      >Edit</button>
-                      <button
-                        onClick={() => handleDelete(s.id)}
-                        className="text-xs text-red-600 hover:underline"
-                      >Delete</button>
-                    </div>
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {/* Existing slots — week-grid view */}
+      <SlotsGrid
+        slots={slots}
+        editingId={editingId}
+        editForm={editForm}
+        setEditForm={setEditForm}
+        entries={entries}
+        daysForWeek={daysForWeek}
+        weekRange={weekRange}
+        stepEditWeek={stepFormWeek(editForm, setEditForm)}
+        jumpEditWeekToToday={jumpFormWeekToToday(editForm, setEditForm)}
+        toggleDay={toggleDay(editForm, setEditForm)}
+        formMinMondayIso={thisWeekMondayIso()}
+        editing={editing}
+        onStartEdit={startEdit}
+        onSaveEdit={saveEdit}
+        onCancelEdit={cancelEdit}
+        onDelete={handleDelete}
+      />
 
       {/* Add form */}
       <div>
@@ -464,8 +513,10 @@ export default function OnCallManager({ entries, entriesVersion }: Props) {
               entries={entries}
               daysForWeek={daysForWeek}
               weekRange={weekRange}
-              setWeekChoice={setWeekChoice(addForm, setAddForm)}
+              stepWeek={stepFormWeek(addForm, setAddForm)}
+              jumpToToday={jumpFormWeekToToday(addForm, setAddForm)}
               toggleDay={toggleDay(addForm, setAddForm)}
+              minMondayIso={thisWeekMondayIso()}
               submitLabel={adding ? 'Adding…' : 'Add'}
               onSubmit={handleAdd}
               disabled={adding}
@@ -482,10 +533,14 @@ type FormBlockProps = {
   form: FormState
   setForm: (f: FormState) => void
   entries: Entry[]
-  daysForWeek: (wc: 'this' | 'next') => { iso: string; label: string; isPast: boolean }[]
-  weekRange: (wc: 'this' | 'next') => string
-  setWeekChoice: (next: 'this' | 'next') => void
+  daysForWeek: (mondayIso: string) => { iso: string; label: string; isPast: boolean }[]
+  weekRange: (mondayIso: string) => string
+  stepWeek: (delta: number) => void
+  jumpToToday: () => void
   toggleDay: (iso: string) => void
+  /** Optional floor for the back arrow. Pass this-week's Monday to
+   *  prevent admin from navigating to past weeks. Omit for unlimited. */
+  minMondayIso?: string
   submitLabel: string
   onSubmit: (e: React.FormEvent) => void
   onCancel?: () => void
@@ -495,10 +550,10 @@ type FormBlockProps = {
 
 function FormBlock({
   form, setForm, entries, daysForWeek, weekRange,
-  setWeekChoice, toggleDay,
+  stepWeek, jumpToToday, toggleDay, minMondayIso,
   submitLabel, onSubmit, onCancel, disabled, showCancel,
 }: FormBlockProps) {
-  const days = daysForWeek(form.weekChoice)
+  const days = daysForWeek(form.weekMonday)
   const overnight = !form.isAllDay && form.startTime > form.endTime
 
   return (
@@ -517,28 +572,16 @@ function FormBlock({
         </select>
       </div>
 
-      {/* Week toggle */}
+      {/* Week navigator */}
       <div>
         <label className="block text-xs font-medium text-slate-600 mb-1">Week</label>
-        <div className="flex gap-2">
-          {(['this', 'next'] as const).map(wc => (
-            <button
-              key={wc}
-              type="button"
-              onClick={() => setWeekChoice(wc)}
-              className={`flex-1 text-sm px-3 py-2 rounded-lg border ${
-                form.weekChoice === wc
-                  ? 'bg-blue-50 border-blue-400 text-blue-800 font-medium'
-                  : 'bg-white border-slate-300 text-slate-700 hover:bg-slate-50'
-              }`}
-            >
-              {wc === 'this' ? 'This week' : 'Next week'}
-              <span className="block text-xs text-slate-500 font-normal mt-0.5">
-                {weekRange(wc)}
-              </span>
-            </button>
-          ))}
-        </div>
+        <WeekNavigator
+          mondayIso={form.weekMonday}
+          rangeLabel={weekRange(form.weekMonday)}
+          minMondayIso={minMondayIso}
+          onStep={stepWeek}
+          onJumpToToday={jumpToToday}
+        />
       </div>
 
       {/* Day picker */}
@@ -646,5 +689,259 @@ function FormBlock({
         )}
       </div>
     </form>
+  )
+}
+
+// ── SlotsGrid: weekly grid view of slots ──────────────────────────
+//
+// Displays the upcoming on-call rota as a Mon–Sun grid:
+//   - Columns: 7 days
+//   - Rows: one per unique time-range that has slots in the visible week
+//   - Cells: clickable name pills (multiple stacked if overlap)
+//
+// Has its own week navigator (independent of the add form's).
+// When admin clicks Edit on a name, the edit form drops in below
+// the grid (full width).
+
+type SlotsGridProps = {
+  slots: Slot[]
+  editingId: string | null
+  editForm: FormState
+  setEditForm: (f: FormState) => void
+  entries: Entry[]
+  daysForWeek: (mondayIso: string) => { iso: string; label: string; isPast: boolean }[]
+  weekRange: (mondayIso: string) => string
+  /** Step the EDIT form's visible week. Different from the grid's
+   *  own navigation — when admin is editing, the form below the
+   *  grid uses these. */
+  stepEditWeek: (delta: number) => void
+  /** Jump the EDIT form back to this-week's Monday. */
+  jumpEditWeekToToday: () => void
+  toggleDay: (iso: string) => void
+  /** Floor for the EDIT form's back arrow. */
+  formMinMondayIso: string
+  editing: boolean
+  onStartEdit: (s: Slot) => void
+  onSaveEdit: () => void
+  onCancelEdit: () => void
+  onDelete: (id: string) => void
+}
+
+// Returns the set of ISO dates a slot "covers" — i.e. where its
+// name should appear in the grid. Handles cross-midnight by
+// including the morning-after dates too.
+function datesCoveredBy(s: Slot): string[] {
+  const out: string[] = []
+  const start = new Date(s.start_date + 'T00:00:00')
+  const end = new Date(s.end_date + 'T00:00:00')
+
+  // Walk start_date through end_date inclusive
+  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`)
+  }
+
+  // Cross-midnight: if start_time > end_time, the morning portion
+  // also covers the day AFTER each in-range day. Push end_date+1
+  // (and any other +1 days inside the range; those are already
+  // covered above, so only the trailing +1 needs adding).
+  if (!s.is_all_day && s.start_time && s.end_time) {
+    const startMin = Number(s.start_time.slice(0, 2)) * 60 + Number(s.start_time.slice(3, 5))
+    const endMin = Number(s.end_time.slice(0, 2)) * 60 + Number(s.end_time.slice(3, 5))
+    if (startMin > endMin) {
+      const extra = new Date(end)
+      extra.setDate(extra.getDate() + 1)
+      out.push(`${extra.getFullYear()}-${String(extra.getMonth() + 1).padStart(2, '0')}-${String(extra.getDate()).padStart(2, '0')}`)
+    }
+  }
+  return out
+}
+
+// Group slots by their time-range signature. Returns Map<label, Slot[]>
+// where label is "All day" / "06:00–09:00" / "22:00–06:00 (overnight)".
+function groupSlotsByTimeRange(slots: Slot[]): Map<string, Slot[]> {
+  const out = new Map<string, Slot[]>()
+  for (const s of slots) {
+    const key = formatTimeRange(s) || '(unset)'
+    const arr = out.get(key) || []
+    arr.push(s)
+    out.set(key, arr)
+  }
+  return out
+}
+
+function SlotsGrid({
+  slots, editingId, editForm, setEditForm, entries,
+  daysForWeek, weekRange,
+  stepEditWeek, jumpEditWeekToToday, toggleDay, formMinMondayIso,
+  editing, onStartEdit, onSaveEdit, onCancelEdit, onDelete,
+}: SlotsGridProps) {
+  // Independent week navigation for the grid view. Initialised to
+  // this-week's Monday; admin can navigate freely both directions
+  // (it's a viewer, no past-week restriction).
+  const [gridMonday, setGridMonday] = useState<string>(thisWeekMondayIso())
+
+  const stepGridWeek = (delta: number) => {
+    const cur = new Date(gridMonday + 'T00:00:00')
+    cur.setDate(cur.getDate() + delta * 7)
+    setGridMonday(isoDate(cur))
+  }
+
+  const jumpGridWeekToToday = () => setGridMonday(thisWeekMondayIso())
+
+  // 7 dates of the visible week
+  const days = daysForWeek(gridMonday)
+  const dayIsoSet = new Set(days.map(d => d.iso))
+
+  // Which slots appear in the visible week? A slot appears if any of
+  // its covered dates intersects the visible week.
+  const visibleSlots = slots.filter(s => {
+    return datesCoveredBy(s).some(iso => dayIsoSet.has(iso))
+  })
+
+  // Group + sort rows. Rows ordered by the start_time of the FIRST
+  // slot in each group (so 06:00 comes before 15:00; "All day" goes
+  // last).
+  const grouped = groupSlotsByTimeRange(visibleSlots)
+  const rows = Array.from(grouped.entries())
+    .map(([label, ss]) => {
+      const sample = ss[0]
+      const startKey = sample.is_all_day ? '99:99' : (sample.start_time || '99:99')
+      return { label, slots: ss, sortKey: startKey }
+    })
+    .sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+
+  // Quick lookup: which slots cover this specific (iso, label)?
+  // Used to populate each cell.
+  const slotsAt = (iso: string, label: string): Slot[] => {
+    const group = grouped.get(label) || []
+    return group.filter(s => datesCoveredBy(s).includes(iso))
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+  }
+
+  const editingSlot = editingId ? slots.find(s => s.id === editingId) : null
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-sm font-medium text-slate-700">Active and upcoming slots</p>
+        <WeekNavigator
+          mondayIso={gridMonday}
+          rangeLabel={weekRange(gridMonday)}
+          onStep={stepGridWeek}
+          onJumpToToday={jumpGridWeekToToday}
+          size="small"
+        />
+      </div>
+
+      {visibleSlots.length === 0 ? (
+        <p className="text-sm text-slate-400 italic border border-slate-100 rounded-lg p-4">
+          No on-call slots scheduled for this week.
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr>
+                <th className="border-b border-slate-200 p-2 text-left text-xs font-medium text-slate-600 bg-slate-50 w-32">
+                  Time
+                </th>
+                {days.map(d => {
+                  const [weekday, datePart1, datePart2] = d.label.split(' ')
+                  return (
+                    <th
+                      key={d.iso}
+                      className={`border-b border-slate-200 p-2 text-center text-xs font-medium ${
+                        d.isPast ? 'text-slate-400 bg-slate-50' : 'text-slate-700 bg-slate-50'
+                      }`}
+                    >
+                      <div>{weekday}</div>
+                      <div className="text-[10px] font-normal mt-0.5">{datePart1} {datePart2}</div>
+                    </th>
+                  )
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(row => (
+                <tr key={row.label}>
+                  <td className="border-b border-slate-100 p-2 text-xs text-slate-700 bg-slate-50 align-top">
+                    {row.label}
+                  </td>
+                  {days.map(d => {
+                    const cellSlots = slotsAt(d.iso, row.label)
+                    return (
+                      <td
+                        key={d.iso}
+                        className={`border-b border-l border-slate-100 p-1 align-top ${
+                          d.isPast ? 'bg-slate-50' : ''
+                        }`}
+                      >
+                        {cellSlots.length === 0 ? (
+                          <div className="h-6" />
+                        ) : (
+                          <div className="space-y-1">
+                            {cellSlots.map(s => (
+                              <button
+                                key={s.id}
+                                type="button"
+                                onClick={() => onStartEdit(s)}
+                                className={`block w-full text-left text-xs px-2 py-1 rounded hover:bg-blue-100 truncate ${
+                                  editingId === s.id
+                                    ? 'bg-blue-200 text-blue-900 font-semibold'
+                                    : 'bg-blue-50 text-blue-800'
+                                }`}
+                                title={s.phone_directory_entries?.name || '(deleted entry)'}
+                              >
+                                {s.phone_directory_entries?.name || '(deleted)'}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Edit form drops in below the grid when an admin is editing.
+          Same FormBlock used by the add form. */}
+      {editingSlot && (
+        <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-sm font-medium text-amber-900">
+              Editing slot: {editingSlot.phone_directory_entries?.name || '(deleted entry)'}
+              <span className="text-xs text-amber-700 ml-1">
+                · {formatDateRange(editingSlot)} · {formatTimeRange(editingSlot)}
+              </span>
+            </p>
+            <button
+              type="button"
+              onClick={() => onDelete(editingSlot.id)}
+              className="text-xs text-red-600 hover:underline"
+            >Delete this slot</button>
+          </div>
+          <FormBlock
+            form={editForm}
+            setForm={setEditForm}
+            entries={entries}
+            daysForWeek={daysForWeek}
+            weekRange={weekRange}
+            stepWeek={stepEditWeek}
+            jumpToToday={jumpEditWeekToToday}
+            toggleDay={toggleDay}
+            minMondayIso={formMinMondayIso}
+            submitLabel={editing ? 'Saving…' : 'Save changes'}
+            onSubmit={(e) => { e.preventDefault(); onSaveEdit() }}
+            onCancel={onCancelEdit}
+            disabled={editing}
+            showCancel
+          />
+        </div>
+      )}
+    </div>
   )
 }

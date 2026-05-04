@@ -20,6 +20,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase'
 import OnCallCard from '@/components/phone-directory/OnCallCard'
+import EmployeeOnCallGrid from '@/components/phone-directory/EmployeeOnCallGrid'
 
 const supabase = createClient()
 
@@ -327,6 +328,12 @@ export default function EmployeePhoneDirectoryPage() {
         {/* On-call card is the most actionable thing on this page —
             sits at the top so a driver in a hurry can tap and go. */}
         <OnCallCard />
+
+        {/* Full week's on-call rota. Read-only grid; tap a name to
+            call. PIN-gated implicitly because this page is
+            PIN-gated; the on-call API the grid hits also requires
+            the driver's unlock cookie which the PIN flow set. */}
+        <EmployeeOnCallGrid />
 
         {entries.length === 0 ? (
           <div className="bg-white rounded-2xl border border-gray-200 p-6 text-center">
