@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
-import { logAudit } from '@/lib/audit'
+import { logAudit, getActorFields } from '@/lib/audit'
 
 /**
  * POST /api/delete-day-sheet
@@ -13,6 +15,20 @@ import { logAudit } from '@/lib/audit'
  */
 export async function POST(request: Request) {
   try {
+    const cookieStore = await cookies()
+    const authClient = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() { return cookieStore.getAll() },
+          setAll() { /* no-op */ },
+        },
+      },
+    )
+    const { data: { user } } = await authClient.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
+    const actor = await getActorFields(user.id)
     const body = await request.json()
     const { id } = body
     if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
@@ -30,6 +46,7 @@ export async function POST(request: Request) {
     if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
     await logAudit({
+      ...actor,
       action: 'DELETE_DAY_SHEET',
       entity: 'day_sheet',
       entity_id: id,

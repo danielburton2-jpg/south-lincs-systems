@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { NextResponse } from 'next/server'
-import { logAudit } from '@/lib/audit'
+import { logAudit, getActorFields } from '@/lib/audit'
 import { holidayYearForDate, isCurrentHolidayYear } from '@/lib/holidayYear'
 
 /**
@@ -100,7 +100,7 @@ async function handleCreate(supabase: any, body: any, req: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
   await logAudit({
-    user_id, user_role: 'user',
+    ...(await getActorFields(user_id)),
     action: 'CREATE_HOLIDAY_REQUEST',
     entity: 'holiday_request', entity_id: created.id,
     details: { request_type, start_date, end_date, days_requested, holiday_year_label: yr.label, is_current_year: isCurrent },
@@ -130,7 +130,7 @@ async function handleCancelPending(supabase: any, body: any, req: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
   await logAudit({
-    user_id, user_role: 'user',
+    ...(await getActorFields(user_id)),
     action: 'CANCEL_PENDING_HOLIDAY',
     entity: 'holiday_request', entity_id: request_id,
     ip_address: req.headers.get('x-forwarded-for') || undefined,
@@ -159,7 +159,7 @@ async function handleRequestCancel(supabase: any, body: any, req: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
   await logAudit({
-    user_id, user_role: 'user',
+    ...(await getActorFields(user_id)),
     action: 'REQUEST_CANCEL_HOLIDAY',
     entity: 'holiday_request', entity_id: request_id,
     ip_address: req.headers.get('x-forwarded-for') || undefined,

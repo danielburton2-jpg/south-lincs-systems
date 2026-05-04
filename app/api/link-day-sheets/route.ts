@@ -1,7 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
-import { logAudit } from '@/lib/audit'
+import { logAudit, getActorFields } from '@/lib/audit'
 
 /**
  * POST /api/link-day-sheets
@@ -38,6 +40,21 @@ const sameRecurrence = (a: any, b: any): boolean => {
 
 export async function POST(request: Request) {
   try {
+    const cookieStore = await cookies()
+    const authClient = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() { return cookieStore.getAll() },
+          setAll() { /* no-op */ },
+        },
+      },
+    )
+    const { data: { user } } = await authClient.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
+    const actor = await getActorFields(user.id)
+
     const body = await request.json()
     const action = body?.action
 
@@ -57,6 +74,7 @@ export async function POST(request: Request) {
       if (error) return NextResponse.json({ error: error.message }, { status: 400 })
 
       await logAudit({
+        ...actor,
         action: 'UNLINK_DAY_SHEET',
         entity: 'day_sheet',
         entity_id: id,
@@ -130,6 +148,7 @@ export async function POST(request: Request) {
       }
 
       await logAudit({
+        ...actor,
         action: 'LINK_DAY_SHEETS',
         entity: 'day_sheet',
         entity_id: source_id,

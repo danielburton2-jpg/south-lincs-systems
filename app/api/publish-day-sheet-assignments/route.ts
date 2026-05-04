@@ -1,6 +1,8 @@
 import { createClient } from '@supabase/supabase-js'
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 import { NextResponse } from 'next/server'
-import { logAudit } from '@/lib/audit'
+import { logAudit, getActorFields } from '@/lib/audit'
 
 /**
  * POST /api/publish-day-sheet-assignments
@@ -35,6 +37,20 @@ import { logAudit } from '@/lib/audit'
  */
 export async function POST(request: Request) {
   try {
+    const cookieStore = await cookies()
+    const authClient = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() { return cookieStore.getAll() },
+          setAll() { /* no-op */ },
+        },
+      },
+    )
+    const { data: { user } } = await authClient.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
+    const actor = await getActorFields(user.id)
     const body = await request.json()
     const { company_id, from, to, published_by, user_id, date } = body
     if (!company_id) return NextResponse.json({ error: 'company_id is required' }, { status: 400 })
@@ -105,6 +121,7 @@ export async function POST(request: Request) {
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 400 })
 
     await logAudit({
+      ...actor,
       action: 'PUBLISH_DAY_SHEET_ASSIGNMENTS',
       entity: 'day_sheet_assignment',
       details: {
